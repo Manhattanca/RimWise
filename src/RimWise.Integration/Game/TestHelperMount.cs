@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Xml.Linq;
 using Microsoft.Win32.SafeHandles;
 using RimWise.Integration.Safety;
 
@@ -9,42 +8,29 @@ namespace RimWise.Integration.Game;
 
 /// <summary>The sole reparse-point exception: one owned link to the embedded fixed helper.
 /// General path validation remains unchanged. Removal never follows the link or deletes its target.</summary>
-internal sealed class TestHelperMount : IDisposable
+internal sealed partial class TestHelperMount : IDisposable
 {
     private readonly string link, target;
+    private readonly OrdinaryGameTestOptions options;
+    private readonly string session;
     internal TestHelperMount(OrdinaryGameTestOptions options, string session)
     {
+        this.options = options;
+        this.session = session;
         target = ScopedPaths.Child(session, "fixed-helper");
-        Directory.CreateDirectory(target);
-        Directory.CreateDirectory(ScopedPaths.Child(target, "About"));
-        Directory.CreateDirectory(ScopedPaths.Child(target, "Assemblies"));
-        new XDocument(new XElement("ModMetaData", new XElement("name", "RimWise Test Helper"),
-            new XElement("author", "RimWise contributors"), new XElement("packageId", GameProbe.PackageId),
-            new XElement("supportedVersions", Enumerable.Range(1,7).Select(n => new XElement("li", "1."+n)))))
-            .Save(ScopedPaths.Child(target,"About/About.xml"));
-        using (var input = typeof(TestHelperMount).Assembly.GetManifestResourceStream("RimWise.TestHelper.dll")
-            ?? throw new IOException("测试辅助组件缺失。"))
-        using (var output = File.Create(ScopedPaths.Child(target,"Assemblies/RimWise.TestHelper.dll"))) input.CopyTo(output);
         link = LinkPath(options, session);
-        using var pins = new PinnedDirectorySet();
-        pins.PinParent(link);
-        pins.PinDirectory(target);
-        if (!CreateDirectory(link,IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(),"辅助 Mod 目录不能创建，未覆盖现有内容。");
-        CreateJunction(link,target);
-    }
-
-    internal static void CleanInterrupted(OrdinaryGameTestOptions options)
-    {
-        if (!Directory.Exists(options.TestRoot)) return;
-        foreach (var session in Directory.EnumerateDirectories(ScopedPaths.Ordinary(options.TestRoot), "game-*"))
+        try
         {
-            if (!Guid.TryParseExact(Path.GetFileName(session)[5..], "N", out _)) continue;
-            ScopedPaths.Ordinary(session, true);
-            Remove(LinkPath(options, session), ScopedPaths.Child(session, "fixed-helper"));
-            // Old interrupted sessions can still own the previous uniquely named link.
-            Remove(Path.Combine(options.GameDirectory, "Mods", "RimSortWorkbench-Test-" + Path.GetFileName(session)[5..]),
-                ScopedPaths.Child(session, "fixed-helper"));
+            // A transient lock may have cleared since the previous round's cleanup.
+            if (Directory.Exists(target)) CleanAfterUse(options, session);
+            CreateOwnedPayload(options, session);
+            using var pins = new PinnedDirectorySet();
+            pins.PinParent(link);
+            pins.PinDirectory(target);
+            if (!CreateDirectory(link,IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(),"辅助 Mod 目录不能创建，未覆盖现有内容。");
+            CreateJunction(link,target);
         }
+        catch { CleanAfterUse(options, session); throw; }
     }
     private static string LinkPath(OrdinaryGameTestOptions options, string session)
     {
@@ -67,7 +53,7 @@ internal sealed class TestHelperMount : IDisposable
             throw new IOException("测试辅助目录已被替换，拒绝清理其他内容。");
         DeleteByHandle(handle);
     }
-    public void Dispose() => Remove(link,target);
+    public void Dispose() => CleanAfterUse(options, session);
 
     private static string NormalizeTarget(string path) => Path.GetFullPath(
         path.StartsWith(@"\??\",StringComparison.Ordinal) || path.StartsWith(@"\\?\",StringComparison.Ordinal) ? path[4..] : path);

@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param([string]$Version = '0.5.1')
+param([string]$Version = '0.5.2')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Initialize-Environment.ps1')
 

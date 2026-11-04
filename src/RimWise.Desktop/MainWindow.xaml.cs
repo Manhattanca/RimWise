@@ -118,8 +118,13 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
-        if (ViewModel.HasChanges && !ConfirmDiscard()) e.Cancel = true;
+        if (pendingUpdateInstallation is not null)
+        {
+            if (!ConfirmUpdateClose()) e.Cancel = true;
+        }
+        else if (ViewModel.HasChanges && !ConfirmDiscard()) e.Cancel = true;
         base.OnClosing(e);
+        StartPendingUpdate(e);
     }
 
     protected override void OnClosed(EventArgs e)

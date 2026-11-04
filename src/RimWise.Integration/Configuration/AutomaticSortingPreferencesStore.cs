@@ -19,7 +19,7 @@ public sealed class AutomaticSortingPreferencesStore(string applicationDirectory
     {
         var value = file.Load() ?? new();
         if (value.SchemaVersion != 1 || value.MaximumAttempts < 1 || value.TokenBudget < 100
-            || value.Mode is not ("insert" or "full" or "adapt"))
+            || value.Mode is not ("insert" or "full" or "adapt" or "offline"))
             throw new InvalidDataException("自动排序设置无效。");
         return value;
     }
@@ -28,7 +28,7 @@ public sealed class AutomaticSortingPreferencesStore(string applicationDirectory
 
     public void SaveMode(string mode, bool confirmRemoval)
     {
-        if (mode is not ("insert" or "full" or "adapt")) throw new ArgumentException("排序模式无效。");
+        if (mode is not ("insert" or "full" or "adapt" or "offline")) throw new ArgumentException("排序模式无效。");
         file.Save(Load() with { Mode = mode, ConfirmModRemoval = confirmRemoval });
     }
 

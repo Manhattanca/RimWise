@@ -8,18 +8,61 @@ namespace RimWise.Desktop.Services;
 
 internal static class InterfaceMotion
 {
-    private static readonly DependencyProperty AttachedProperty = DependencyProperty.RegisterAttached(
-        "Attached", typeof(bool), typeof(InterfaceMotion), new PropertyMetadata(false));
     internal static bool Enabled => SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast;
 
     internal static void Install()
     {
+        RefreshPopupAnimation();
+        SystemParameters.StaticPropertyChanged += (_, _) =>
+        {
+            var dispatcher = Application.Current.Dispatcher;
+            if (!dispatcher.HasShutdownStarted) dispatcher.BeginInvoke(RefreshPopupAnimation);
+        };
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler(WindowLoaded));
-        EventManager.RegisterClassHandler(typeof(Popup), FrameworkElement.LoadedEvent, new RoutedEventHandler(PopupLoaded));
+        EventManager.RegisterClassHandler(typeof(Popup), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender, e) =>
+            {
+                if (sender is Popup popup && ReferenceEquals(e.OriginalSource, popup))
+                    AnchoredPopupMotion.Attach(popup);
+            }));
+        EventManager.RegisterClassHandler(typeof(MenuItem), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender, e) =>
+            {
+                // Fluent submenu triggers otherwise suppress motion when switching headers.
+                if (sender is MenuItem item && ReferenceEquals(e.OriginalSource, item)
+                    && item.Template?.FindName("PART_Popup", item) is Popup popup)
+                    AnchoredPopupMotion.Attach(popup);
+            }));
+        EventManager.RegisterClassHandler(typeof(MenuItem), MenuItem.SubmenuOpenedEvent,
+            new RoutedEventHandler((sender, e) =>
+            {
+                // A MenuItem can acquire its submenu template after Loaded as its role changes.
+                if (sender is MenuItem item && ReferenceEquals(e.OriginalSource, item)
+                    && item.Template?.FindName("PART_Popup", item) is Popup popup)
+                    AnchoredPopupMotion.Attach(popup);
+            }));
         EventManager.RegisterClassHandler(typeof(ContextMenu), ContextMenu.OpenedEvent,
-            new RoutedEventHandler((sender, _) => Reveal((FrameworkElement)sender)));
+            new RoutedEventHandler((sender, _) =>
+            {
+                if (sender is ContextMenu { Parent: Popup popup }) AnchoredPopupMotion.Attach(popup);
+            }));
         EventManager.RegisterClassHandler(typeof(ToolTip), ToolTip.OpenedEvent,
-            new RoutedEventHandler((sender, _) => Reveal((FrameworkElement)sender)));
+            new RoutedEventHandler((sender, _) =>
+            {
+                if (sender is ToolTip { Parent: Popup popup }) AnchoredPopupMotion.Attach(popup);
+            }));
+    }
+
+    internal static void RefreshPopupAnimation()
+    {
+        // Reserve WPF's native 150ms close lifetime. AnchoredPopupMotion replaces
+        // its opacity clock with geometry animation; commands and capture stay native.
+        var animation = Enabled ? PopupAnimation.Fade : PopupAnimation.None;
+        var resources = Application.Current.Resources;
+        resources["RimWisePopupAnimation"] = animation;
+        resources[SystemParameters.MenuPopupAnimationKey] = animation;
+        resources[SystemParameters.ToolTipPopupAnimationKey] = animation;
+        resources[SystemParameters.ComboBoxPopupAnimationKey] = animation;
     }
 
     private static void WindowLoaded(object sender, RoutedEventArgs e)
@@ -28,17 +71,6 @@ internal static class InterfaceMotion
         WindowFrameTheme.Apply(window);
         if (window is not MainWindow && window.GetType().Assembly == typeof(App).Assembly
             && window.Content is FrameworkElement content) Reveal(content);
-    }
-
-    private static void PopupLoaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Popup popup || (bool)popup.GetValue(AttachedProperty)) return;
-        popup.SetValue(AttachedProperty, true);
-        popup.Opened += (_, _) =>
-        {
-            if (popup.Child is FrameworkElement child && child is not ContextMenu and not ToolTip) Reveal(child);
-        };
-        if (popup.IsOpen && popup.Child is FrameworkElement initial && initial is not ContextMenu and not ToolTip) Reveal(initial);
     }
 
     internal static void Reveal(FrameworkElement element)

@@ -45,6 +45,7 @@ public partial class AiSortingWindow
     {
         if (closed || requestCancellation is not null || ownerLifetime.IsCancellationRequested) return;
         RefreshConfiguration();
+        if (resumeId is null && IsOfflineMode) { await StartOfflineAsync(); return; }
         if (gamePaths is null || !AutomaticButton.IsEnabled) return;
         if (resumeId is null && settings.PermissionLevel != AiPermissionLevel.Level1OrderAndRequiredDependencies)
         {

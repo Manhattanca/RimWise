@@ -29,6 +29,7 @@ public partial class AiSortingWindow : Window
     private readonly Func<Task>? prepareCatalogue;
     private AiUsageMonitorWindow? usageWindow;
     internal bool IsWorking => requestCancellation is not null || clearingLogs || savingLogs;
+    private bool IsOfflineMode => PermissionBox.SelectedIndex == 3;
 
     public AiSortingWindow(MainViewModel editor, string dataDirectory, CancellationToken ownerLifetime = default,
         IAiClient? client = null, ISecretStore? secrets = null, Func<GamePaths>? gamePaths = null,
@@ -67,29 +68,32 @@ public partial class AiSortingWindow : Window
         if (closed) return;
         try
         {
-            settings = session.SettingsStore.Load();
             updatingPermission = true;
             try
             {
                 if (requestCancellation is null)
                 {
                     var preferences = sortingPreferences.Load();
-                    PermissionBox.SelectedIndex = preferences.Mode switch { "insert" => 0, "full" => 1, _ => 2 };
+                    PermissionBox.SelectedIndex = preferences.Mode switch { "insert" => 0, "full" => 1, "offline" => 3, _ => 2 };
                     ConfirmRemovalToggle.IsChecked = preferences.ConfirmModRemoval;
                 }
             }
             finally { updatingPermission = false; }
-            ConfigurationText.Text = settings.Enabled ? $"AI 模型：{(settings.Model.Length == 0 ? "未选择模型" : settings.Model)}"
-                : "尚未启用 AI";
+            if (!IsOfflineMode) settings = session.SettingsStore.Load();
+            ConfigurationText.Text = IsOfflineMode
+                ? "仅使用本地元数据、已缓存规则和程序集分析；补入已安装的必要前置，一次排序，不调用 AI、不启动游戏。"
+                : $"AI 模型：{(settings.Model.Length == 0 ? "未选择模型" : settings.Model)}";
             if (outcome is not null && settings != outcome.Settings) InvalidateResult("AI 设置已变化，请重新开始排序。");
             if (requestCancellation is null && outcome is null && !automaticResultShown)
-                StatusText.Text = session.ReadinessProblem ?? (PermissionBox.SelectedIndex == 2
+                StatusText.Text = session.ReadinessProblem ?? (IsOfflineMode
+                    ? "点击离线排序；结果可撤销，点击主界面“保存排序”后写入游戏。"
+                    : PermissionBox.SelectedIndex == 2
                     ? "模组适配尚未完成，请选择其他排序模式。"
-                    : settings.Enabled ? "点击自动排序并测试，自动补齐必要前置并循环测试。" : "请先在 AI 设置中配置并启用 AI。");
+                    : "点击自动排序并测试，自动补齐必要前置并循环测试。");
         }
         catch (Exception ex) when (IsExpectedError(ex))
         {
-            settings = AiSettings.Default;
+            settings = AiSettings.Default with { Enabled = false };
             StatusText.Text = "无法读取 AI 设置：" + ex.Message;
         }
         RefreshButtons();
@@ -103,13 +107,11 @@ public partial class AiSortingWindow : Window
         if (level is null) return;
         try
         {
-            var current = session.SettingsStore.Load();
-            session.SettingsStore.Save(current with { PermissionLevel = level switch
-            {
-                "adapt" => AiPermissionLevel.Level3CodeAdaptation,
-                _ => AiPermissionLevel.Level1OrderAndRequiredDependencies
-            } });
+            // Selecting offline mode must also work with missing/invalid AI configuration.
             sortingPreferences.SaveMode(level, ConfirmRemovalToggle.IsChecked == true);
+            if (level != "offline")
+                session.SettingsStore.Save(session.SettingsStore.Load() with { PermissionLevel = level == "adapt"
+                    ? AiPermissionLevel.Level3CodeAdaptation : AiPermissionLevel.Level1OrderAndRequiredDependencies });
             RefreshConfiguration();
         }
         catch (Exception ex) when (IsExpectedError(ex))
@@ -134,7 +136,7 @@ public partial class AiSortingWindow : Window
         else if (outcome is null && requestCancellation is null)
         {
             if (automaticResultShown && editor.ContentRevision != automaticResultRevision)
-                StatusText.Text = "当前排序或模组资料已变化，上次自动测试结果仅供参考。";
+                StatusText.Text = "当前排序或模组资料已变化，上次处理结果仅供参考。";
             else RefreshConfiguration();
         }
         RefreshButtons();
@@ -150,8 +152,14 @@ public partial class AiSortingWindow : Window
     private void RefreshButtons()
     {
         var busy = requestCancellation is not null || clearingLogs || savingLogs;
-        AutomaticButton.IsEnabled = !closed && !busy && settings.Enabled && session.ReadinessProblem is null && gamePaths is not null
-            && PermissionBox.SelectedIndex is 0 or 1;
+        AutomaticButton.IsEnabled = !closed && !busy && session.ReadinessProblem is null
+            && (IsOfflineMode || (settings.Enabled && gamePaths is not null && PermissionBox.SelectedIndex is 0 or 1));
+        AutomaticButton.Content = IsOfflineMode ? "离线排序" : "自动排序并测试";
+        AutomaticButton.ToolTip = IsOfflineMode ? "仅进行一次本地排序，不调用 AI、不下载模组、不启动游戏；完成后可在主界面保存或撤销。"
+            : "经 Steam 测试地图，必要时下载前置并调整重测；启动超过 30 分钟仅提醒，可继续等待或取消";
+        AiActionsPanel.Visibility = LimitPanel.Visibility = ConfirmRemovalToggle.Visibility = IsOfflineMode ? Visibility.Collapsed : Visibility.Visible;
+        ResponseHeading.Text = IsOfflineMode ? "离线排序结果" : "AI 回报与每轮处理结果";
+        OrderHeading.Text = IsOfflineMode ? "排序结果（未经游戏测试）" : "当前／最后测试顺序";
         LimitPanel.IsEnabled = !busy;
         PermissionBox.IsEnabled = !busy;
         ConfirmRemovalToggle.IsEnabled = !busy;
@@ -322,7 +330,7 @@ public partial class AiSortingWindow : Window
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         requestCancellation?.Cancel();
-        StatusText.Text = "正在取消；已发送的请求可能仍会计费。";
+        StatusText.Text = IsOfflineMode ? "正在取消离线排序；当前排序保持不变。" : "正在取消；已发送的请求可能仍会计费。";
         RefreshButtons();
     }
 
@@ -353,6 +361,7 @@ public partial class AiSortingWindow : Window
     internal TimeSpan WaitNoticeDelay { get; set; } = AiWaitNotice.DefaultDelay;
     private void RefreshUsage()
     {
+        if (IsOfflineMode) { TokenText.Text = "本次离线排序：0 token（未调用 AI）。"; return; }
         try { TokenText.Text += "\n" + session.UsageDescription(); }
         catch (Exception ex) when (IsExpectedError(ex)) { TokenText.Text += "\n累计用量读取失败，记录已保留。"; }
     }

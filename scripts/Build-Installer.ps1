@@ -1,6 +1,6 @@
 #requires -Version 7.0
 param(
-    [string]$Version = '0.5.1',
+    [string]$Version = '0.5.2',
     [Parameter(Mandatory)][string]$Compiler,
     [Parameter(Mandatory)][string]$RuntimeInstaller,
     [string]$PackageDirectory,
@@ -56,7 +56,8 @@ $arguments = @("/DAppVersion=$Version", "/DPackageDirectory=$PackageDirectory", 
     "/DIconPath=$(Join-Path $root 'src\RimWise.Desktop\Resources\Branding\RimWise.ico')")
 if ($TestIdentity) {
     if ($TestIdentity -notmatch '^[a-zA-Z0-9-]+$') { throw 'Invalid test identity.' }
-    $arguments += @("/DAppIdValue=RimWise.InstallerTest.$TestIdentity", "/DAppNameValue=RimWise Installer Test $TestIdentity")
+    $arguments += @("/DAppIdValue=RimWise.InstallerTest.$TestIdentity", "/DAppNameValue=RimWise Installer Test $TestIdentity",
+        "/DActiveMutexValue=Local\RimWise.InstallerTest.$TestIdentity.Active")
 }
 & $Compiler @arguments (Join-Path $work 'RimWise.iss')
 if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed: $LASTEXITCODE" }

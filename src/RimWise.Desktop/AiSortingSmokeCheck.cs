@@ -1,4 +1,4 @@
-﻿#if DEBUG
+#if DEBUG
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -119,6 +119,21 @@ internal static class AiSortingSmokeCheck
             Assert(Order()[0] == "second.mod" && vm.HasChanges && !window.ApplyButton.IsEnabled, "Apply failed or stayed reusable.");
             vm.UndoCommand.Execute(null); Unchanged();
             vm.RedoCommand.Execute(null); Assert(Order()[0] == "second.mod", "Cancel undo failed.");
+            foreach (var choice in new[] { MessageBoxResult.Cancel, MessageBoxResult.No })
+            {
+                var answer = main.Dispatcher.InvokeAsync(() =>
+                {
+                    var dialog = main.OwnedWindows.OfType<MessageDialogWindow>().Single();
+                    var buttons = dialog.ButtonsPanel.Children.Cast<Button>().ToArray();
+                    Assert(buttons.Single(button => button.IsDefault).Tag is MessageBoxResult.Cancel,
+                        "Update prompt must default to keeping the app open.");
+                    buttons.Single(button => Equals(button.Tag, choice)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }, DispatcherPriority.ApplicationIdle);
+                Assert(main.ConfirmUpdateEdits() == (choice == MessageBoxResult.No), "Update unsaved choice ignored.");
+                await answer;
+                Assert(vm.HasChanges && Order()[0] == "second.mod", "Update prompt altered unsaved order.");
+            }
+            checks.Add("update cancellation retains unsaved order; discard allows exit; default choice is cancel");
             Assert(!File.Exists(Path.Combine(root, "ModsConfig.xml")), "AI wrote game configuration.");
             checks.Add("inline results, usage, one-step apply, undo and cancel undo; no game write");
             Reset(); await window.StartSortingAsync();
@@ -1042,9 +1057,53 @@ internal static class AiSortingSmokeCheck
         finally { window.Close(); vm.MarkExported(); }
         await CheckDuplicateInstallationsAsync(main, output, checks);
         await CheckUpdateNotificationsAsync(main, output, checks);
+        await CheckOfflineSortingAsync(main, output, checks);
         vm.MarkExported();
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new
         { Passed = true, RealAiRequest = false, RealGameRun = false, Checks = checks }, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static async Task CheckOfflineSortingAsync(MainWindow main, string output, List<string> checks)
+    {
+        var root = Path.Combine(output, "离线 中文");
+        var store = new AiSettingsStore(root);
+        store.Save(AiSettings.Default);
+        File.WriteAllText(store.SettingsPath, "{ invalid AI settings");
+        new AutomaticSortingPreferencesStore(root).SaveMode("offline", true);
+        ModInstallation Mod(string id, params string[] deps) => new(Path.Combine(root, id), id, ModSource.Local, "",
+            new(id, "test", id, ["1.7"], "", new(deps.Select(d => new ModDependency(d, d)).ToArray(), [], [], []), false), []);
+        var vm = main.ViewModel;
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes("<ModsConfigData><version>1.7</version><activeMods><li>child</li></activeMods></ModsConfigData>"));
+        var document = new ModsConfigXmlFormat().Read(input);
+        vm.Load(document, Path.Combine(root, "ModsConfig.xml"));
+        vm.ApplyScan(new(new(null, "", ""), GameVersion.Parse("1.7"), new([Mod("child", "parent"), Mod("parent")]), []), observeActivity: false);
+        vm.SetCustomRules([]);
+        var secrets = new SecretCounter();
+        var client = new FakeClient { Response = (_, _) => throw new Exception("Offline called AI") };
+        var notice = "";
+        var passed = false;
+        var window = new AiSortingWindow(vm, root, client: client, secrets: secrets,
+            gamePaths: () => throw new Exception("Offline accessed game launcher"),
+            prepareSave: () => throw new Exception("Offline saved game config")) { Owner = main,
+            OfflineResultNotice = (message, success) => { notice = message; passed = success; } };
+        window.Show();
+        try
+        {
+            Assert(window.AutomaticButton.IsEnabled && window.PermissionBox.SelectedIndex == 3, "Offline blocked on AI settings");
+            await window.StartAutomaticAsync();
+            Assert(passed && notice.Contains("未进行游戏测试") && vm.Rows.Select(r => r.PackageId).SequenceEqual(["parent", "child"]), "Offline result not applied or notice absent");
+            Assert(client.Calls == 0 && secrets.Reads == 0 && window.TokenText.Text.Contains("0 token") && !File.Exists(Path.Combine(root, "ModsConfig.xml")), "Offline used AI or saved config");
+            vm.UndoCommand.Execute(null);
+            Assert(vm.Rows.Select(r => r.PackageId).SequenceEqual(["child"]), "Offline undo failed");
+            foreach (var theme in new[] { ThemePreference.Light, ThemePreference.Dark })
+            {
+                ((App)Application.Current).Themes.Select(theme, save: false);
+                await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
+                PrototypeSmokeCheck.SavePreview(window, Path.Combine(output, theme + "-离线排序.png"));
+            }
+        }
+        finally { window.Close(); vm.MarkExported(); }
+        checks.Add("offline bypasses corrupt AI settings, credentials and game lifecycle; adds installed prerequisites; result notice and undo");
     }
 
     private static async Task CheckUpdateNotificationsAsync(MainWindow main, string output, List<string> checks)
@@ -1061,14 +1120,15 @@ internal static class AiSortingSmokeCheck
                 var focus = System.Windows.Input.Keyboard.FocusedElement;
                 main.ShowUpdateNotification("更新检测失败", "无法连接 GitHub，请稍后重试。当前功能可继续使用。", true);
                 main.UpdateLayout();
-                Assert(main.UpdateNotice.IsVisible && main.UpdateRetryButton.IsVisible && !main.UpdateFolderButton.IsVisible,
+                Assert(main.UpdateNotice.IsVisible && main.UpdateRetryButton.IsVisible && !main.UpdateInstallButton.IsVisible,
                     "Update failure does not offer the expected retry action.");
                 Assert(ReferenceEquals(focus, System.Windows.Input.Keyboard.FocusedElement), "Update notice stole keyboard focus.");
                 PrototypeSmokeCheck.SavePreview(main, Path.Combine(output, theme + "-update-failure.png"));
-                main.ShowUpdateNotification("新版本 0.5.0 已下载", "校验通过。请完成当前操作并关闭软件后运行安装包。", false, ready: true);
+                main.ShowUpdateNotification("新版本 0.5.2 已下载", "点击更新并重启，即可自动安装并打开新版。", false, ready: true);
                 main.UpdateLayout();
-                Assert(!main.UpdateRetryButton.IsVisible && main.UpdateFolderButton.IsVisible,
-                    "Verified update does not offer its folder action.");
+                Assert(!main.UpdateRetryButton.IsVisible && main.UpdateInstallButton.IsVisible,
+                    "Verified update does not offer its install action.");
+                Assert(main.UpdateInstallButton.Content.ToString() == "更新并重启", "Update action label is incorrect.");
                 Assert(main.UpdateNotice.ActualWidth <= main.ActualWidth && main.UpdateNotice.ActualHeight < main.ActualHeight / 2,
                     "Update notice obscures the main window.");
                 Assert(ReferenceEquals(focus, System.Windows.Input.Keyboard.FocusedElement), "Download notification stole keyboard focus.");

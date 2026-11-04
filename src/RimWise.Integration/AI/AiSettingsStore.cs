@@ -11,13 +11,15 @@ public sealed class AiSettingsStore(string applicationDirectory)
     public AiSettings Load()
     {
         var stored = file.Load();
-        if (stored is null) return AiSettings.Default;
+        // First setup starts with custom service; never replace a saved provider.
+        if (stored is null) return AiSettings.Default with { Endpoint = "" };
         if (stored.SchemaVersion != 1 || stored.Settings is null)
             throw new InvalidDataException("AI 配置版本不受支持。");
-        return stored.Settings.Normalize();
+        // The former opt-in switch is retired; credentials still gate actual requests.
+        return (stored.Settings with { Enabled = true }).Normalize();
     }
 
-    public void Save(AiSettings settings) => file.Save(new StoredSettings(1, settings.Normalize()));
+    public void Save(AiSettings settings) => file.Save(new StoredSettings(1, (settings with { Enabled = true }).Normalize()));
 
     private sealed record StoredSettings(int SchemaVersion, AiSettings? Settings);
 }

@@ -14,6 +14,9 @@ public partial class MainWindow
     private CancellationTokenSource? updateCancellation;
     private Task? updateTask;
     private string? downloadedUpdatePath;
+    private ReleaseDownload? downloadedRelease;
+    private bool preparingUpdate;
+    private ProcessStartInfo? pendingUpdateInstallation;
 
     private async Task StartBackgroundUpdateAsync()
     {
@@ -30,7 +33,7 @@ public partial class MainWindow
 
     internal Task BeginUpdateCheckAsync(bool manual)
     {
-        if (updateTask is { IsCompleted: false } || settingsOpen || lifetime.IsCancellationRequested)
+        if (updateTask is { IsCompleted: false } || preparingUpdate || settingsOpen || lifetime.IsCancellationRequested)
             return Task.CompletedTask;
         updateCancellation?.Dispose();
         updateCancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
@@ -41,6 +44,9 @@ public partial class MainWindow
     private async Task CheckAndDownloadUpdateAsync(bool manual, CancellationToken token)
     {
         CheckUpdatesMenu.IsEnabled = false;
+        downloadedRelease = null;
+        downloadedUpdatePath = null;
+        UpdateInstallButton.Visibility = Visibility.Collapsed;
         UpdateRetryButton.Visibility = Visibility.Collapsed;
         var downloading = false;
         var reportProgress = false;
@@ -71,9 +77,10 @@ public partial class MainWindow
             reportProgress = false;
             token.ThrowIfCancellationRequested();
             downloadedUpdatePath = saved;
+            downloadedRelease = release;
             ShowUpdateNotification($"新版本 {release.Version} 已下载", release.IsInstaller
-                ? "校验通过。请完成当前操作并关闭软件后运行安装包。"
-                : "校验通过。请关闭软件，清空程序文件夹后解压更新；保留独立的用户数据文件夹。", false, ready: true);
+                ? "点击“更新并重启”即可自动安装并打开新版。未保存的调整会先询问处理。"
+                : "此版本尚未提供安装包，暂时无法一键更新，请稍后重试。", !release.IsInstaller, ready: release.IsInstaller);
             DiagnosticEventLog.Current?.Record("update", "download-verified", $"version={release.Version};bytes={release.Size}");
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -110,7 +117,7 @@ public partial class MainWindow
         UpdateNoticeTitle.Text = title;
         UpdateNoticeText.Text = text;
         UpdateRetryButton.Visibility = retry ? Visibility.Visible : Visibility.Collapsed;
-        UpdateFolderButton.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
+        UpdateInstallButton.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
         UpdateNotice.Visibility = Visibility.Visible;
         Services.InterfaceMotion.Reveal(UpdateNotice);
         // Do not call Activate/Focus/ShowDialog: keyboard focus and sorting stay where they are.
@@ -118,19 +125,95 @@ public partial class MainWindow
 
     private void DismissUpdate_Click(object sender, RoutedEventArgs e) => UpdateNotice.Visibility = Visibility.Collapsed;
 
-    private void OpenUpdateFolder_Click(object sender, RoutedEventArgs e)
+    private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
     {
+        if (preparingUpdate || downloadedRelease is null || downloadedUpdatePath is null) return;
+        preparingUpdate = true;
+        UpdateInstallButton.IsEnabled = false;
         try
         {
-            var folder = Path.GetDirectoryName(downloadedUpdatePath);
-            if (folder is null || !Directory.Exists(folder)) throw new DirectoryNotFoundException();
-            var info = new ProcessStartInfo("explorer.exe") { UseShellExecute = false };
-            info.ArgumentList.Add(folder);
-            using var process = Process.Start(info);
+            if (!CanInstallUpdate()) return;
+            var release = downloadedRelease;
+            var path = downloadedUpdatePath;
+            UpdateNoticeText.Text = "正在校验安装包…";
+            // Keep the checked bytes read-only until Setup has been started.
+            using var installerLease = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (!await GitHubReleaseUpdater.IsVerifiedAsync(path, release, lifetime.Token))
+                throw new InvalidDataException("安装包已变化或丢失，请重新检查更新。");
+            if (lifetime.IsCancellationRequested || !CanInstallUpdate()) return;
+            using var registry = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Uninstall\RimWise.Desktop_is1");
+            var directory = UpdateInstallation.MatchInstalledDirectory(AppContext.BaseDirectory,
+                registry?.GetValue("InstallLocation") as string);
+            pendingUpdateInstallation = UpdateInstallation.CreateStartInfo(path, release, directory);
+            Close(); // OnClosing handles unsaved edits before starting the installer.
         }
-        catch (Exception ex) when (ex is IOException or Win32Exception or InvalidOperationException)
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is IOException or Win32Exception or InvalidOperationException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException)
         {
-            ShowUpdateNotification("无法打开更新文件夹", "更新缓存可能已被移动，请重新检查更新。", true);
+            ShowUpdateNotification("更新未开始", "安装包无法校验或启动，请重新检查更新。当前软件仍可使用。", true);
+            DiagnosticEventLog.Current?.Record("update", "install-start-failed", ex.GetType().Name);
+        }
+        finally
+        {
+            pendingUpdateInstallation = null;
+            preparingUpdate = false;
+            UpdateInstallButton.IsEnabled = true;
+        }
+    }
+
+    private bool CanInstallUpdate()
+    {
+        if (aiSortingWindow?.IsWorking == true || ViewModel.IsScanning || settingsOpen || pathInitialization is { IsCompleted: false })
+        {
+            ShowUpdateNotification("更新已就绪", "请在当前排序、测试或刷新完成后点击更新，软件不会中断正在进行的任务。", false, ready: true);
+            return false;
+        }
+        var others = Process.GetProcessesByName("RimWise");
+        try
+        {
+            if (others.Any(process => process.Id != Environment.ProcessId))
+            {
+                ShowUpdateNotification("更新已就绪", "请先保存并关闭其他 RimWise 窗口，再点击更新并重启。", false, ready: true);
+                return false;
+            }
+        }
+        finally { foreach (var process in others) process.Dispose(); }
+        return true;
+    }
+
+    private bool ConfirmUpdateClose()
+    {
+        if (!CanInstallUpdate()) return false;
+        if (ConfirmUpdateEdits()) return true;
+        ShowUpdateNotification("更新已就绪", "已保留当前调整。准备好后可再次点击“更新并重启”。", false, ready: true);
+        return false;
+    }
+
+    internal bool ConfirmUpdateEdits()
+    {
+        if (!ViewModel.HasChanges) return true;
+        var choice = Views.MessageDialog.Show(this, "当前排序尚未保存。是否保存后更新？\n选择“否”会放弃未保存的调整；选择“取消”可继续使用。",
+            "更新并重启", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
+        if (choice == MessageBoxResult.No) return true;
+        if (choice != MessageBoxResult.Yes) return false;
+        RunFileAction(SaveCurrentOrder);
+        return !ViewModel.HasChanges;
+    }
+
+    private void StartPendingUpdate(CancelEventArgs e)
+    {
+        if (e.Cancel || pendingUpdateInstallation is null) return;
+        try
+        {
+            using var process = Process.Start(pendingUpdateInstallation)
+                ?? throw new InvalidOperationException("Installer did not start.");
+            DiagnosticEventLog.Current?.Record("update", "installer-started");
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or IOException)
+        {
+            e.Cancel = true;
+            ShowUpdateNotification("更新未开始", "无法启动安装程序，当前软件保持打开。请重试或检查安全软件提示。", false, ready: true);
         }
     }
 

@@ -1,6 +1,22 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (args.Length == 1 && args[0] == "--offline-sorting-checks")
+{
+    var results = new List<string>();
+    OfflineSortingChecks.Run((name, test) => { test(); results.Add(name); });
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--helper-cleanup-checks")
+{
+    var results = new List<string>();
+    TestHelperCleanupChecks.Run((name, test) => { test(); results.Add(name); });
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
 if (args.Length >= 1 && args[0] == "--diagnostic-attribution-checks")
 {
     var results = new List<string>();
@@ -102,8 +118,10 @@ Check("Unconfirmed subscription is never success", () =>
     throw new Exception("Unconfirmed accepted");
 });
 DependencyChecks.Run(Check);
+OfflineSortingChecks.Run(Check);
 DiagnosticSummaryChecks.Run(Check);
 GameLifecycleChecks.Run(Check);
+TestHelperCleanupChecks.Run(Check);
 DuplicateInstallationChecks.Run(Check);
 DuplicateCopyChecks.Run(Check);
 AiContextRetentionChecks.Run(Check);

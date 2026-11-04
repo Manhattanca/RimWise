@@ -397,7 +397,7 @@
                            Foreground="{DynamicResource TextBrush}" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button x:Name="UpdateRetryButton" Content="重试" Visibility="Collapsed" Click="CheckUpdates_Click" />
-                    <Button x:Name="UpdateFolderButton" Content="打开更新文件夹" Visibility="Collapsed" Click="OpenUpdateFolder_Click" />
+                    <Button x:Name="UpdateInstallButton" Content="更新并重启" Visibility="Collapsed" Click="InstallUpdate_Click" />
                 </StackPanel>
             </StackPanel>
         </Border>

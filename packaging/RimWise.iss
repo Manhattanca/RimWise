@@ -8,6 +8,9 @@
 #ifndef AppNameValue
   #define AppNameValue "RimWise"
 #endif
+#ifndef ActiveMutexValue
+  #define ActiveMutexValue "Local\RimWise.Installation.Active"
+#endif
 
 [Setup]
 AppId={#AppIdValue}
@@ -34,7 +37,7 @@ LicenseFile={#LicensePath}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-AppMutex=Local\RimWise.Installation.Active
+AppMutex={#ActiveMutexValue}
 SetupMutex=Local\RimWise.Setup.Active
 CloseApplications=no
 RestartApplications=no
@@ -59,14 +62,38 @@ Name: "{autodesktop}\{#AppNameValue}"; Filename: "{app}\versions\{#AppVersion}\R
 
 [Run]
 Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; Description: "{cm:LaunchProgram,{#AppNameValue}}"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; Flags: nowait runasoriginaluser; Check: IsAutomaticUpdate
 
 [Code]
+function IsAutomaticUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:RIMWISEUPDATE|0}') = '1';
+end;
+
 function InitializeSetup: Boolean;
 var
   Installed: String;
   PreviousVersion, NewVersion: Int64;
+  WaitCount: Integer;
 begin
   Result := True;
+  if IsAutomaticUpdate then
+  begin
+    { The app starts Setup only after handling unsaved edits, then exits normally.
+      Never terminate an application or install while any RimWise instance is open. }
+    WaitCount := 0;
+    while CheckForMutexes('{#ActiveMutexValue}') and (WaitCount < 300) do
+    begin
+      Sleep(100);
+      WaitCount := WaitCount + 1;
+    end;
+    if CheckForMutexes('{#ActiveMutexValue}') then
+    begin
+      SuppressibleMsgBox('RimWise 尚未退出，更新未开始。请保存并关闭其他窗口后重试。原文件保持不变。', mbError, MB_OK, IDOK);
+      Result := False;
+      exit;
+    end;
+  end;
   if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppIdValue}_is1', 'DisplayVersion', Installed) then
     if StrToVersion(Installed, PreviousVersion) and StrToVersion('{#AppVersion}', NewVersion) then
       if ComparePackedVersion(PreviousVersion, NewVersion) > 0 then

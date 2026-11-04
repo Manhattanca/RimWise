@@ -17,8 +17,15 @@ internal static class LocalCodeTopology
             var index = LocalAssemblyIndex.Build(catalogue, order, version,
                 ScopedPaths.Child(testRoot, "AnalysisCache"), token);
             var report = LocalCodePreflight.Inspect(index, token);
+            // Graph vertices are configuration identifiers (including legacy names/_steam),
+            // whereas the assembly index attributes ownership using canonical package IDs.
+            var identifiers = order.Select(id => (id, mod: catalogue.Resolve(id, version).UniqueInstallation))
+                .Where(x => x.mod is not null).GroupBy(x => x.mod!.PackageId, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.Single().id, StringComparer.OrdinalIgnoreCase);
+            var graphIndex = index with { Assemblies = index.Assemblies.Select(a => a with
+                { PackageId = identifiers.GetValueOrDefault(a.PackageId, a.PackageId) }).ToArray() };
             // Partial graphs should enrich diagnostics but must not influence sorting.
-            return new(report, index.Limited ? order.ToArray() : PreferProviders(index, order, token));
+            return new(report, index.Limited ? order.ToArray() : PreferProviders(graphIndex, order, token));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         { return new(new(0, 0, true, []), order.ToArray()); }

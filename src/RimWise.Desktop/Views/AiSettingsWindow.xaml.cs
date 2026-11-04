@@ -26,6 +26,8 @@ public partial class AiSettingsWindow : Window
     private readonly IAiClient? testClient;
     private CancellationTokenSource? testCancellation;
     public AiSettings? SavedSettings { get; private set; }
+    private const string SuggestedServiceUrl = "https://relayrax.com/sign-up?aff=dgCR";
+    internal Action<string>? OpenServiceLinkForCheck { get; set; }
 
     public AiSettingsWindow(AiSettings current, AiSettingsStore store, ISecretStore secrets, IAiClient? testClient = null)
     {
@@ -36,7 +38,6 @@ public partial class AiSettingsWindow : Window
         secretName = current.SecretName;
         savedEndpoint = AiServicePresets.NormalizeAddress(current.Endpoint);
         permissionLevel = current.PermissionLevel;
-        EnabledBox.IsChecked = current.Enabled;
         EndpointBox.Text = current.Endpoint;
         ModelBox.Text = current.Model;
         StreamingBox.IsChecked = current.StreamResponses;
@@ -81,6 +82,7 @@ public partial class AiSettingsWindow : Window
             : saved ? "已保存 · 本地加密，更新软件无需重填" : "尚未保存此服务的密钥；本机服务可留空";
         ApiKeyBox.Visibility = saved && !replacingKey && ApiKeyBox.Password.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         ReplaceKeyButton.Visibility = saved ? Visibility.Visible : Visibility.Collapsed;
+        RefreshServiceSuggestion();
     }
 
     private void ReplaceKey_Click(object sender, RoutedEventArgs e)
@@ -92,6 +94,25 @@ public partial class AiSettingsWindow : Window
         var preset = AiServicePresets.All[Math.Max(0, ProviderBox.SelectedIndex)];
         ServiceNote.Text = preset.Note.Length > 0 ? preset.Note : "使用 OpenAI 兼容接口；模型以当前账户可用列表为准。";
         EndpointPanel.Visibility = ProviderBox.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshServiceSuggestion();
+    }
+
+    private void RefreshServiceSuggestion()
+    {
+        ServiceSuggestion.Visibility = ProviderBox.SelectedIndex == 0 && string.IsNullOrWhiteSpace(EndpointBox.Text)
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ServiceSuggestion_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        try
+        {
+            if (OpenServiceLinkForCheck is { } open) open(SuggestedServiceUrl);
+            else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SuggestedServiceUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        { StatusText.Text = "无法打开默认浏览器，请检查系统浏览器设置。"; }
     }
 
     private void Provider_Changed(object sender, SelectionChangedEventArgs e)
@@ -196,7 +217,7 @@ public partial class AiSettingsWindow : Window
             throw new ArgumentException("密钥不能包含空白字符或超过长度限制，请重新复制密钥。");
         return new AiSettings(
             1,
-            EnabledBox.IsChecked == true,
+            true,
             AiProviderKind.OpenAiCompatible,
             EndpointBox.Text,
             ModelBox.Text,

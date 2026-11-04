@@ -134,7 +134,6 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
             OriginalConfigHash = originalHash, InitialOrder = current, options.MaximumSeconds, LanguageFolder = languageFolder,
             GameLaunchCallsAI = false, WritesPersonalConfiguration = false
         });
-        if (options.UseFixedHelper) helper = new(options,SessionDirectory);
         return Task.CompletedTask;
     }
 
@@ -148,6 +147,9 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         TestDataRetention.EnsureTestSpace(options.TestRoot);
         var data = ScopedPaths.Child(SessionDirectory, "attempt-" + (++attempts).ToString("D2") + " 测试数据");
         Directory.CreateDirectory(data);
+        try
+        {
+        if (options.UseFixedHelper) helper = new(options, SessionDirectory);
         var testOrder = options.UseFixedHelper ? order.Append(GameProbe.PackageId).ToArray() : order;
         var knownExpansions = catalogue.Installations.Where(mod => mod.Source == ModSource.Game
             && mod.PackageId.StartsWith("ludeon.rimworld.", StringComparison.OrdinalIgnoreCase))
@@ -157,8 +159,6 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         var runner = new OrdinaryGameRunner();
         var timeout = TimeSpan.FromSeconds(options.MaximumSeconds);
         var runtimeLog = GameTestLogCapture.RuntimeLogForConfiguration(options.PersonalConfigPath);
-        try
-        {
         LastReport = SteamGameLaunch.IsSteamInstallation(options.GameDirectory)
             ? await runner.RunSteamAsync(SteamGameLaunch.CreateRequest(GameTestLaunch.Arguments(data)),
                 executable, data, catalogue, timeout, progress, token, runtimeLog, options.WarnOnSlowStartup)
@@ -182,6 +182,9 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         }
         finally
         {
+            // Detach as soon as this round has stopped, including cancellation or a
+            // diagnostic exception. No helper remains mounted while AI considers a plan.
+            helper?.Dispose(); helper = null;
             // The runner has captured its evidence and stopped the owned process before
             // returning. A failed cleanup never replaces the actual game/test exception.
             TestDataRetention.MaintainAfterTest(options.TestRoot);

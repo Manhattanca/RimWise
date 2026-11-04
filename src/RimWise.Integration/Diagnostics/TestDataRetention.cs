@@ -2,6 +2,7 @@ using System.Text.Json;
 using RimWise.Integration.Game;
 using RimWise.Integration.AI;
 using RimWise.Integration.Safety;
+using RimWise.Integration.Configuration;
 
 namespace RimWise.Integration.Diagnostics;
 
@@ -35,6 +36,16 @@ public static class TestDataRetention
         using (lease)
         {
             if (GameProcessService.IsAnyRunning()) return new(0, 0, 0, 0, true, 0);
+            // This lease also excludes a live launcher before Steam creates its process.
+            // Startup cleanup only detaches owned remnants; it never stops a player's game.
+            try
+            {
+                var paths = new PathSettingsStore(profile).Load();
+                if (paths is not null && Directory.Exists(paths.GameDirectory))
+                    TestHelperMount.CleanInterruptedOwnedRoot(paths.GameDirectory, root);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or JsonException)
+            { DiagnosticEventLog.Current?.Record("test-helper", "startup-cleanup-failed", ex.Message); }
             var game = MaintainOwnedRoot(root, clearLogs, ProtectedSessions(profile, root, preserveLastRun));
             var ui = MaintainUi(ScopedPaths.Child(profile, "Data/Diagnostics"), clearLogs);
             return new(game.BeforeBytes + ui.BeforeBytes, game.AfterBytes + ui.AfterBytes,

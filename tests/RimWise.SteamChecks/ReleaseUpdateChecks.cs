@@ -21,6 +21,25 @@ internal static class ReleaseUpdateChecks
 
     internal static void Run(Action<string, Action> check)
     {
+        check("One-click update uses structured Unicode arguments and never a shell", () => WithDirectory(directory =>
+        {
+            var release = Candidate() with { Version = "0.5.2", FileName = "RimWise-v0.5.2-Setup.exe", IsInstaller = true };
+            var root = Path.Combine(directory, "中文 安装 & space");
+            var info = UpdateInstallation.CreateStartInfo(Path.Combine(directory, release.FileName), release, root);
+            Assert(!info.UseShellExecute && info.ArgumentList.Contains("/RIMWISEUPDATE=1") &&
+                info.ArgumentList.Contains("/SILENT") && info.ArgumentList.Contains("/NORESTART") &&
+                info.ArgumentList.Contains("/DIR=" + root));
+            foreach (var invalid in new[] { release with { IsInstaller = false },
+                release with { Version = "0.5.1" }, release with { FileName = "other.exe" } })
+            {
+                try { UpdateInstallation.CreateStartInfo(Path.Combine(directory, release.FileName), invalid, root); }
+                catch (InvalidDataException) { continue; }
+                throw new Exception("Unsupported update should not start.");
+            }
+            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root, "versions", "0.5.1"), root + Path.DirectorySeparatorChar) == root);
+            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(directory, "portable"), root) is null);
+            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root + "-other", "versions", "0.5.1"), root) is null);
+        }));
         check("Updater compares numeric versions and ignores drafts, prereleases and older releases", () =>
         {
             Assert(GitHubReleaseUpdater.ParseRelease(Release(), "0.4.9-dev.20261104") is not null);

@@ -43,15 +43,17 @@ public partial class MainWindow
     {
         if (!ViewModel.HasDocument) return;
         if (pathInitialization is not null) await pathInitialization;
-        RunFileAction(() =>
-        {
-            if (ViewModel.IsShowingCache) throw new InvalidDataException("当前资料来自缓存，请刷新成功后再保存排序。");
-            EnsureGameClosed();
-            var store = CreateGameOrderStore();
-            var plan = store.Prepare(ViewModel.CreateExportDocument(), ResolveTargetGameVersion(ViewModel.CreateExportDocument()));
-            ValidateTargetGameVersion(plan.After);
-            ApplyGamePlan(plan, store.TargetPath);
-        });
+        RunFileAction(SaveCurrentOrder);
+    }
+
+    private void SaveCurrentOrder()
+    {
+        if (ViewModel.IsShowingCache) throw new InvalidDataException("当前资料来自缓存，请刷新成功后再保存排序。");
+        EnsureGameClosed();
+        var store = CreateGameOrderStore();
+        var plan = store.Prepare(ViewModel.CreateExportDocument(), ResolveTargetGameVersion(ViewModel.CreateExportDocument()));
+        ValidateTargetGameVersion(plan.After);
+        ApplyGamePlan(plan, store.TargetPath);
     }
 
     private void ValidateTargetGameVersion(ModsConfigDocument configuration)

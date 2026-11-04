@@ -9,7 +9,7 @@ public sealed record LoadOrderSortResult(
 {
     public string Explanation => !Complete ? FailureReason ?? "当前清单无法安全自动排序，请先处理诊断。"
         : Diagnostics.Any(d => d.Code == "InsertionOrderAdjusted") ? "已按模组需求调整相关原有模组的位置，其余尽量保留原顺序。"
-        : Diagnostics.Any(d => d.Code == "OrderingCycleDeferred") ? "已按可执行的规则整理排序；循环内的先后建议暂不处理，保留必要前置，继续游戏测试。"
+        : Diagnostics.Any(d => d.Code == "OrderingCycleDeferred") ? "已按可执行的规则整理排序；循环内的先后建议暂不处理，保留必要前置，运行兼容性仍需游戏测试。"
         : Changed ? $"已按依赖和模组声明调整顺序，共 {Order.Count} 项。"
         : "当前顺序已经符合可识别的依赖和前后置声明。";
 }
@@ -116,7 +116,7 @@ public sealed class LoadOrderSorter
             {
                 var names = string.Join("、", group.Take(12));
                 if (group.Length > 12) names += $"…（共 {group.Length} 项）";
-                var message = $"先后规则存在循环，暂不处理组内矛盾建议：{names}。保留必要前置要求，其余尽量沿用当前顺序，继续游戏测试。";
+                var message = $"先后规则存在循环，暂不处理组内矛盾建议：{names}。保留必要前置要求，其余尽量沿用当前顺序，运行兼容性仍需游戏测试。";
                 deferredDiagnostics.AddRange(group.Select(id => new CatalogueDiagnostic(
                     "OrderingCycleDeferred", DiagnosticSeverity.Warning, message, Identifier: id)));
             }

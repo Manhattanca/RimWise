@@ -12,7 +12,7 @@ public sealed record AiSettings(
     public bool StreamResponses { get; init; } = true;
     public static AiSettings Default => new(
         1,
-        false,
+        true,
         AiProviderKind.OpenAiCompatible,
         "https://api.openai.com/v1/chat/completions",
         "",

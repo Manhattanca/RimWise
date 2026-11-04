@@ -204,7 +204,7 @@ internal static class BatchEditingSmokeCheck
             KeyPress(window.OrderGrid, Key.Down);
             await Idle();
             Check(orderScroll.VerticalOffset > offset && window.OrderGrid.SelectedItems.Count == 300,
-                "Down must scroll without collapsing the group.");
+                $"Down must scroll without collapsing the group: before={offset}, after={orderScroll.VerticalOffset}, selected={window.OrderGrid.SelectedItems.Count}, modifiers={Keyboard.Modifiers}.");
             KeyPress(window.OrderGrid, Key.Up);
             await Idle();
             Check(Math.Abs(orderScroll.VerticalOffset - offset) < 0.01 && vm.SelectedOrderRows.Count == 300,

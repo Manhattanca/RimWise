@@ -7,14 +7,19 @@
     <Border Background="{DynamicResource PageBrush}" Padding="24"><Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <TextBlock Text="AI 设置" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,18" />
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Margin="0,0,12,0">
+        <ScrollViewer x:Name="SettingsScroll" Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled"
+                      Focusable="False" FocusVisualStyle="{x:Null}">
+            <StackPanel>
                 <Button x:Name="PasteConnectionButton" Content="粘贴连接信息并填入" Click="PasteConnection_Click" HorizontalAlignment="Left" Margin="0,0,0,6" />
                 <TextBlock Text="可直接粘贴中转站连接信息、JSON 或环境变量。识别后请核对地址；不会自动发送请求。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,16" />
-                <CheckBox x:Name="EnabledBox" Content="启用 AI 接入" Margin="0,0,0,16" />
                 <TextBlock Text="服务" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
                 <ComboBox x:Name="ProviderBox" Margin="0,0,0,6" SelectionChanged="Provider_Changed" MaxDropDownHeight="310" />
                 <TextBlock x:Name="ServiceNote" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,12" />
+                <TextBlock x:Name="ServiceSuggestion" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,12">
+                    还没有 API 服务？可尝试第三方 RelayRax，新用户注册赠送 1 美元额度。
+                    <Hyperlink x:Name="ServiceSuggestionLink" Click="ServiceSuggestion_Click" Foreground="{DynamicResource MutedBrush}">点击查看</Hyperlink>
+                </TextBlock>
                 <StackPanel x:Name="EndpointPanel">
                     <TextBlock Text="API 地址" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
                     <TextBox x:Name="EndpointBox" TextChanged="Endpoint_Changed" Margin="0,0,0,16" ToolTip="支持基础地址（如 https://服务地址/v1/）或完整的 /v1/chat/completions 接口地址" />
@@ -36,7 +41,14 @@
                 <CheckBox x:Name="ManualModelBox" Content="手动填写模型" Checked="ManualModel_Changed" Unchecked="ManualModel_Changed" Margin="0,0,0,12" />
                 <Button x:Name="TestConnectionButton" Content="测试 AI 连接" Click="Test_Click" HorizontalAlignment="Left" Margin="0,0,0,16" />
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,10" />
-                <Expander x:Name="AdvancedOptions" Header="高级配置" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,10">
+                <Expander x:Name="AdvancedOptions" Header="高级配置" FocusVisualStyle="{x:Null}"
+                          Foreground="{DynamicResource TextBrush}" Margin="0,0,0,10">
+                    <Expander.Resources>
+                        <!-- The Fluent header has its own focus adorner, separate from the Expander. -->
+                        <Style x:Key="DefaultControlFocusVisualStyle" TargetType="Control">
+                            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Control" /></Setter.Value></Setter>
+                        </Style>
+                    </Expander.Resources>
                 <CheckBox x:Name="StreamingBox" Content="实时显示 AI 回报" Margin="0,12,0,6"
                           ToolTip="服务需支持流式回复及用量回报；不支持时关闭，收到完整回复后显示。不会自动重试付费请求。" />
                 </Expander>

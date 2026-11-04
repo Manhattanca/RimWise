@@ -19,12 +19,13 @@
                         <ComboBoxItem Content="尽量保留现有排序，为新增 Mod 寻找位置" Tag="insert" />
                         <ComboBoxItem Content="AI 全部重排序" Tag="full" />
                         <ComboBoxItem Content="模组适配（未完成）" Tag="adapt" />
+                        <ComboBoxItem Content="离线自动排序（规则、程序集分析与拓扑；不测试）" Tag="offline" />
                     </ComboBox>
                 </DockPanel>
                 <CheckBox x:Name="ConfirmRemovalToggle" Content="移出模组前由我确认（保留安装文件）" IsChecked="True"
                           ToolTip="测试期间可临时排除模组；保存到个人排序前须确认移出。停止、失败或取消后保留排序也遵循此设置。"
                           Click="RemovalPolicy_Click" Margin="0,10,0,0" />
-                <WrapPanel Margin="0,14,0,0">
+                <WrapPanel x:Name="AiActionsPanel" Margin="0,14,0,0">
                     <Button x:Name="SettingsButton" Content="AI 设置…" Click="Settings_Click" Margin="0,0,10,6" />
                     <Button x:Name="EstimateButton" Content="预估用量" Click="Estimate_Click" Margin="0,0,0,6" />
                     <Button x:Name="RecoveryButton" Content="恢复任务…" Click="Recovery_Click" Margin="10,0,0,6" />
@@ -72,7 +73,7 @@
                 <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Grid Margin="0,0,0,10">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                    <TextBlock Text="AI 回报与每轮处理结果" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock x:Name="ResponseHeading" Text="AI 回报与每轮处理结果" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <TextBox x:Name="ResponseText" Grid.Row="1" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" />
                 </Grid>
@@ -80,7 +81,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
                     <Grid Margin="0,0,8,0">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition /></Grid.RowDefinitions>
-                        <TextBlock Text="当前／最后测试顺序" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock x:Name="OrderHeading" Text="当前／最后测试顺序" FontWeight="SemiBold" Margin="0,0,0,6" />
                         <ListBox x:Name="AcceptedList" Grid.Row="1" ItemTemplate="{StaticResource ResultLine}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                  HorizontalContentAlignment="Stretch" />
                     </Grid>

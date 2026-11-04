@@ -74,7 +74,41 @@ internal static class InteractionMotionSmokeCheck
                     await Task.Delay(240);
                     Check(window.FileMenu.Template.FindName("PART_Popup", window.FileMenu) is System.Windows.Controls.Primitives.Popup { IsOpen: true },
                         "File menu opens " + theme);
-                    window.FileMenu.IsSubmenuOpen = false;
+                    await VerifyPopup((Popup)window.FileMenu.Template.FindName("PART_Popup", window.FileMenu),
+                        () => window.FileMenu.IsSubmenuOpen = false, () => window.FileMenu.IsSubmenuOpen = true,
+                        "File menu " + theme, Check, Path.Combine(output, "popup-" + theme));
+                    window.SettingsMenu.IsSubmenuOpen = true;
+                    await Task.Delay(180);
+                    window.PathsMenu.IsSubmenuOpen = true;
+                    await Task.Delay(180);
+                    await VerifyPopup((Popup)window.PathsMenu.Template.FindName("PART_Popup", window.PathsMenu),
+                        () => window.PathsMenu.IsSubmenuOpen = false, () => window.PathsMenu.IsSubmenuOpen = true,
+                        "Nested menu " + theme, Check);
+                    window.SettingsMenu.IsSubmenuOpen = false;
+                    await Task.Delay(180);
+                    window.RowHeightPopup.IsOpen = true;
+                    await Task.Delay(180);
+                    await VerifyPopup(window.RowHeightPopup, () => window.RowHeightPopup.IsOpen = false,
+                        () => window.RowHeightPopup.IsOpen = true, "Row height " + theme, Check);
+                    var context = new ContextMenu { PlacementTarget = window.FileMenu };
+                    context.Items.Add(new MenuItem { Header = "测试操作" });
+                    context.IsOpen = true;
+                    await Task.Delay(180);
+                    await VerifyPopup((Popup)context.Parent, () => context.IsOpen = false,
+                        () => context.IsOpen = true, "Context menu " + theme, Check);
+                    var tooltip = new ToolTip { PlacementTarget = window.FileMenu, Content = "提示浮窗" };
+                    tooltip.IsOpen = true;
+                    await Task.Delay(180);
+                    await VerifyPopup((Popup)tooltip.Parent, () => tooltip.IsOpen = false,
+                        () => tooltip.IsOpen = true, "Tooltip " + theme, Check);
+                    var combo = new ComboBox { Width = 160, ItemsSource = new[] { "选项一", "选项二" } };
+                    window.ModInteractionOverlay.Children.Add(combo);
+                    combo.ApplyTemplate();
+                    combo.IsDropDownOpen = true;
+                    await Task.Delay(180);
+                    await VerifyPopup((Popup)combo.Template.FindName("PART_Popup", combo), () => combo.IsDropDownOpen = false,
+                        () => combo.IsDropDownOpen = true, "Combo dropdown " + theme, Check);
+                    window.ModInteractionOverlay.Children.Remove(combo);
                     Check(ReferenceEquals(window.SaveOrderButton.Parent, window.LaunchGameButton.Parent), "Game beside save " + theme);
                     var buttons = ((Panel)window.SaveOrderButton.Parent).Children.OfType<Button>().ToArray();
                     Check(Array.IndexOf(buttons, window.LaunchGameButton) == Array.IndexOf(buttons, window.SaveOrderButton) + 1
@@ -136,10 +170,15 @@ internal static class InteractionMotionSmokeCheck
                     window.ModInteractionOverlay.Children.Add(popup);
                     popup.IsOpen = true;
                     await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
-                    Check(!InterfaceMotion.Enabled || popupContent.HasAnimatedProperties, "Popup opens with animation " + theme);
+                    Check(popup.PopupAnimation == (InterfaceMotion.Enabled ? PopupAnimation.Fade : PopupAnimation.None), "Popup opens with animation " + theme);
                     await Task.Delay(240);
                     Check(!popupContent.HasAnimatedProperties && popupContent.Opacity == 1, "Popup animation completes " + theme);
-                    popup.IsOpen = false;
+                    await VerifyPopup(popup, () => popup.IsOpen = false, () => popup.IsOpen = true, "Standalone popup " + theme, Check);
+                    popup.PlacementTarget = window.LaunchGameButton;
+                    popup.Placement = PlacementMode.Top;
+                    popup.IsOpen = true;
+                    await Task.Delay(180);
+                    await VerifyPopup(popup, () => popup.IsOpen = false, () => popup.IsOpen = true, "Upward popup " + theme, Check);
                     window.ModInteractionOverlay.Children.Remove(popup);
                     foreach (var height in new[] { 28d, 38d, 64d })
                     {
@@ -186,6 +225,71 @@ internal static class InteractionMotionSmokeCheck
     }
 
     private sealed class MotionTestWindow : Window { }
+
+    private static async Task VerifyPopup(Popup popup, Action close, Action open, string name, Action<bool, string> check, string? frames = null)
+    {
+        check(popup.PopupAnimation == (InterfaceMotion.Enabled ? PopupAnimation.Fade : PopupAnimation.None),
+            name + $" shared motion: {popup.PopupAnimation}; transparent={popup.AllowsTransparency}; source={DependencyPropertyHelper.GetValueSource(popup, Popup.PopupAnimationProperty).BaseValueSource}");
+        var closed = 0;
+        EventHandler handler = (_, _) => closed++;
+        popup.Closed += handler;
+        FrameworkElement Root()
+        {
+            DependencyObject root = popup.Child;
+            while (VisualTreeHelper.GetParent(root) is { } parent) root = parent;
+            return (FrameworkElement)root;
+        }
+        ScaleTransform? Scale() => (Root().RenderTransform as TransformGroup)?.Children.OfType<ScaleTransform>().LastOrDefault();
+        void Frame(string phase)
+        {
+            if (frames is null) return;
+            var root = Root();
+            var bitmap = new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth), (int)Math.Ceiling(root.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(root);
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var file = File.Create(frames + "-" + phase + ".png");
+            encoder.Save(file);
+        }
+        Frame("expanded");
+        var scaleBeforeClose = Scale()?.ScaleY ?? 1;
+        close();
+        check(!popup.IsOpen, name + " logical close immediate");
+        if (InterfaceMotion.Enabled)
+        {
+            check(closed == 0 && PresentationSource.FromVisual(popup.Child) is not null, name + " exit retains visual until contraction completes");
+            check(Root().Opacity == 1 && Scale() is { HasAnimatedProperties: true }, name + $" contracts with full opacity: opacity={Root().Opacity}, scale={Scale()}, attached={AnchoredPopupMotion.GetIsEnabled(popup)}");
+            await Task.Delay(60);
+            // A busy dispatcher may resume after the short animation has already finished.
+            check(Root().Opacity == 1 && Scale() is { } shrinking && shrinking.ScaleY < scaleBeforeClose && shrinking.ScaleY >= 0,
+                name + $" shrinks toward trigger: before={scaleBeforeClose}, now={Scale()?.ScaleY}, opacity={Root().Opacity}");
+            Frame("contracting");
+        }
+        await Task.Delay(240);
+        check(closed == 1 && PresentationSource.FromVisual(popup.Child) is null, name + " closes once without orphan window");
+        open();
+        await Task.Delay(35);
+        if (InterfaceMotion.Enabled)
+        {
+            check(Root().Opacity == 1 && Scale() is { HasAnimatedProperties: true, ScaleY: >= 0 and <= 1 }, name + " expands with full opacity");
+            var anchor = Scale()!;
+            check(anchor.ScaleX == 1, name + " width stays unchanged");
+            check(anchor.CenterX >= 0 && anchor.CenterX <= Root().ActualWidth
+                && anchor.CenterY >= 0 && anchor.CenterY <= Root().ActualHeight, name + " origin inside actual popup bounds");
+            if (name.StartsWith("Upward popup", StringComparison.Ordinal))
+                check(Math.Abs(anchor.CenterY - Root().ActualHeight) < .1, name + " expands upward from bottom edge");
+            Frame("expanding");
+        }
+        await Task.Delay(30);
+        close();
+        open();
+        await Task.Delay(240);
+        check(popup.IsOpen && PresentationSource.FromVisual(popup.Child) is not null, name + " rapid reopen stays open");
+        close();
+        await Task.Delay(240);
+        check(!popup.IsOpen && PresentationSource.FromVisual(popup.Child) is null, name + " rapid reopen cleans up");
+        popup.Closed -= handler;
+    }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {

@@ -36,3 +36,8 @@
 
 
 `dotnet/extensions`（.NET Foundation、Microsoft 及贡献者，https://github.com/dotnet/extensions），Microsoft.Extensions.AI.Abstractions 10.5.2，作为 MCP SDK 的传递依赖使用，MIT。许可见 `../packaging/licenses/dotnet-AI-Abstractions-LICENSE.txt`，完整上游声明见 `../packaging/licenses/dotnet-AI-Abstractions-THIRD-PARTY-NOTICES.txt`。
+## 安装包组件
+
+EXE 安装包使用 Inno Setup 6.7.4（Jordan Russell、Martijn Laan，https://jrsoftware.org/），许可见 `licenses/Inno-Setup-LICENSE.txt`。简体中文消息采用 jrsoftware/issrc 随附的 ChineseSimplified.isl，维护者 Zhenghan Yang (Kira)，保留文件内署名。安装界面仅使用简体中文。
+
+EXE 随包提供 Microsoft .NET 10.0.14 Desktop Runtime x64 官方原版安装程序，仅在缺少兼容运行时时安装；微软组件保留其原有许可和署名。ZIP 不含运行时，需要电脑已安装 .NET 10 Desktop Runtime x64。

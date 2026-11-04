@@ -25,7 +25,7 @@ public sealed record PackageManifest(int Schema, string Product, string Version,
             ?? throw new InvalidDataException("更新清单无效。");
         if (manifest.Schema != 1 || manifest.Product != "RimWise" || manifest.Version != version
             || manifest.Files is null || manifest.Retired is null || manifest.Files.Length > 4096 || manifest.Retired.Length > 16384)
-            throw new InvalidDataException("更新清单与正在运行的版本不一致。请完整覆盖解压新版文件。");
+            throw new InvalidDataException("更新清单与正在运行的版本不一致。请重新运行安装包；ZIP 用户请清空程序目录后解压，保留独立用户数据。");
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in manifest.Files)
         {
@@ -38,7 +38,7 @@ public sealed record PackageManifest(int Schema, string Product, string Version,
                 "Decompiler/RimWise.Decompiler.deps.json", "Decompiler/RimWise.Decompiler.runtimeconfig.json",
                 "Decompiler/ICSharpCode.Decompiler.dll", "Decompiler/ModelContextProtocol.dll",
                 "Decompiler/ModelContextProtocol.Core.dll" }.Any(name => !names.Contains(name)))
-            throw new InvalidDataException("更新清单缺少本地反编译运行文件。请完整覆盖解压新版文件。");
+            throw new InvalidDataException("更新清单缺少本地反编译运行文件。请重新运行安装包；ZIP 用户请清空程序目录后解压，保留独立用户数据。");
         foreach (var file in manifest.Retired) ValidateFile(file);
         return (manifest, Convert.ToHexString(SHA256.HashData(bytes)));
     }

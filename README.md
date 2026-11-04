@@ -38,6 +38,10 @@
 
 ## 使用与更新
 
+### 构建分发包
+
+运行 `scripts/Publish-Preview.ps1 -Version 0.5.0` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.5.0 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
+
 启动后核对游戏、模组和配置路径，再导入或调整排序。AI 功能在“自动排序”窗口配置。用户数据独立于程序目录，密钥在本机加密保存；迁移数据请使用软件的路径设置。
 
 程序更新仅使用本仓库的 [GitHub Releases](https://github.com/Manhattanca/RimWise/releases)。有安装包时优先提供安装包；ZIP 版本请关闭软件，清空原程序目录后再解压，保留独立的用户数据目录。没有发布附件时会提示暂时无法取得更新，不影响使用。

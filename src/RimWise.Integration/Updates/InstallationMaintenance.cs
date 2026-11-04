@@ -57,7 +57,7 @@ public sealed class InstallationMaintenance
             var path = ScopedPaths.Child(installation, file.Path);
             using var parent = PinnedDirectory.Open(Path.GetDirectoryName(path)!);
             if (!PackageManifest.HashFile(path).Equals(file.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"更新文件缺失或内容不完整：{file.Path}。请退出后完整覆盖解压新版 ZIP。");
+                throw new InvalidDataException($"更新文件缺失或内容不完整：{file.Path}。请关闭软件后重新运行安装包；ZIP 用户请清空程序目录后解压，保留独立用户数据。");
         }
         var current = package.Files.Select(f => f.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var candidates = package.Retired.Concat(state.Files).Concat(state.Pending)

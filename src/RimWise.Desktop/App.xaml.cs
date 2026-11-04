@@ -12,6 +12,9 @@ namespace RimWise.Desktop;
 
 public partial class App : Application
 {
+    // Existence only: multiple RimWise windows remain supported. Installers must wait
+    // for all instances to exit before replacing or uninstalling managed files.
+    private readonly Mutex installationMutex = new(false, @"Local\RimWise.Installation.Active");
     internal ThemeService Themes { get; private set; } = null!;
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -82,7 +85,7 @@ public partial class App : Application
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or JsonException or InvalidDataException)
             {
                 maintenance = null;
-                updateNotice = "未能完成升级检查，已保留未清理的文件。请关闭软件后重新完整覆盖解压新版 ZIP。\n\n" + ex.Message;
+                updateNotice = "未能完成升级检查，已保留未清理的文件。请关闭软件后重新运行安装包；ZIP 用户请清空程序目录后重新解压，保留另行存放的用户数据。\n\n" + ex.Message;
                 DiagnosticEventLog.Current?.Record("update", "prepare-failed", ex.Message);
             }
         }
@@ -141,6 +144,7 @@ public partial class App : Application
         Themes?.Dispose();
         UserStorage.Location?.Dispose();
         base.OnExit(e);
+        GC.KeepAlive(installationMutex);
     }
 
     private static async Task MaintainTestStorageAsync(string profile)

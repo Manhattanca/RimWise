@@ -1,4 +1,12 @@
-# RimWise 0.4.9
+# RimWise 0.5.0
+
+## 0.5.0 更新
+
+新增 EXE 安装／更新包，安装器记住上次安装目录，新版本使用独立程序子目录。用户数据保留在原配置位置；卸载程序不删除用户数据。缺少 .NET 10 Desktop Runtime 时，安装器使用随包附带的微软官方安装程序补齐运行环境。
+
+继续提供 ZIP 纯净包。ZIP 用户请关闭软件、清空原程序目录后解压；不要删除另行存放的用户数据。ZIP 需要已安装 .NET 10 Desktop Runtime x64。
+
+本版合并以下 0.4.9 修复及后台更新功能。
 
 ## 0.4.9 更新
 
@@ -298,3 +306,9 @@ AI 仅获得受控模组及诊断信息；日志在本机筛选并隐藏密钥�
 
 
 `dotnet/extensions`（.NET Foundation、Microsoft 及贡献者，https://github.com/dotnet/extensions），Microsoft.Extensions.AI.Abstractions 10.5.2，作为 MCP SDK 的传递依赖使用，MIT。许可见 `licenses/dotnet-AI-Abstractions-LICENSE.txt`，完整上游声明见 `licenses/dotnet-AI-Abstractions-THIRD-PARTY-NOTICES.txt`。
+
+## 安装包组件
+
+EXE 安装包使用 Inno Setup 6.7.4（Jordan Russell、Martijn Laan，https://jrsoftware.org/），许可见 `licenses/Inno-Setup-LICENSE.txt`。简体中文消息采用 jrsoftware/issrc 随附的 ChineseSimplified.isl，维护者 Zhenghan Yang (Kira)，保留文件内署名。安装界面仅使用简体中文。
+
+EXE 随包提供 Microsoft .NET 10.0.14 Desktop Runtime x64 官方原版安装程序，仅在缺少兼容运行时时安装；微软组件保留其原有许可和署名。ZIP 不含运行时，需要电脑已安装 .NET 10 Desktop Runtime x64。

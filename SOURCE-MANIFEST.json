@@ -1,5 +1,5 @@
 {
-  "Version": "0.4.9",
+  "Version": "0.5.0",
   "Purpose": "MIT source snapshot; third-party components retain their own licenses",
   "Excluded": [
     "Personal data and credentials",
@@ -18,7 +18,7 @@
     },
     {
       "Path": "docs/THIRD_PARTY.md",
-      "Sha256": "efd4a56213b2ba709c53dfa34b7431d1171eecfc497dd71700a76bbd7d1ff3b0"
+      "Sha256": "333dedb4bf23ea47f3e735dc1bb2590d78fc5d0298b33165536ac37f50f2e814"
     },
     {
       "Path": "global.json",
@@ -31,6 +31,10 @@
     {
       "Path": "NuGet.Config",
       "Sha256": "9e2c63938fcc02b95e85e36099dcaf7f81abfd3755769aad34906f178c30c1d8"
+    },
+    {
+      "Path": "packaging/ChineseSimplified.isl",
+      "Sha256": "e0b0b350e2245f3c5e65586dfe43d574f6e7f06f2261149aba284954b3fc9a8d"
     },
     {
       "Path": "packaging/decompiler-runtime-files.txt",
@@ -81,6 +85,10 @@
       "Sha256": "95e62fa7b701a5dcdab849d7b3e8de13b104df8c2b94afe9aba45b8d6a9b9517"
     },
     {
+      "Path": "packaging/licenses/Inno-Setup-LICENSE.txt",
+      "Sha256": "2e5346868c2a18434489824e11d65c3031620f792fefc415d05f19cd441abf5c"
+    },
+    {
       "Path": "packaging/licenses/ModelContextProtocol-LICENSE.txt",
       "Sha256": "7c6a686d2b34b86ad8c726e0ac4d76903b525f251d73e617f8db3879fa8f11fc"
     },
@@ -118,7 +126,15 @@
     },
     {
       "Path": "packaging/README.preview.md",
-      "Sha256": "8cb7ceeb48552faf6f77d010a80adc6818b6974856c88848b6107d9ec5bc2a01"
+      "Sha256": "67d547301fa6a9324dde8acfb641277c0a585f1dfbcab1cc7f5c03f88b5b8073"
+    },
+    {
+      "Path": "packaging/RimWise.iss",
+      "Sha256": "e22e326da7d7935fb79864e42ffcd5371dafd9069a1ad1688c6c7e7f07e335a4"
+    },
+    {
+      "Path": "scripts/Build-Installer.ps1",
+      "Sha256": "33ed534ebea3121f46ca05d7d8a3ba7335b4913c6eff62507f3cba5bde92bc25"
     },
     {
       "Path": "scripts/Build-Source.ps1",
@@ -131,6 +147,14 @@
     {
       "Path": "scripts/Initialize-Environment.ps1",
       "Sha256": "e0176c058b0ce634559f99460ab893739ae5e5cac3de28a43ddd8f4ce506503e"
+    },
+    {
+      "Path": "scripts/New-PackageManifest.ps1",
+      "Sha256": "5a537d0bad4f867b8dd4d2256f7d7a89f8962a9128025263e7d989230d827585"
+    },
+    {
+      "Path": "scripts/Publish-Preview.ps1",
+      "Sha256": "e0a6b1fb72c829f2ce990c55bc3f51491c5a1efdb31fa45dfcfdddf859320430"
     },
     {
       "Path": "src/RimWise.Core/CatalogueAnalysis.cs",
@@ -230,7 +254,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/App.xaml.cs",
-      "Sha256": "d68f26bbe98e2fef9928580cf4457d81fe712cd06ac8653fa621abab66f5ebc1"
+      "Sha256": "52104934403bf79a487d47deecee6831f46f60c5908249fb66d82ca622dcbd54"
     },
     {
       "Path": "src/RimWise.Desktop/AutomaticLogSmokeCheck.cs",
@@ -538,7 +562,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/RimWise.Desktop.csproj",
-      "Sha256": "94c90769ed2d53dd3994ce0965ff464f2f7060c9cb4635894c84c2a2ace8d054"
+      "Sha256": "d17791a850ae0dc846cf2e7448cbb521b2fda0c415d1afafe4ed8c7179517697"
     },
     {
       "Path": "src/RimWise.Desktop/RuntimeUiSmokeCheck.cs",
@@ -1502,7 +1526,7 @@
     },
     {
       "Path": "src/RimWise.Integration/Updates/InstallationMaintenance.cs",
-      "Sha256": "0b7c8db7e2cdcf9daaa562e1b71a4b1572fa83b583c660ed4544262422e4e65e"
+      "Sha256": "26ef84fdcdbf17eea9b09aad67e8ab7f0bb8531d478f4c0db1840435c81a3df3"
     },
     {
       "Path": "src/RimWise.Integration/Updates/LatestCleanupBackup.cs",
@@ -1510,7 +1534,7 @@
     },
     {
       "Path": "src/RimWise.Integration/Updates/PackageManifest.cs",
-      "Sha256": "68c5638d22fa83c8ec513a3ef3e2401fb4e0492dd150ca1d305404a604223536"
+      "Sha256": "08e77b67f2c7a05cfda0d23253c4472da5ff51b99250cdaeb9836d2f29248461"
     },
     {
       "Path": "src/RimWise.Integration/Updates/RetiredPackageFile.cs",

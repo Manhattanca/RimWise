@@ -1,0 +1,20 @@
+<Window x:Class="RimWise.Desktop.Views.BatchMarkWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource {x:Type Window}}" Title="批量标记" Width="420" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <StackPanel Margin="20">
+        <TextBlock Text="批量标记" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock x:Name="SelectionText" Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,16" />
+        <TextBlock Text="行颜色" FontWeight="SemiBold" />
+        <WrapPanel x:Name="ColorButtons" Margin="0,8,0,12" />
+        <TextBlock Text="按颜色必须保留" FontWeight="SemiBold" />
+        <ComboBox x:Name="RetainedColorBox" Margin="0,8,0,8" />
+        <TextBlock Text="对该颜色的现有及以后标记的模组持续生效" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,12" />
+        <WrapPanel>
+            <Button Content="该颜色必须保留" Click="Retain_Click" />
+            <Button Content="取消该颜色保留" Click="Unretain_Click" />
+        </WrapPanel>
+        <Button Content="取消" Click="Cancel_Click" IsCancel="True" HorizontalAlignment="Right" Margin="0,8,0,0" />
+    </StackPanel>
+</Window>

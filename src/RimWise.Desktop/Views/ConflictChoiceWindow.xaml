@@ -1,0 +1,76 @@
+<Window x:Class="RimWise.Desktop.Views.ConflictChoiceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource {x:Type Window}}" Title="处理模组冲突"
+        Width="880" Height="650" MinWidth="720" MinHeight="520" WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <Style x:Key="ConflictCell" TargetType="DataGridCell" BasedOn="{StaticResource MarkedCell}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsProtected}" Value="True">
+                    <Setter Property="Background" Value="{Binding Background, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="ConflictRow" TargetType="DataGridRow" BasedOn="{StaticResource MarkedRow}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsProtected}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource ConflictProtectedBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource WarningTextBrush}" />
+                    <Setter Property="BorderThickness" Value="3,0,0,0" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <Border Background="{DynamicResource PageBrush}" Padding="24">
+        <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <StackPanel>
+                <TextBlock x:Name="HeadingText" FontSize="20" FontWeight="SemiBold"/>
+                <TextBlock x:Name="ReasonText" TextWrapping="Wrap" MaxHeight="60" Margin="0,10,0,6"/>
+                <TextBlock Text="选中需要移除的模组，支持 Ctrl、Shift 多选。连带依赖也会移出排序，模组文件保留。"
+                           TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}"/>
+                <Border x:Name="ProtectionWarning" Padding="10" CornerRadius="6" Margin="0,10,0,0" Visibility="Collapsed"
+                        Background="{DynamicResource ConflictProtectedBrush}" BorderBrush="{DynamicResource WarningTextBrush}" BorderThickness="1">
+                    <TextBlock x:Name="ProtectionText" TextWrapping="Wrap" Foreground="{DynamicResource WarningTextBrush}"/>
+                </Border>
+                <Border x:Name="GroupStatusBorder" Padding="10" CornerRadius="6" Margin="0,10,0,8"
+                        Background="{DynamicResource ConflictPendingBrush}">
+                    <TextBlock x:Name="GroupStatusText" TextWrapping="Wrap"/>
+                </Border>
+            </StackPanel>
+            <DataGrid x:Name="ModsList" Grid.Row="1" Margin="0,8,0,12" AutoGenerateColumns="False" IsReadOnly="True"
+                      CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
+                      SelectionMode="Extended" SelectionUnit="FullRow" SelectionChanged="Selection_Changed"
+                      GridLinesVisibility="None" BorderThickness="0" CellStyle="{StaticResource ConflictCell}"
+                      RowStyle="{StaticResource ConflictRow}" AlternationCount="2" Style="{StaticResource ModListGrid}"
+                      Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}"
+                      EnableRowVirtualization="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="#" Binding="{Binding Mod.Index}" Width="44" />
+                    <DataGridTemplateColumn Header="模组" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                        <ContentControl Content="{Binding Mod}" ContentTemplate="{StaticResource ModIdentity}" />
+                    </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="处理" Width="170"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                        <TextBlock Text="{Binding State}" ToolTip="{Binding StateTooltip}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
+                            <TextBlock.Style><Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                <Style.Triggers><DataTrigger Binding="{Binding IsProtected}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource WarningTextBrush}"/>
+                                </DataTrigger></Style.Triggers>
+                            </Style></TextBlock.Style>
+                        </TextBlock>
+                    </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="" Width="34"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                        <ContentControl Content="{Binding Mod}" ContentTemplate="{StaticResource ModSeverity}" />
+                    </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+            <TextBlock x:Name="ImpactText" Grid.Row="2" TextWrapping="Wrap" MaxHeight="60" Margin="0,0,0,12"/>
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="KeepButton" Content="不移除" IsCancel="True" Click="Keep_Click" Margin="0,0,10,0"/>
+                <Button x:Name="ContinueButton" Content="移除" IsEnabled="False" Click="Continue_Click"
+                        Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

@@ -1,0 +1,21 @@
+Valve Steamworks native redistributable notice
+
+steam_api64.dll is a proprietary Valve Corporation Steamworks SDK 1.64
+redistributable. It is not covered by the Steamworks.NET MIT license or by
+this project's MIT license. Steam and Steamworks are Valve
+trademarks. This application is an independent tool and is not endorsed by Valve.
+
+The unmodified Windows x64 file was obtained from the official upstream
+rlabrecque/Steamworks.NET release 2025.164.1:
+https://github.com/rlabrecque/Steamworks.NET/releases/tag/2025.164.1
+Archive: Steamworks.NET-Standalone_2025.164.1.zip
+Member: Windows-x64/steam_api64.dll
+SHA256: eb17909a76668cf9ae0b92a618a34a50f6c73d3a6787cb4dd8ce36a8b10bfb75
+
+Valve SDK integration and redistribution documentation:
+https://partner.steamgames.com/doc/sdk
+https://partner.steamgames.com/doc/sdk/api
+
+This notice records ownership and origin; it does not grant additional rights
+to the Valve SDK. Any separate distribution must comply with Valve's applicable
+Steamworks terms. No game binary, patched binary or steam_appid.txt is included.

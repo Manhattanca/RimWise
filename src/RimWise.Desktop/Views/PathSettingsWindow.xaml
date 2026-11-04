@@ -1,0 +1,45 @@
+<Window x:Class="RimWise.Desktop.Views.PathSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource {x:Type Window}}"
+        Title="路径设置" Width="800" Height="660" MinWidth="700" MinHeight="490"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
+    <Border Background="{DynamicResource PageBrush}" Padding="24"><Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,18">
+            <Button DockPanel.Dock="Right" x:Name="DetectButton" Content="识别 Steam 路径" Click="Detect_Click" />
+            <TextBlock Text="游戏与模组" FontSize="19" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </DockPanel>
+        <StackPanel Grid.Row="1" x:Name="InstallationsPanel" Visibility="Collapsed" Margin="0,0,0,14">
+            <TextBlock Text="Steam 游戏安装" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+            <ComboBox x:Name="InstallationsBox" DisplayMemberPath="DisplayPath" SelectionChanged="Installation_Changed" />
+        </StackPanel>
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="用户数据目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <DockPanel Margin="0,0,0,6"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseUserData_Click" /><TextBox x:Name="UserDataPathBox" IsReadOnly="True" /></DockPanel>
+                <TextBlock Text="保存配置、密钥、标记、备份及任务。更换后自动重启并迁移，校验成功后清理原数据。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,16" />
+                <TextBlock Text="自动排序日志保存目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <DockPanel Margin="0,0,0,6"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseLogs_Click" /><TextBox x:Name="LogDirectoryBox" /></DockPanel>
+                <TextBlock Text="保存自动或手动导出的日志 ZIP。更改路径时自动迁移已有日志，校验成功后清理原文件，同名不同内容的日志分别保留。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,16" />
+                <TextBlock Text="环世界游戏目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <DockPanel Margin="0,0,0,16"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseGame_Click" /><TextBox x:Name="GamePathBox" /></DockPanel>
+                <TextBlock Text="本地模组目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <DockPanel Margin="0,0,0,16"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseLocal_Click" /><TextBox x:Name="LocalPathBox" /></DockPanel>
+                <TextBlock Text="创意工坊模组目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <DockPanel Margin="0,0,0,16"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseWorkshop_Click" /><TextBox x:Name="WorkshopPathBox" /></DockPanel>
+                <TextBlock Text="游戏配置目录（含 ModsConfig.xml，留空自动识别）" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <DockPanel Margin="0,0,0,16"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseConfig_Click" /><TextBox x:Name="ConfigPathBox" /></DockPanel>
+                <TextBlock Text="目标游戏版本（留空自动识别）" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <TextBox x:Name="TargetVersionBox" Margin="0,0,0,16" ToolTip="例如 1.7、1.6、1.0、0.19" />
+                <TextBlock x:Name="DetectionStatus" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" />
+                <Expander x:Name="DetectionDetails" Header="识别详情" Visibility="Collapsed" Margin="0,8,0,0">
+                    <TextBlock x:Name="DetectionDetailsText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" />
+                </Expander>
+            </StackPanel>
+        </ScrollViewer>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="取消" IsCancel="True" /><Button Content="保存" Click="Save_Click" IsDefault="True" Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}" />
+        </StackPanel>
+    </Grid></Border>
+</Window>

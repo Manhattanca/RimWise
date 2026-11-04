@@ -1,0 +1,23 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="PageBrush" Color="#1D2327" />
+    <SolidColorBrush x:Key="PanelBrush" Color="#262E33" />
+    <SolidColorBrush x:Key="InputBrush" Color="#20272B" />
+    <SolidColorBrush x:Key="TextBrush" Color="#E7EEEE" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#AFBFC1" />
+    <SolidColorBrush x:Key="DisabledTextBrush" Color="#829195" />
+    <SolidColorBrush x:Key="BorderBrush" Color="#48565C" />
+    <SolidColorBrush x:Key="HeaderBrush" Color="#323E43" />
+    <SolidColorBrush x:Key="AlternateBrush" Color="#2A3439" />
+    <SolidColorBrush x:Key="SelectionBrush" Color="#203C38" />
+    <SolidColorBrush x:Key="HoverBrush" Color="#344844" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#337F73" />
+    <SolidColorBrush x:Key="LinkBrush" Color="#79C7BA" />
+    <SolidColorBrush x:Key="AccentTextBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="WarningTextBrush" Color="#F1CB62" />
+    <SolidColorBrush x:Key="WarningIconBrush" Color="#F1C84E" />
+    <SolidColorBrush x:Key="ErrorTextBrush" Color="#FF737C" />
+    <SolidColorBrush x:Key="ErrorIconBrush" Color="#F25F6D" />
+    <SolidColorBrush x:Key="ConflictPendingBrush" Color="#512E35" />
+    <SolidColorBrush x:Key="ConflictReadyBrush" Color="#234B3D" />
+    <SolidColorBrush x:Key="ConflictProtectedBrush" Color="#4B4026" />
+</ResourceDictionary>

@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="src/RimWise.Core/RimWise.Core.csproj" />
+  <Project Path="src/RimWise.Formats/RimWise.Formats.csproj" />
+  <Project Path="src/RimWise.Integration/RimWise.Integration.csproj" />
+  <Project Path="src/RimWise.SteamBridge/RimWise.SteamBridge.csproj" />
+  <Project Path="src/RimWise.Decompiler/RimWise.Decompiler.csproj" />
+  <Project Path="src/RimWise.Desktop/RimWise.Desktop.csproj" />
+  <Project Path="tests/RimWise.SteamChecks/RimWise.SteamChecks.csproj" />
+</Solution>

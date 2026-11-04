@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModsConfigData>
+  <version>1.7.4985</version>
+  <activeMods>
+    <li>ludeon.rimworld</li>
+    <li>example.framework</li>
+    <li>example.buildings</li>
+    <li>example.weapons</li>
+    <li>example.stories</li>
+  </activeMods>
+  <knownExpansions />
+  <sampleNote>自建演示数据；示例模组不存在，不用于实际游戏。</sampleNote>
+</ModsConfigData>

@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Version>0.4.9</Version>
+    <InformationalVersion>0.4.9</InformationalVersion>
+    <AssemblyName>RimWise</AssemblyName>
+    <RootNamespace>RimWise.Desktop</RootNamespace>
+    <Product>RimWise</Product>
+    <Title>RimWise</Title>
+    <AssemblyTitle>RimWise</AssemblyTitle>
+    <Description>RimWise — RimWorld 模组排序与管理</Description>
+    <ApplicationIcon>Resources\Branding\RimWise.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RimWise.Core\RimWise.Core.csproj" />
+    <ProjectReference Include="..\RimWise.Formats\RimWise.Formats.csproj" />
+    <ProjectReference Include="..\RimWise.Integration\RimWise.Integration.csproj" />
+    <ProjectReference Include="..\RimWise.SteamBridge\RimWise.SteamBridge.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\RimWise.Decompiler\RimWise.Decompiler.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <Resource Include="Samples\ModsConfig.xml" />
+    <Resource Include="Resources\Branding\RimWise.ico" />
+    <EmbeddedResource Include="Resources\Pinyin\characters.tsv" LogicalName="RimWise.Pinyin.Characters" />
+    <EmbeddedResource Include="Resources\Pinyin\phrases.tsv" LogicalName="RimWise.Pinyin.Phrases" />
+  </ItemGroup>
+  <Target Name="CopySteamBridge" AfterTargets="Build">
+    <ItemGroup><BridgeFiles Include="$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.SteamBridge\$(Configuration)\net10.0\*.exe;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.SteamBridge\$(Configuration)\net10.0\*.dll;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.SteamBridge\$(Configuration)\net10.0\*.json" /></ItemGroup>
+    <Copy SourceFiles="@(BridgeFiles)" DestinationFolder="$(TargetDir)SteamBridge" />
+  </Target>
+  <Target Name="PublishSteamBridge" BeforeTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <SteamBridgePublishFiles Include="$(TargetDir)SteamBridge\*" />
+      <!-- Qualify metadata to avoid batching against the application's existing publish items. -->
+      <ResolvedFileToPublish Include="@(SteamBridgePublishFiles)">
+        <RelativePath>SteamBridge\%(SteamBridgePublishFiles.Filename)%(SteamBridgePublishFiles.Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+  <Target Name="CopyLocalDecompiler" AfterTargets="Build">
+    <ItemGroup>
+      <DecompilerFiles Include="$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.Decompiler\$(Configuration)\net10.0\**\*.exe;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.Decompiler\$(Configuration)\net10.0\**\*.dll;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.Decompiler\$(Configuration)\net10.0\**\*.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DecompilerFiles)" DestinationFiles="@(DecompilerFiles->'$(TargetDir)Decompiler\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+  <Target Name="PublishLocalDecompiler" BeforeTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <DecompilerPublishFiles Include="$(TargetDir)Decompiler\**\*" />
+      <ResolvedFileToPublish Include="@(DecompilerPublishFiles)">
+        <RelativePath>Decompiler\%(DecompilerPublishFiles.RecursiveDir)%(DecompilerPublishFiles.Filename)%(DecompilerPublishFiles.Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+</Project>

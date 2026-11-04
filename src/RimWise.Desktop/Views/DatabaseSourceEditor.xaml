@@ -1,0 +1,45 @@
+<UserControl x:Class="RimWise.Desktop.Views.DatabaseSourceEditor"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="Margin" Value="0,4,14,4"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Grid Background="Transparent">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Ellipse x:Name="Ring" Width="16" Height="16" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.5"/>
+                        <Ellipse x:Name="Dot" Width="8" Height="8" Fill="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
+                        <ContentPresenter Grid.Column="1" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Dot" Property="Visibility" Value="Visible"/><Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource AccentBrush}"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Ring" Property="StrokeThickness" Value="3"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+    </UserControl.Resources>
+    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Background="{DynamicResource PanelBrush}"
+            CornerRadius="6" Padding="16" Margin="0,0,0,14">
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="112"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="40"/><RowDefinition Height="46"/><RowDefinition Height="46"/><RowDefinition Height="46"/></Grid.RowDefinitions>
+            <TextBlock x:Name="Heading" Grid.ColumnSpan="4" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
+            <RadioButton x:Name="DisabledChoice" Grid.Row="1" Content="不使用" Checked="Mode_Checked"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text="停用此数据库" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+            <RadioButton x:Name="GitHubChoice" Grid.Row="2" Content="GitHub" Checked="Mode_Checked"/>
+            <TextBox x:Name="GitHubInput" Grid.Row="2" Grid.Column="1" Margin="0,4,6,4" ToolTip="GitHub 仓库地址；根目录须包含对应的 JSON 数据库"/>
+            <Button x:Name="GitHubDownload" Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" Content="下载" Margin="2,4,0,4" Click="Download_Click"/>
+            <RadioButton x:Name="WebsiteChoice" Grid.Row="3" Content="网址" Checked="Mode_Checked"/>
+            <TextBox x:Name="WebsiteInput" Grid.Row="3" Grid.Column="1" Margin="0,4,6,4" ToolTip="HTTPS 下载地址，支持 JSON 或包含对应 JSON 的 ZIP"/>
+            <Button x:Name="WebsiteDownload" Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="2" Content="下载" Margin="2,4,0,4" Click="Download_Click"/>
+            <RadioButton x:Name="LocalChoice" Grid.Row="4" Content="本地文件" Checked="Mode_Checked"/>
+            <TextBox x:Name="LocalInput" Grid.Row="4" Grid.Column="1" Margin="0,4,6,4" ToolTip="本地 JSON 或 ZIP 数据库文件；只读不修改"/>
+            <Button x:Name="ChooseFile" Grid.Row="4" Grid.Column="2" Content="选择" Margin="2,4,0,4" Click="Choose_Click"/>
+            <Button x:Name="ReadFile" Grid.Row="4" Grid.Column="3" Content="读取" Margin="6,4,0,4" Click="Download_Click"/>
+        </Grid>
+    </Border>
+</UserControl>

@@ -1,0 +1,9 @@
+work/
+bin/
+obj/
+.vs/
+*.user
+*.key
+*.pem
+*.pfx
+src/RimWise.SteamBridge/Vendor/*.dll

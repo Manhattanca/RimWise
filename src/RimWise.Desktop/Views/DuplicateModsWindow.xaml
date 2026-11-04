@@ -1,0 +1,51 @@
+<Window x:Class="RimWise.Desktop.Views.DuplicateModsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource {x:Type Window}}" Title="处理重复安装"
+        Width="1100" Height="620" MinWidth="900" MinHeight="450" WindowStartupLocation="CenterOwner">
+    <Border Padding="22" Background="{DynamicResource PageBrush}">
+        <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <StackPanel Margin="0,0,0,14">
+                <TextBlock Text="有模组匹配到多份安装" FontSize="20" FontWeight="SemiBold"/>
+                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
+                           Text="请选择要使用的副本。确认后，同组其余副本将移到扫描范围外的备份区，可在“副本备份”中恢复；不取消订阅。"/>
+                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}"
+                           Text="优先推荐文件检查未发现问题的高版本；同版本按工坊编号或文件夹名稳定排序。静态检查不能保证运行正常，返回不会移动文件。"/>
+            </StackPanel>
+            <DataGrid Style="{StaticResource ModListGrid}" RowHeight="NaN" x:Name="InstallationsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True"
+                      CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" SelectionMode="Single" SelectionUnit="FullRow"
+                      Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}"
+                      BorderBrush="{DynamicResource BorderBrush}" RowBackground="{DynamicResource PanelBrush}"
+                      AlternatingRowBackground="{DynamicResource AlternateBrush}">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="名称 / 排序标识" Binding="{Binding Label}" Width="1.1*"/>
+                    <DataGridTextColumn Header="来源" Binding="{Binding Source}" Width="85"/>
+                    <DataGridTemplateColumn Header="版本 / 检查" Width="1.2*">
+                        <DataGridTemplateColumn.CellTemplate><DataTemplate><StackPanel Margin="6">
+                            <TextBlock Text="{Binding Version}" TextWrapping="Wrap"/>
+                            <TextBlock Text="{Binding Check}" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0"/>
+                        </StackPanel></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="安装路径" Width="1.5*">
+                        <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                            <TextBlock Text="{Binding Directory}" TextWrapping="Wrap" Margin="6" VerticalAlignment="Center"/>
+                        </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="操作" Width="130">
+                        <DataGridTemplateColumn.CellTemplate><DataTemplate><StackPanel>
+                            <Button Content="打开文件夹" Click="Folder_Click" Padding="8,5" Margin="3"/>
+                            <Button Content="创意工坊" Click="Workshop_Click" IsEnabled="{Binding HasWorkshop}" Padding="8,5" Margin="3"/>
+                        </StackPanel></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+            <TextBlock x:Name="StatusText" Grid.Row="2" TextWrapping="Wrap" Margin="0,12,0,0" Foreground="{DynamicResource MutedBrush}"/>
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button x:Name="ChooseButton" Content="使用选中副本…" Click="Choose_Click" IsEnabled="False"/>
+                <Button x:Name="RefreshButton" Content="刷新并继续" Click="Refresh_Click"/>
+                <Button Content="返回" IsCancel="True" Click="Cancel_Click"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

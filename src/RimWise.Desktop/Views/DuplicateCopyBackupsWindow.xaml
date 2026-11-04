@@ -1,0 +1,22 @@
+<Window x:Class="RimWise.Desktop.Views.DuplicateCopyBackupsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource {x:Type Window}}" Title="副本备份" Width="850" Height="510" MinWidth="700" MinHeight="380" WindowStartupLocation="CenterOwner">
+    <Border Padding="22" Background="{DynamicResource PageBrush}"><Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Text="恢复后，多份副本会重新出现；下次自动排序时可重新选择。原位置被占用时不会覆盖。" TextWrapping="Wrap" Margin="0,0,0,14"/>
+        <ListBox x:Name="BackupsList" Grid.Row="1" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="6">
+                <TextBlock Text="{Binding Selected, StringFormat=当前选择：{0}}" TextWrapping="Wrap"/>
+                <ItemsControl ItemsSource="{Binding Moves}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,8,0,0">
+                    <TextBlock Text="{Binding Original, StringFormat=原位置：{0}}" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding Backup, StringFormat=备份：{0}}" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}"/>
+                </StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+            </StackPanel></DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="StatusText" Grid.Row="2" TextWrapping="Wrap" Margin="0,10,0,0"/>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button x:Name="RestoreButton" Content="恢复选中备份…" Click="Restore_Click"/>
+            <Button Content="关闭" Click="Close_Click"/>
+        </StackPanel>
+    </Grid></Border>
+</Window>

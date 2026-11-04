@@ -14,7 +14,7 @@ public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, stri
         if (string.IsNullOrWhiteSpace(SelectedId) || Invalid(RemovedIds) || Invalid(TestedOrder)
             || !RemovedIds.Contains(SelectedId, StringComparer.OrdinalIgnoreCase)
             || RemovedIds.Any(id => !TestedOrder.Contains(id, StringComparer.OrdinalIgnoreCase))
-            || DiagnosticCodes is null || DiagnosticCodes.Length is < 1 or > 6
+            || DiagnosticCodes is null || DiagnosticCodes.Length is < 1 or > 7
             || DiagnosticCodes.Any(code => !RuntimeConflictEvidence.IsDiagnosticCode(code)) || Attempt < 1)
             throw new InvalidDataException("临时试排除记录无效。");
     }
@@ -43,6 +43,11 @@ internal static class TrialExclusionPlanning
         var files = report.LogContext?.Files.Where(f => f.OrderIndex > 0 && Active(f.PackageId) is not null).ToArray() ?? [];
         var members = facts.Select(f => Active(f.PackageId)!).Concat(files.Select(f => Active(f.PackageId)!))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // Fix the current blocker before experimenting on unrelated loading errors. If its
+        // owners are protected, excluding unrelated mods cannot bypass that protection.
+        var blockers = facts.Where(f => f.Code == "GameTestBlockingFailure")
+            .Select(f => Active(f.PackageId)!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (blockers.Length > 0) members = blockers;
         var options = DeclaredConflictResolution.Options(catalogue, order, retained, version, members);
         // Interceptor stacks list innocent patches too. A verified type named by
         // the error itself is a more specific experimental candidate than those frames.

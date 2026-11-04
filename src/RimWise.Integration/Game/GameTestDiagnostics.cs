@@ -46,15 +46,35 @@ public static class GameTestDiagnostics
         // An owner verified from local XML/PE metadata can associate an error with a candidate
         // installation. It does not prove loading or causation. The trusted controller may use it
         // for a reversible private test; changing the player's order still needs their approval.
-        return logs.Where(log => !IsHelperDiagnostic(log)).SelectMany(log => log.Issues).SelectMany(issue =>
+        var snapshots = logs.ToArray();
+        var verifiedOwners = (owners ?? []).Where(owner => !DiagnosticLogContext.IsFrameworkSymbol(owner.Symbol)).ToArray();
+        var blocking = DiagnosticLogContext.BlockingSymbols(snapshots).ToHashSet(StringComparer.Ordinal);
+        var blockingFacts = verifiedOwners.Where(owner => owner.Basis == "assembly-type" && blocking.Contains(owner.Symbol))
+            .Select(owner => new AiDiagnosticFact("GameTestBlockingFailure", owner.PackageId));
+        return blockingFacts.Concat(snapshots.Where(log => !IsHelperDiagnostic(log)).SelectMany(log => log.Issues).SelectMany(issue =>
         {
-            var associated = issue.RelatedMods.Concat((owners ?? []).Where(owner =>
-                issue.Detail.Contains(owner.Symbol, StringComparison.Ordinal)).Select(owner => owner.PackageId))
+            var associated = issue.RelatedMods.Concat(verifiedOwners.Where(owner =>
+                ContainsSymbol(issue.Detail, owner.Symbol)).Select(owner => owner.PackageId))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             var ids = associated.Length == 0 ? [""] : associated;
             var codes = Classify(issue.Detail).Prepend("GameLogError");
             return codes.SelectMany(code => ids.Select(id => new AiDiagnosticFact(code, id)));
-        }).Distinct().Take(100).ToArray();
+        })).Distinct().Take(100).ToArray();
+    }
+
+    private static bool ContainsSymbol(string text, string symbol)
+    {
+        static bool Identifier(char c) => char.IsLetterOrDigit(c) || c is '_' or '.' or '+' or '`';
+        for (var offset = 0; offset < text.Length;)
+        {
+            var index = text.IndexOf(symbol, offset, StringComparison.Ordinal);
+            if (index < 0) return false;
+            var end = index + symbol.Length;
+            if ((index == 0 || !Identifier(text[index - 1]))
+                && (end == text.Length || !Identifier(text[end]) || text[end] == '.')) return true;
+            offset = end;
+        }
+        return false;
     }
 
     private static IEnumerable<string> Classify(string detail)

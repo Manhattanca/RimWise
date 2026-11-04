@@ -26,7 +26,7 @@
                         <ContentControl Content="{Binding Mod}" ContentTemplate="{StaticResource ModIdentity}" />
                     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                     <DataGridTextColumn Header="处理" Binding="{Binding Treatment}" Width="140" />
-                    <DataGridTemplateColumn Header="" Width="34"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                    <DataGridTemplateColumn Header="" Width="34" CellStyle="{StaticResource ModIconCell}"><DataGridTemplateColumn.CellTemplate><DataTemplate>
                         <ContentControl Content="{Binding Mod}" ContentTemplate="{StaticResource ModSeverity}" />
                     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                 </DataGrid.Columns>

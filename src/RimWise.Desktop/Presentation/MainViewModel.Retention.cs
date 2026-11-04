@@ -24,7 +24,7 @@ public sealed partial class MainViewModel
     {
         if (IsRetainedByColor(identifier))
         {
-            Status = "该模组按颜色必须保留；请在批量标记中取消该颜色的保留规则";
+            Status = "该模组按颜色必须保留；请在右键菜单的“标记”中取消该颜色的保留规则";
             return;
         }
         var before = CaptureEditor();

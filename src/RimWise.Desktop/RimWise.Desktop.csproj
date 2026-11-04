@@ -3,8 +3,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <Version>0.5.0</Version>
-    <InformationalVersion>0.5.0</InformationalVersion>
+    <Version>0.5.1</Version>
+    <InformationalVersion>0.5.1</InformationalVersion>
     <AssemblyName>RimWise</AssemblyName>
     <RootNamespace>RimWise.Desktop</RootNamespace>
     <Product>RimWise</Product>

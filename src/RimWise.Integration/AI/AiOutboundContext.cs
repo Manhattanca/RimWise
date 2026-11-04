@@ -42,7 +42,7 @@ internal sealed record AiOutboundContext(string GameVersion, IReadOnlyList<strin
     public AiLogContext? Logs { get; init; }
     public IReadOnlyList<AiMetadataWarning> MetadataWarnings { get; init; } = [];
     public int MetadataWarningCount { get; init; }
-    public string RequirementScope => "CurrentOrder and recursive dependencies; optional relations only within this scope. Inactive unrelated metadata omitted.";
+    public string RequirementScope => "CurrentOrder and recursive dependencies; optional relations only within this scope. Inactive unrelated metadata and records with no declared relations omitted. This does not prove absence of runtime dependencies.";
     private const int MaximumItems = 20_000;
     private static readonly HashSet<string> DiagnosticCodes = new(StringComparer.Ordinal)
     {
@@ -51,7 +51,7 @@ internal sealed record AiOutboundContext(string GameVersion, IReadOnlyList<strin
         "DuplicateOrderEntry", "DuplicateActiveInstallation", "DependencyLoadsAfter", "LoadBeforeViolated",
         "LoadAfterViolated", "DeclaredConflict", "OrderingCycle", "OrderingCycleDeferred", "CustomRuleViolated", "GameStartupFailed", "GameLogError",
         "GameContentLoadsAfter", "GameMissingXmlParent", "GameTypeLoadFailure", "GamePatchFailure",
-        "GameInitializationFailure", "GameHarmonyFailure"
+        "GameInitializationFailure", "GameHarmonyFailure", "GameTestBlockingFailure"
     };
 
     internal static AiOutboundContext Create(AiRequest request)
@@ -91,7 +91,10 @@ internal sealed record AiOutboundContext(string GameVersion, IReadOnlyList<strin
             .Select(fact => new AiModRequirementFact(fact.PackageId, MetadataIds(fact.PackageId, "Dependencies", fact.Dependencies),
                 MetadataIds(fact.PackageId, "LoadBefore", fact.LoadBefore).Where(scope.Contains).ToArray(),
                 MetadataIds(fact.PackageId, "LoadAfter", fact.LoadAfter).Where(scope.Contains).ToArray(),
-                MetadataIds(fact.PackageId, "IncompatibleWith", fact.IncompatibleWith).Where(scope.Contains).ToArray())).ToArray();
+                MetadataIds(fact.PackageId, "IncompatibleWith", fact.IncompatibleWith).Where(scope.Contains).ToArray()))
+            .Where(fact => fact.Dependencies.Count + fact.LoadBefore.Count + fact.LoadAfter.Count + fact.IncompatibleWith.Count > 0)
+            .DistinctBy(fact => (fact.PackageId, string.Join('\n', fact.Dependencies), string.Join('\n', fact.LoadBefore),
+                string.Join('\n', fact.LoadAfter), string.Join('\n', fact.IncompatibleWith))).ToArray();
         var rules = Bounded(request.OrderRules).Where(rule => rule.Enabled && known.Contains(rule.Before)
             && known.Contains(rule.After)).Select(rule => new CustomOrderRule(rule.Before, rule.After)
                 { Required = rule.Required, OriginalOrderIndex = rule.OriginalOrderIndex }).Distinct().ToArray();

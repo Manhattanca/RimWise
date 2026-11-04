@@ -29,8 +29,6 @@ public partial class MainWindow
 
     private void AvailableSortDirection_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleAvailableSortDirection();
 
-    private void BatchMark_Click(object sender, RoutedEventArgs e) => OpenBatchMarkWindow();
-
     private void OpenBatchMarkWindow()
     {
         var count = ViewModel.SelectedOrderRows.Count + ViewModel.SelectedAvailableRows.Count;

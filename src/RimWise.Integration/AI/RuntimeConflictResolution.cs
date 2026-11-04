@@ -8,7 +8,7 @@ public sealed record AiConflictSuggestion(IReadOnlyList<string> PackageIds);
 public sealed record RuntimeConflictEvidence(string[] Members, string[] TestedOrder, string[] DiagnosticCodes)
 {
     private static readonly HashSet<string> Codes = new(StringComparer.Ordinal)
-    { "GameLogError", "GameMissingXmlParent", "GameTypeLoadFailure", "GamePatchFailure", "GameInitializationFailure", "GameHarmonyFailure" };
+    { "GameLogError", "GameMissingXmlParent", "GameTypeLoadFailure", "GamePatchFailure", "GameInitializationFailure", "GameHarmonyFailure", "GameTestBlockingFailure" };
 
     internal static bool IsDiagnosticCode(string code) => Codes.Contains(code);
 
@@ -19,7 +19,7 @@ public sealed record RuntimeConflictEvidence(string[] Members, string[] TestedOr
             || ids.Distinct(StringComparer.OrdinalIgnoreCase).Count() != ids.Length;
         if (Invalid(Members, 2) || Invalid(TestedOrder, 2)
             || !Members.All(id => TestedOrder.Contains(id, StringComparer.OrdinalIgnoreCase))
-            || DiagnosticCodes is null || DiagnosticCodes.Length is < 1 or > 6
+            || DiagnosticCodes is null || DiagnosticCodes.Length is < 1 or > 7
             || DiagnosticCodes.Any(code => code is null || !Codes.Contains(code)))
             throw new InvalidDataException("运行时组合冲突证据无效。");
     }

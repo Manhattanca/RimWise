@@ -19,9 +19,15 @@ public sealed class ModThumbnail : Border
     private CancellationTokenSource? loading;
     internal Task ImageLoading { get; private set; } = Task.CompletedTask;
 
+    static ModThumbnail()
+    {
+        // A default must not override the row template's dynamic thumbnail dimensions.
+        WidthProperty.OverrideMetadata(typeof(ModThumbnail), new FrameworkPropertyMetadata(30d));
+        HeightProperty.OverrideMetadata(typeof(ModThumbnail), new FrameworkPropertyMetadata(30d));
+    }
+
     public ModThumbnail()
     {
-        Width = Height = 30;
         Margin = new Thickness(0, 0, 6, 0);
         Background = System.Windows.Media.Brushes.Transparent;
         Child = image;

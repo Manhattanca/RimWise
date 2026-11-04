@@ -68,6 +68,7 @@ internal sealed class ThemeService : IDisposable
         if (palette is not null) dictionaries.Remove(palette);
         dictionaries.Add(replacement);
         palette = replacement;
+        foreach (Window window in application.Windows) WindowFrameTheme.Apply(window);
         Changed?.Invoke(this, EventArgs.Empty);
     }
 

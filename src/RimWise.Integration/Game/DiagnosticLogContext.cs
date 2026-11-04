@@ -21,6 +21,9 @@ internal static partial class DiagnosticLogContext
     [GeneratedRegex(@"\b([A-Za-z_][A-Za-z0-9_`]*(?:\.[A-Za-z_][A-Za-z0-9_`+]*)+)\b")]
     private static partial Regex CodeSymbols();
 
+    [GeneratedRegex(@"^\s*at\s+([A-Za-z_][A-Za-z0-9_`+]*(?:\.[A-Za-z_][A-Za-z0-9_`+]*)+)\s*\(", RegexOptions.Multiline)]
+    private static partial Regex StackMethods();
+
     [GeneratedRegex(@"(?:\bClass\s*=\s*[""']|(?:type(?: initializer for)?|Could not find type named)\s+[""'])([A-Za-z_][A-Za-z0-9_.+`-]{0,159})", RegexOptions.IgnoreCase)]
     private static partial Regex ConcreteTypes();
 
@@ -77,17 +80,19 @@ internal static partial class DiagnosticLogContext
             .SelectMany(log => log.Issues.Take(6).Concat(log.Issues.TakeLast(4)))
             .Select(issue => HeadAndTail(Sanitize(issue.Summary), 1024)));
         // Error subjects take priority over common framework frames in very long stacks.
-        var symbols = SubjectSymbols(report.Logs.Take(48).SelectMany(log => log.Issues.Take(64)).Select(issue => issue.Summary)).Select(symbol => symbol)
+        var symbols = BlockingSymbols(report.Logs)
+            .Concat(SubjectSymbols(report.Logs.Take(48).SelectMany(log => log.Issues.Take(64)).Select(issue => issue.Summary)))
             .Concat(report.Logs.Take(48).SelectMany(log => log.Issues.Take(64))
                 .SelectMany(issue => CodeSymbols().Matches(Sanitize(issue.Detail)).Select(m => m.Groups[1].Value)
                     .Where(symbol => !IsFrameworkSymbol(symbol)).Distinct(StringComparer.Ordinal).Take(8)))
             .Concat(ConcreteTypes().Matches(summaries).Select(m => m.Groups[1].Value)).Concat(XmlSymbols().Matches(summaries).Select(m => m.Groups[1].Value)).Concat(CodeSymbols().Matches(summaries).Select(m => m.Groups[1].Value))
-            .Concat(XmlSymbols().Matches(text).Select(m => m.Groups[1].Value)).Concat(CodeSymbols().Matches(text).Select(m => m.Groups[1].Value)).Distinct(StringComparer.Ordinal).Take(96).ToArray();
+            .Concat(XmlSymbols().Matches(text).Select(m => m.Groups[1].Value)).Concat(CodeSymbols().Matches(text).Select(m => m.Groups[1].Value))
+            .Where(symbol => !IsFrameworkSymbol(symbol)).Distinct(StringComparer.Ordinal).Take(96).ToArray();
         var files = DiagnosticDefinitionEvidence.Collect(report, catalogue, order, version, token, out var fileLimited);
         var issues = report.Logs.SelectMany(l => l.Issues).ToArray();
         // Exact file plus target evidence is more specific than a broad all-versions symbol scan.
         // Preserve the fallback for failures without a captured XML file (including CLR exceptions).
-        var exactPatchErrors = files.Count > 0 && issues.Length > 0
+        var exactPatchErrors = BlockingSymbols(report.Logs).Length == 0 && files.Count > 0 && issues.Length > 0
             && issues.All(i => DiagnosticPatchEvidence.ReferencedFiles(i.Detail).Any());
         var lookupLimited = false;
         var owners = exactPatchErrors ? [] : DiagnosticSymbolOwners.Find(catalogue, order, symbols, token, out lookupLimited,
@@ -109,8 +114,17 @@ internal static partial class DiagnosticLogContext
         foreach (var issue in log.Warnings.OrderBy(Offset)) yield return issue;
     }
 
-    private static bool IsFrameworkSymbol(string symbol) => new[] {
-        "System.", "UnityEngine.", "Verse.", "RimWorld.", "HarmonyLib.", "MonoMod."
+    // The helper records the exception which stopped the current journey, including nested mod
+    // exceptions. Select it before startup noise, but verify ownership locally before attributing it.
+    internal static string[] BlockingSymbols(IEnumerable<GameLogSnapshot> logs) => logs
+        .Where(GameTestDiagnostics.IsHelperDiagnostic)
+        // Only actual exception frames qualify. Harmony's appended patch inventory lists
+        // interceptors that may never have run, so it must not create blocking candidates.
+        .SelectMany(log => StackMethods().Matches(Sanitize(log.Text)).Select(m => m.Groups[1].Value))
+        .Where(symbol => !IsFrameworkSymbol(symbol)).Distinct(StringComparer.Ordinal).Take(32).ToArray();
+
+    internal static bool IsFrameworkSymbol(string symbol) => new[] {
+        "System.", "UnityEngine.", "Verse.", "RimWorld.", "HarmonyLib.", "MonoMod.", "RimWise.TestHelper."
     }.Any(prefix => symbol.StartsWith(prefix, StringComparison.Ordinal));
 
     private static string HeadAndTail(string text, int maximum)

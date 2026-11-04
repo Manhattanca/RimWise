@@ -1,5 +1,7 @@
 # 第三方来源登记
 
+压缩存档读取：`oleg-st/ZstdSharp`（Oleg Stepanischev，https://github.com/oleg-st/ZstdSharp），ZstdSharp.Port 0.8.8，固定提交 `2cd0c019693bc786a5fe5c3be94e107b24e7267e`，MIT。使用其纯托管流式解压器识别 Zstandard 存档并提取模组元数据，无需额外安装解压工具。随包分发 `ZstdSharp.dll`，许可见 `packaging/licenses/ZstdSharp-LICENSE.txt`；同时保留其所基于的 Zstandard 1.5.7（Facebook, Inc.，https://github.com/facebook/zstd）的 BSD 许可 `packaging/licenses/zstd-LICENSE.txt`。
+
 仅登记实际采用的第三方代码、运行依赖与数据，以及相应许可证和声明。仅查阅文档、研究方法或核对格式且未采用实现的项目不列入公开登记。
 
 下列许可证文件位于 packaging/licenses；发布包内对应目录为 licenses。第三方许可独立于本项目许可证。

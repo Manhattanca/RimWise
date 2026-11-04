@@ -51,6 +51,7 @@ internal static class DiagnosticsSmokeCheck
             foreach (var theme in new[] { ThemePreference.Light, ThemePreference.Dark })
             {
                 themes.Select(theme, save: false);
+                await CheckCompactIcons(window, output, theme);
                 vm.SearchText = "此搜索隐藏所有模组";
                 // Raise the actual summary button click: checks its event wiring too.
                 window.WarningsButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
@@ -105,6 +106,53 @@ internal static class DiagnosticsSmokeCheck
             vm.Load(order, "ModsConfig.xml");
             vm.SelectedRow = vm.Rows.FirstOrDefault(row => row.PackageId == "example.buildings");
         }
+    }
+
+    private static async Task CheckCompactIcons(MainWindow window, string output, ThemePreference theme)
+    {
+        var originalHeight = window.OrderGrid.RowHeight;
+        var rows = window.ViewModel.Rows.Where(row => row.HasError || row.HasWarning).Take(3).ToArray();
+        if (!rows.Any(row => row.HasError) || !rows.Any(row => row.HasWarning))
+            throw new InvalidOperationException("Icon check requires both severities.");
+        var result = new TrialExclusionWindow(rows.Select(row => new TrialRemovalRow(row, "合成移出项")).ToArray(), true) { Owner = window };
+        result.Show();
+        try
+        {
+            foreach (var height in new[] { 28d, 29d, 32d, 35.5d, 38d, 64d })
+            {
+                window.SetModRowHeight(height, save: false);
+                await Idle(window);
+                await Idle(result);
+                foreach (var grid in new[] { window.OrderGrid, result.ModsList })
+                {
+                    var icons = Descendants<ContentControl>(grid).Where(control => control.IsVisible
+                        && (control.ContentTemplate == window.FindResource("ErrorIcon")
+                            || control.ContentTemplate == window.FindResource("WarningIcon"))).ToArray();
+                    if (icons.Length == 0) throw new InvalidOperationException("No visible diagnostic icons.");
+                    foreach (var icon in icons)
+                    {
+                        var cell = Ancestor<DataGridCell>(icon) ?? throw new InvalidOperationException("Icon cell missing.");
+                        var area = Ancestor<Border>(icon) ?? throw new InvalidOperationException("Icon hit area missing.");
+                        var bounds = area.TransformToAncestor(cell).TransformBounds(new Rect(area.RenderSize));
+                        if (bounds.Left < -0.1 || bounds.Top < -0.1 || bounds.Right > cell.ActualWidth + 0.1 || bounds.Bottom > cell.ActualHeight + 0.1)
+                            throw new InvalidOperationException($"Diagnostic hit area clipped at height {height}: {bounds}, cell {cell.RenderSize}.");
+                    }
+                }
+                if (height is 28 or 38)
+                {
+                    PrototypeSmokeCheck.SavePreview(window.OrderGrid, Path.Combine(output, $"{theme}-row-icons-{height}.png"));
+                    PrototypeSmokeCheck.SavePreview(result, Path.Combine(output, $"{theme}-result-icons-{height}.png"));
+                }
+            }
+        }
+        finally { result.Close(); window.SetModRowHeight(originalHeight, save: false); }
+    }
+
+    private static T? Ancestor<T>(DependencyObject child) where T : DependencyObject
+    {
+        for (var parent = VisualTreeHelper.GetParent(child); parent is not null; parent = VisualTreeHelper.GetParent(parent))
+            if (parent is T found) return found;
+        return null;
     }
 
     private static IEnumerable<T> Descendants<T>(DependencyObject parent) where T : DependencyObject

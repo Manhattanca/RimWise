@@ -27,6 +27,7 @@ public partial class MainWindow
     private bool heldSelection;
     private ModDrag? activeDrag;
     private Border? dropIndicator;
+    private ModDragPreview? dragPreview;
     private const string ModDragFormat = "RimWise.Internal.ModRows";
     private sealed record ModDrag(MainWindow Owner, long Revision, LoadOrderRow[] Order, InstalledModRow[] Available);
 
@@ -35,6 +36,7 @@ public partial class MainWindow
         ViewModel.PropertyChanged += SelectionModelChanged;
         OrderGrid.PreviewMouseRightButtonDown += ModGrid_RightMouseDown;
         AvailableGrid.PreviewMouseRightButtonDown += ModGrid_RightMouseDown;
+        Closed += (_, _) => { dragPreview?.Dispose(); dragPreview = null; ClearDropIndicator(); };
     }
 
     private void ModGrid_RightMouseDown(object sender, MouseButtonEventArgs e)
@@ -181,12 +183,26 @@ public partial class MainWindow
         var payload = new ModDrag(this, ViewModel.ContentRevision,
             grid == OrderGrid ? grid.SelectedItems.Cast<LoadOrderRow>().ToArray() : [],
             grid == AvailableGrid ? grid.SelectedItems.Cast<InstalledModRow>().ToArray() : []);
+        if (payload.Order.Length + payload.Available.Length == 0) return;
+        var sourceRow = grid.ItemContainerGenerator.ContainerFromItem(pressedItem) as DataGridRow;
+        var height = sourceRow?.ActualHeight ?? grid.RowHeight;
+        if (!double.IsFinite(height) || height <= 0) height = 38;
+        var width = Math.Clamp((sourceRow?.ActualWidth ?? grid.ActualWidth) - 12, 180, 420);
+        var origin = (sourceRow ?? (FrameworkElement)grid).TranslatePoint(new Point(), ModInteractionOverlay);
+        var pointer = TranslatePoint(point, ModInteractionOverlay);
+        var start = TranslatePoint(dragStart, ModInteractionOverlay);
+        var grip = new Point(Math.Clamp(start.X - origin.X, 12, width - 12),
+            Math.Clamp(start.Y - origin.Y, 0, height));
+        dragPreview?.Dispose();
+        var previewRows = new[] { pressedItem }.Concat(payload.Order.Cast<object>().Concat(payload.Available)
+            .Where(item => !ReferenceEquals(item, pressedItem))).ToArray();
+        dragPreview = new ModDragPreview(ModInteractionOverlay, previewRows, width, pointer, grip, height: height);
         dragSource = null;
         pressedItem = null;
         heldSelection = false;
         activeDrag = payload;
         try { DragDrop.DoDragDrop(grid, new DataObject(ModDragFormat, payload), DragDropEffects.Move); }
-        finally { activeDrag = null; ClearDropIndicator(); }
+        finally { activeDrag = null; dragPreview?.Dispose(); dragPreview = null; ClearDropIndicator(); }
         e.Handled = true;
     }
 
@@ -217,8 +233,7 @@ public partial class MainWindow
         var allowed = CanDrop(grid, ReadDrag(e.Data));
         e.Effects = allowed ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
-        ClearDropIndicator();
-        if (!allowed) return;
+        if (!allowed) { ClearDropIndicator(); return; }
         var point = e.GetPosition(grid);
         var scroll = FindVisual<ScrollViewer>(grid);
         if (point.Y < 40) scroll?.LineUp();
@@ -228,12 +243,16 @@ public partial class MainWindow
             var position = DropPosition(grid, e);
             var anchor = (FrameworkElement?)position.Row ?? grid;
             var origin = anchor.TranslatePoint(new Point(), ModInteractionOverlay);
-            dropIndicator = new Border { Height = 3, Width = anchor.ActualWidth,
-                Background = (Brush)FindResource("AccentBrush"), IsHitTestVisible = false };
+            if (dropIndicator is null)
+            {
+                dropIndicator = new Border { Height = 3, Background = (Brush)FindResource("AccentBrush"), IsHitTestVisible = false };
+                ModInteractionOverlay.Children.Add(dropIndicator);
+            }
+            dropIndicator.Width = anchor.ActualWidth;
             Canvas.SetLeft(dropIndicator, origin.X);
             Canvas.SetTop(dropIndicator, origin.Y + (position.After ? anchor.ActualHeight - 3 : 0));
-            ModInteractionOverlay.Children.Add(dropIndicator);
         }
+        else ClearDropIndicator();
     }
 
     private void ModGrid_DragLeave(object sender, DragEventArgs e) => ClearDropIndicator();

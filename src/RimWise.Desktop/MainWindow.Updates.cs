@@ -112,6 +112,7 @@ public partial class MainWindow
         UpdateRetryButton.Visibility = retry ? Visibility.Visible : Visibility.Collapsed;
         UpdateFolderButton.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
         UpdateNotice.Visibility = Visibility.Visible;
+        Services.InterfaceMotion.Reveal(UpdateNotice);
         // Do not call Activate/Focus/ShowDialog: keyboard focus and sorting stay where they are.
     }
 

@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param([string]$Version = '0.5.0')
+param([string]$Version = '0.5.1')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Initialize-Environment.ps1')
 
@@ -25,7 +25,7 @@ try {
         'mozillazg/pinyin-data', 'mozillazg/phrase-pinyin-data', 'chromium/chromium',
         'rlabrecque/Steamworks.NET', 'Valve Corporation', 'RimSort/Community-Rules-Database',
         'RimSort/Steam-Workshop-Database', 'CC0-1.0', 'pardeike/DecompilerServer',
-        'icsharpcode/ILSpy', 'modelcontextprotocol/csharp-sdk', $Version.Split('-')[0])) {
+        'icsharpcode/ILSpy', 'modelcontextprotocol/csharp-sdk', 'oleg-st/ZstdSharp', $Version.Split('-')[0])) {
         if (-not $readme.Contains($required)) { throw "README is missing: $required" }
     }
     if ($readme.Contains('{{')) { throw 'README still contains template placeholders.' }
@@ -34,7 +34,7 @@ try {
     $builtVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $staging 'RimWise.dll')).ProductVersion.Split('+')[0]
     if ($builtVersion -ne $Version) { throw "Built version $builtVersion does not match package version $Version." }
     $runtimeNames = @('RimWise.exe', 'RimWise.dll', 'RimWise.deps.json', 'RimWise.runtimeconfig.json',
-        'RimWise.Core.dll', 'RimWise.Formats.dll', 'RimWise.Integration.dll')
+        'RimWise.Core.dll', 'RimWise.Formats.dll', 'RimWise.Integration.dll', 'ZstdSharp.dll')
     if (@(Compare-Object ($runtimeNames | Sort-Object) ($published.Name | Sort-Object)).Count -ne 0) {
         throw 'Application publish contents do not match the fixed runtime list.'
     }
@@ -73,7 +73,7 @@ try {
         'DecompilerServer-LICENSE.txt', 'ILSpy-LICENSE.txt', 'ILSpy-MIT-LICENSE.txt', 'ILSpy-THIRD-PARTY-NOTICES.txt',
         'ModelContextProtocol-LICENSE.txt', 'ModelContextProtocol-THIRD-PARTY-NOTICES.txt',
         'dotnet-AI-Abstractions-LICENSE.txt', 'dotnet-AI-Abstractions-THIRD-PARTY-NOTICES.txt',
-        'dotnet-Extensions-LICENSE.txt', 'dotnet-Extensions-THIRD-PARTY-NOTICES.txt')) {
+        'dotnet-Extensions-LICENSE.txt', 'dotnet-Extensions-THIRD-PARTY-NOTICES.txt', 'ZstdSharp-LICENSE.txt', 'zstd-LICENSE.txt')) {
         if (-not (Test-Path -LiteralPath (Join-Path $licenseDirectory $requiredLicense))) { throw 'License file missing.' }
     }
     Copy-Item -LiteralPath $licenseDirectory -Destination (Join-Path $releaseDirectory 'licenses') -Recurse

@@ -10,7 +10,7 @@
     <TextBox x:Name="SearchBox" Grid.Row="1" TextChanged="Search_Changed" ToolTip="搜索未启用模组" Margin="0,0,0,10"/>
     <DataGrid x:Name="ModsList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
      CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" Style="{StaticResource ModListGrid}" AlternationCount="2" EnableRowVirtualization="True"
-     Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+     Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" CellStyle="{StaticResource ModListCell}"
      PreviewKeyDown="List_KeyDown" MouseDoubleClick="List_DoubleClick">
      <DataGrid.ContextMenu><ContextMenu><MenuItem Header="加入测试" Click="Add_Click"/></ContextMenu></DataGrid.ContextMenu>
      <DataGrid.Columns><DataGridTemplateColumn Header="模组" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
@@ -23,7 +23,7 @@
     <TextBox x:Name="SelectedSearchBox" Grid.Row="1" TextChanged="Search_Changed" ToolTip="搜索准备测试模组" Margin="0,0,0,10"/>
     <DataGrid x:Name="SelectedList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
      CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" Style="{StaticResource ModListGrid}" AlternationCount="2" EnableRowVirtualization="True"
-     Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+     Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" CellStyle="{StaticResource ModListCell}"
      PreviewKeyDown="List_KeyDown" MouseDoubleClick="List_DoubleClick">
      <DataGrid.ContextMenu><ContextMenu><MenuItem Header="移出测试" Click="Remove_Click"/></ContextMenu></DataGrid.ContextMenu>
      <DataGrid.Columns><DataGridTemplateColumn Header="模组" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>

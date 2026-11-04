@@ -9,13 +9,18 @@ public sealed record AiTokenEstimate(string Profile, double InputUnits, int Inpu
 {
     public int Total => checked(Input + Output);
     public string Description => $"预计 {Total:N0} token（约 {Lower:N0}—{Upper:N0}）"
-        + (Samples < 8 ? "；样本不足，粗略估算" : $"；已参考 {Samples} 次同模型请求")
+        + (Samples == 0 ? "；采用共享基准，尚无本模型样本"
+            : Samples < 8 ? $"；已参考 {Samples} 次同模型请求，样本仍少" : $"；已参考 {Samples} 次同模型请求")
         + (ObservedError80 is { } error ? $"；近 {EvaluatedSamples} 次中 80% 的预估误差 ≤ {error:P0}" : "；尚无足够记录验证误差");
 }
 
 /// <summary>Local, provider/model-specific calibration; stores counts, never prompts or credentials.</summary>
 public sealed class AiTokenEstimator(string applicationDirectory)
 {
+    // Aggregate medians from the latest 40 of 51 observed requests (2026-11-04).
+    // A cold-start prior only: these are not observations for an unseen model.
+    private const double SharedInputRatio = .9931544921251937;
+    private const int SharedOutputTokens = 1363;
     internal string ApplicationDirectory => applicationDirectory;
     // Usage calibration is replaceable telemetry; do not grow an unbounded backup per request.
     private readonly AppJsonFile<History> history = new(applicationDirectory, "ai-token-history", 1024 * 1024, keepPreviousVersions: false);
@@ -31,9 +36,9 @@ public sealed class AiTokenEstimator(string applicationDirectory)
         var units = Units(AiPrompt.Messages(request));
         Sample[] samples;
         lock (sync) samples = Load().Where(s => s.Profile == profile).TakeLast(40).ToArray();
-        var ratio = samples.Length == 0 ? 1 : Quantile(samples.Select(s => s.Input / s.Units), .5);
+        var ratio = samples.Length == 0 ? SharedInputRatio : Quantile(samples.Select(s => s.Input / s.Units), .5);
         var input = Math.Clamp((int)Math.Min(10_000_000, Math.Ceiling(units * ratio)), 1, 10_000_000);
-        var output = samples.Length == 0 ? Math.Min(1024, outputLimit ?? 32768)
+        var output = samples.Length == 0 ? Math.Min(SharedOutputTokens, outputLimit ?? 32768)
             : (int)Math.Ceiling(Quantile(samples.Select(s => (double)s.Output), .5));
         if (outputLimit is { } cap) output = Math.Min(output, cap);
         var errors = samples.Where(s => s.Predicted > 0 && s.Input + s.Output > 0)

@@ -1,4 +1,18 @@
-# RimWise 0.5.0
+# RimWise 0.5.1
+
+## 0.5.1 更新
+
+修复自动排障遗漏测试辅助 Mod 捕获的实际阻断异常，以及将 Harmony 等共享库调用误关联到无关 Mod 的问题。优先核对阻断游戏流程的调用与本地程序集归属，让试排除更集中于相关 Mod，减少无效重测。
+
+精简 AI 输入中的空关系和重复信息，保留完整排序及必要依赖；调整 DeepSeek 提示词，要求依据已核实的 Mod 标识给出简洁、完整的处理方案。缺少模型样本时统一使用基础 token 预估，实际回报与预估分开记录。
+
+支持读取 Zstandard 压缩的 RWS 存档来导入排序，不修改原存档。修复较小行高下图标显示不全的问题。
+
+拖动预览显示封面、图标与标记，高度跟随列表行高，并增加跟随与轻微倾斜动效。多选时最多显示三张完整卡片，其余显示“以及更多 XX 个 Mod”。常用弹窗与菜单增加短动画，遵循系统动画和高对比度设置。
+
+统一标题栏主题，压缩顶部菜单高度；“开始游戏”移至右下角“保存排序”旁，移除底部“批量标记”按钮，右键标记功能继续保留。
+
+继续提供中文 EXE 安装／更新包和 ZIP 纯净包。本版经过离线回归；具体 Mod 组合仍需实际游戏复测。
 
 ## 0.5.0 更新
 
@@ -308,6 +322,8 @@ AI 仅获得受控模组及诊断信息；日志在本机筛选并隐藏密钥�
 `dotnet/extensions`（.NET Foundation、Microsoft 及贡献者，https://github.com/dotnet/extensions），Microsoft.Extensions.AI.Abstractions 10.5.2，作为 MCP SDK 的传递依赖使用，MIT。许可见 `licenses/dotnet-AI-Abstractions-LICENSE.txt`，完整上游声明见 `licenses/dotnet-AI-Abstractions-THIRD-PARTY-NOTICES.txt`。
 
 ## 安装包组件
+
+压缩存档读取使用 `oleg-st/ZstdSharp`（Oleg Stepanischev，https://github.com/oleg-st/ZstdSharp）的 ZstdSharp.Port 0.8.8 纯托管流式解压器。许可见 `licenses/ZstdSharp-LICENSE.txt`；其所基于的 Zstandard 1.5.7 的 BSD 许可见 `licenses/zstd-LICENSE.txt`。仅提取存档头部的排序信息，不改写原存档。
 
 EXE 安装包使用 Inno Setup 6.7.4（Jordan Russell、Martijn Laan，https://jrsoftware.org/），许可见 `licenses/Inno-Setup-LICENSE.txt`。简体中文消息采用 jrsoftware/issrc 随附的 ChineseSimplified.isl，维护者 Zhenghan Yang (Kira)，保留文件内署名。安装界面仅使用简体中文。
 

@@ -69,13 +69,52 @@
         <Style x:Key="IssueMessage" TargetType="TextBlock">
             <Setter Property="TextWrapping" Value="Wrap" /><Setter Property="ToolTip" Value="{Binding Location}" />
         </Style>
-        <Style x:Key="CompactCell" TargetType="DataGridCell" BasedOn="{StaticResource MarkedCell}">
-            <Setter Property="Padding" Value="5,7" />
-        </Style>
     </Window.Resources>
     <Grid Background="{DynamicResource PageBrush}">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-        <Menu x:Name="MainMenu" Padding="8,0">
+        <Menu x:Name="MainMenu" Padding="6,0" Height="32" MinHeight="0">
+            <Menu.Template>
+                <ControlTemplate TargetType="Menu">
+                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <ItemsPresenter />
+                    </Border>
+                </ControlTemplate>
+            </Menu.Template>
+            <Menu.Resources>
+                <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+                    <Style.Triggers>
+                        <Trigger Property="Role" Value="TopLevelHeader">
+                            <Setter Property="Padding" Value="12,3" />
+                            <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="MenuItem">
+                                        <Grid>
+                                            <Border x:Name="TopMenuChrome" Padding="{TemplateBinding Padding}" Background="Transparent">
+                                                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center" />
+                                            </Border>
+                                            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False"
+                                                   IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                                                <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" Padding="4" CornerRadius="4">
+                                                    <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" MaxHeight="600">
+                                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" Grid.IsSharedSizeScope="True" />
+                                                    </ScrollViewer>
+                                                </Border>
+                                            </Popup>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="TopMenuChrome" Property="Background" Value="{DynamicResource HoverBrush}" /></Trigger>
+                                            <Trigger Property="IsSubmenuOpen" Value="True"><Setter TargetName="TopMenuChrome" Property="Background" Value="{DynamicResource SelectionBrush}" /></Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </Menu.Resources>
             <MenuItem Header="文件" x:Name="FileMenu">
                 <MenuItem Header="导入排序或存档…" Click="Import_Click" />
                 <MenuItem Header="合集管理…" Click="Collections_Click" />
@@ -108,7 +147,6 @@
                 </MenuItem>
             </MenuItem>
             <MenuItem Header="游戏">
-                <MenuItem Header="启动游戏" Click="LaunchGame_Click" />
                 <MenuItem x:Name="GameStatusItem" Header="游戏未运行" IsEnabled="False" />
                 <Separator />
                 <MenuItem Header="查看游戏日志…" Click="GameLog_Click" />
@@ -275,7 +313,7 @@
                             <DataGrid x:Name="OrderGrid" Style="{StaticResource ModGrid}" ItemsSource="{Binding VisibleRows}"
                                       MouseDoubleClick="Order_DoubleClick" ToolTip="Ctrl／Shift 多选；拖动排序；Delete 移出，也可拖到中间；双击移出单项">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="44" CellStyle="{StaticResource CompactCell}" />
+                                    <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="44" CellStyle="{StaticResource ModIconCell}" />
                                     <DataGridTemplateColumn Header="模组" Width="*" CellStyle="{StaticResource MarkedCell}"><DataGridTemplateColumn.CellTemplate><DataTemplate>
                                         <DockPanel LastChildFill="True" VerticalAlignment="Center">
                                             <ContentControl DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource ModBadges}" />
@@ -283,12 +321,12 @@
                                             <TextBlock Text="{Binding Name}" Style="{StaticResource OrderModName}" />
                                         </DockPanel>
                                     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="" Width="34" CellStyle="{StaticResource CompactCell}"><DataGridTemplateColumn.CellTemplate><DataTemplate>
-                                        <Border x:Name="DiagnosticHitArea" Background="Transparent" MinWidth="24" MinHeight="24"
+                                    <DataGridTemplateColumn Header="" Width="34" CellStyle="{StaticResource ModIconCell}"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                        <Border x:Name="DiagnosticHitArea"
                                                 ToolTipService.InitialShowDelay="200" ToolTipService.ShowDuration="60000"
                                                 AutomationProperties.Name="{Binding DiagnosticTooltip}">
                                             <Border.ToolTip><ToolTip MaxWidth="440" DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><TextBlock Text="{Binding DiagnosticTooltip}" TextWrapping="Wrap" /></ToolTip></Border.ToolTip>
-                                            <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Visible" /><Style.Triggers>
+                                            <Border.Style><Style TargetType="Border" BasedOn="{StaticResource IconHitArea}"><Setter Property="Visibility" Value="Visible" /><Style.Triggers>
                                                 <DataTrigger Binding="{Binding Severity}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
                                             </Style.Triggers></Style></Border.Style>
                                             <Grid IsHitTestVisible="False">
@@ -335,11 +373,11 @@
                     <Button x:Name="ClearOrderButton" Content="清空" Command="{Binding ClearOrderCommand}" ToolTip="清除当前清单的模组，保留游戏本体和 DLC；可撤销" />
                     <Button Content="上移" Command="{Binding MoveUpCommand}" ToolTip="搜索时暂停调整顺序" />
                     <Button Content="下移" Command="{Binding MoveDownCommand}" ToolTip="搜索时暂停调整顺序" />
-                    <Button Content="批量标记" Click="BatchMark_Click" ToolTip="设置行颜色或按颜色必须保留" />
                     <Button x:Name="AiSortingButton" Content="自动排序" Click="AiSorting_Click" ToolTip="打开自动排序窗口" />
 
                     <Button Content="导出排序" Click="Export_Click" IsEnabled="{Binding HasDocument}" />
                     <Button x:Name="SaveOrderButton" Content="保存排序" Click="SaveOrder_Click" IsEnabled="{Binding HasDocument}" Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}" />
+                    <Button x:Name="LaunchGameButton" Content="开始游戏" Click="LaunchGame_Click" ToolTip="{Binding Header, ElementName=GameStatusItem}" />
                 </StackPanel>
             </Grid>
         </Border>

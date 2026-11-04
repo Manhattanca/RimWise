@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using System.Xml;
 using System.Xml.Linq;
 using RimWise.Core;
+using ZstdSharp;
 
 namespace RimWise.Formats;
 
@@ -31,6 +32,11 @@ public sealed class OrderFileCodec
         if (!input.CanSeek)
             return Read(new MemoryStream(ReadBounded(input, MaximumBytes)));
         var start = input.Position;
+        Span<byte> signature = stackalloc byte[4];
+        var signatureLength = input.ReadAtLeast(signature, signature.Length, throwOnEndOfStream: false);
+        input.Position = start;
+        if (signatureLength == signature.Length && signature.SequenceEqual(new byte[] { 0x28, 0xB5, 0x2F, 0xFD }))
+            return ReadCompressedSave(input);
         using (var typeProbe = new StreamReader(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true))
         {
             int initialCharacter;
@@ -62,6 +68,28 @@ public sealed class OrderFileCodec
         if (first != '{') return ReadXml(bytes);
         using var reader = new StreamReader(new MemoryStream(bytes), new UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: true);
         return ReadJson(reader.ReadToEnd());
+    }
+
+    private static OrderFileDocument ReadCompressedSave(Stream input)
+    {
+        try
+        {
+            // Decode just enough for the existing header reader, never the whole world into memory or disk.
+            using var decoded = new DecompressionStream(input, bufferSize: 8192, leaveOpen: true);
+            using var reader = XmlReader.Create(decoded, new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, CloseInput = false,
+                MaxCharactersInDocument = ModsConfigXmlFormat.MaximumCharacters
+            });
+            reader.MoveToContent();
+            if (reader.Name != "savegame" || reader.NamespaceURI.Length != 0)
+                throw new InvalidDataException("压缩文件不是含模组排序信息的环世界存档。");
+            return SavegameOrderReader.Read(reader);
+        }
+        catch (Exception ex) when (ex is ZstdException or EndOfStreamException or XmlException)
+        {
+            throw new InvalidDataException("无法读取压缩存档的头部信息，文件可能损坏或尚未写入完成。请使用已完成保存的存档或备份重试。", ex);
+        }
     }
 
     private OrderFileDocument ReadJson(string text)

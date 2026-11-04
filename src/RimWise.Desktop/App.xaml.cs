@@ -22,7 +22,7 @@ public partial class App : Application
         var isSmokeTest = false;
         string? migrationNotice = null;
 #if DEBUG
-        isSmokeTest = e.Args.Length == 2 && e.Args[0] is "--smoke-test" or "--marker-smoke" or "--ai-ui-smoke" or "--performance-smoke" or "--runtime-ui-smoke" or "--ai-sorting-smoke" or "--message-dialog-smoke" or "--diagnostic-export-smoke" or "--diagnostics-smoke" or "--steam-ui-smoke";
+        isSmokeTest = e.Args.Length == 2 && e.Args[0] is "--smoke-test" or "--interaction-smoke" or "--marker-smoke" or "--ai-ui-smoke" or "--performance-smoke" or "--runtime-ui-smoke" or "--ai-sorting-smoke" or "--message-dialog-smoke" or "--diagnostic-export-smoke" or "--diagnostics-smoke" or "--steam-ui-smoke";
 #endif
         // Storage migration can include hashing/copying. Keep the dispatcher responsive and
         // show a small opening window instead of appearing to do nothing before MainWindow.
@@ -90,6 +90,7 @@ public partial class App : Application
             }
         }
         UiDiagnosticEvents.Install(this);
+        InterfaceMotion.Install();
         Themes = new ThemeService(this, new AppearanceSettingsStore(UserStorage.DirectoryPath));
         var window = new MainWindow(initializePaths: !isSmokeTest);
         window.ViewModel.PropertyChanged += (_, change) =>
@@ -100,6 +101,8 @@ public partial class App : Application
         };
         MainWindow = window;
 #if DEBUG
+        if (e.Args.Length == 2 && e.Args[0] == "--interaction-smoke")
+            InteractionMotionSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--steam-ui-smoke")
             SteamUiSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--diagnostic-export-smoke")

@@ -14,7 +14,23 @@ internal static class DiagnosticSymbolOwners
     internal static AiSymbolOwner[] Find(ModCatalogue catalogue, IReadOnlyList<string> order,
         string[] symbols, CancellationToken token, out bool limited, IReadOnlyList<string>? observedAssemblies = null)
     {
+        // Shared framework copies are not evidence that their containing mod caused an exception.
+        symbols = symbols.Where(s => !DiagnosticLogContext.IsFrameworkSymbol(s)).Distinct(StringComparer.Ordinal).ToArray();
         var result = new HashSet<AiSymbolOwner>();
+        var priority = symbols.Select((symbol, index) => (symbol, index))
+            .ToDictionary(item => item.symbol, item => item.index, StringComparer.Ordinal);
+        AiSymbolOwner[] Ranked() => result.OrderBy(owner => priority[owner.Symbol]).Take(96).ToArray();
+        void AddOwner(AiSymbolOwner owner)
+        {
+            if (result.Contains(owner)) return;
+            if (result.Count >= 96)
+            {
+                var last = result.MaxBy(item => priority[item.Symbol])!;
+                if (priority[owner.Symbol] >= priority[last.Symbol]) return;
+                result.Remove(last);
+            }
+            result.Add(owner);
+        }
         var active = order.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var bytes = 0L; var files = 0; limited = false;
         if (symbols.Length == 0) return [];
@@ -63,7 +79,7 @@ internal static class DiagnosticSymbolOwners
                 if (!pe.HasMetadata) continue;
                 bytes += pe.PEHeaders.MetadataSize; files++;
                 if (bytes > 64*1024*1024 || clock.Elapsed.TotalSeconds > 20) { limited=true; break; }
-                if (!AddAssemblyOwners(pe.GetMetadataReader(),owners[0].PackageId,symbols,result,token,clock)) { limited=true; return result.Take(96).ToArray(); }
+                if (!AddAssemblyOwners(pe.GetMetadataReader(),owners[0].PackageId,symbols,AddOwner,token,clock)) { limited=true; return Ranked(); }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException)
             { limited=true; }
@@ -85,8 +101,8 @@ internal static class DiagnosticSymbolOwners
                     token.ThrowIfCancellationRequested();
                     if (scanned.Contains(path)) continue;
                     // Count inspected candidates; textures/audio do not consume the code/XML quota.
-                    if (++files > 12000 || bytes >= 64 * 1024 * 1024 || result.Count >= 96 || clock.Elapsed.TotalSeconds > 20)
-                    { limited = true; return result.Take(96).ToArray(); }
+                    if (++files > 12000 || bytes >= 64 * 1024 * 1024 || clock.Elapsed.TotalSeconds > 20)
+                    { limited = true; return Ranked(); }
                     var extension = Path.GetExtension(path);
                     if (!extension.Equals(".dll", StringComparison.OrdinalIgnoreCase)
                         && !extension.Equals(".xml", StringComparison.OrdinalIgnoreCase)) continue;
@@ -101,8 +117,8 @@ internal static class DiagnosticSymbolOwners
                         if (!pe.HasMetadata) continue;
                         // PrefetchMetadata reads only this section, not embedded assets/resources.
                         bytes += pe.PEHeaders.MetadataSize;
-                        if (bytes > 64 * 1024 * 1024) { limited = true; return result.Take(96).ToArray(); }
-                        if (!AddAssemblyOwners(pe.GetMetadataReader(),mod.PackageId,symbols,result,token,clock)) { limited=true; return result.Take(96).ToArray(); }
+                        if (bytes > 64 * 1024 * 1024) { limited = true; return Ranked(); }
+                        if (!AddAssemblyOwners(pe.GetMetadataReader(),mod.PackageId,symbols,AddOwner,token,clock)) { limited=true; return Ranked(); }
                     }
                     else
                     {
@@ -119,16 +135,16 @@ internal static class DiagnosticSymbolOwners
                         using var reader = new StreamReader(new MemoryStream(buffer, 0, read));
                         var content = reader.ReadToEnd();
                         foreach (var symbol in symbols)
-                            if (xmlPatterns[symbol].IsMatch(content)) result.Add(new(symbol, mod.PackageId, "xml-symbol"));
+                            if (xmlPatterns[symbol].IsMatch(content)) AddOwner(new(symbol, mod.PackageId, "xml-symbol"));
                     }
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException
                 or InvalidOperationException or RegexMatchTimeoutException) { limited = true; }
         }
-        return result.Take(96).ToArray();
+        return Ranked();
     }
-    private static bool AddAssemblyOwners(MetadataReader metadata,string packageId,string[] symbols,HashSet<AiSymbolOwner> result,
+    private static bool AddAssemblyOwners(MetadataReader metadata,string packageId,string[] symbols,Action<AiSymbolOwner> addOwner,
         CancellationToken token,System.Diagnostics.Stopwatch clock)
     {
         if (metadata.IsAssembly)
@@ -146,7 +162,7 @@ internal static class DiagnosticSymbolOwners
             var name=metadata.GetString(definition.Name); var ns=metadata.GetString(definition.Namespace);
             var fullName=ns.Length==0?name:ns+"."+name;
             foreach(var symbol in symbols.Where(s=>s==fullName || s.StartsWith(fullName+".",StringComparison.Ordinal)))
-                if(result.Count<96)result.Add(new(symbol,packageId,"assembly-type"));
+                addOwner(new(symbol,packageId,"assembly-type"));
         }
         return true;
     }

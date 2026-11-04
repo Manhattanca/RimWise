@@ -82,7 +82,11 @@
                 <DataTrigger Binding="{Binding HasError}" Value="True"><Setter Property="Foreground" Value="{DynamicResource ErrorTextBrush}" /></DataTrigger>
             </Style.Triggers>
         </Style>
-        <Style x:Key="MarkedCell" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+        <Style x:Key="ModListCell" TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+            <!-- Center content in the selected row height; fixed vertical padding clips 24px badges in compact rows. -->
+            <Setter Property="Padding" Value="12,0" />
+        </Style>
+        <Style x:Key="MarkedCell" TargetType="DataGridCell" BasedOn="{StaticResource ModListCell}">
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -105,6 +109,9 @@
                     <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
                 </MultiDataTrigger>
             </Style.Triggers>
+        </Style>
+        <Style x:Key="ModIconCell" TargetType="DataGridCell" BasedOn="{StaticResource MarkedCell}">
+            <Setter Property="Padding" Value="5,0" />
         </Style>
         <DataTemplate x:Key="ModActivityIcons">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -135,8 +142,8 @@
     <DataTemplate x:Key="ModSeverity">
         <Border Style="{StaticResource IconHitArea}" ToolTip="{Binding DiagnosticTooltip}" AutomationProperties.Name="{Binding DiagnosticTooltip}">
             <Grid IsHitTestVisible="False">
-                <ContentControl ContentTemplate="{StaticResource WarningIcon}" Visibility="{Binding HasWarning, Converter={StaticResource BooleanVisibility}}" HorizontalAlignment="Center" />
-                <ContentControl ContentTemplate="{StaticResource ErrorIcon}" Visibility="{Binding HasError, Converter={StaticResource BooleanVisibility}}" HorizontalAlignment="Center" />
+                <ContentControl ContentTemplate="{StaticResource WarningIcon}" Visibility="{Binding HasWarning, Converter={StaticResource BooleanVisibility}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <ContentControl ContentTemplate="{StaticResource ErrorIcon}" Visibility="{Binding HasError, Converter={StaticResource BooleanVisibility}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Grid>
         </Border>
     </DataTemplate>

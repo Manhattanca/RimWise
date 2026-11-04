@@ -1,6 +1,20 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (args.Length >= 1 && args[0] == "--diagnostic-attribution-checks")
+{
+    var results = new List<string>();
+    void Record(string name, Action test) { test(); results.Add(name); }
+    DiagnosticAttributionChecks.Run(Record);
+    MaintenanceDiagnosisChecks.Run(Record);
+    AiContextRetentionChecks.Run(Record);
+    AiResponseFormatChecks.Run(Record);
+    if (args.Length == 3) DiagnosticAttributionChecks.Replay(args[1], args[2]);
+    if (args.Length == 2) DiagnosticAttributionChecks.ReplayArchivedReport(args[1]);
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--lifecycle-probe")
 {
     Console.WriteLine("ready");
@@ -12,6 +26,23 @@ if (args.Length == 1 && args[0] == "--ai-response-checks")
 {
     var results = new List<string>();
     AiResponseFormatChecks.Run((name, test) => { test(); results.Add(name); });
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--ai-token-estimation-checks")
+{
+    var results = new List<string>();
+    AiTokenEstimationChecks.Run((name, test) => { test(); results.Add(name); });
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
+if (args.Length >= 1 && args[0] == "--save-import-checks")
+{
+    var results = new List<string>();
+    SaveImportChecks.Run((name, test) => { test(); results.Add(name); });
+    foreach (var path in args.Skip(1)) SaveImportChecks.Replay(path);
     Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
     return;
 }
@@ -78,6 +109,7 @@ DuplicateCopyChecks.Run(Check);
 AiContextRetentionChecks.Run(Check);
 AutomaticLogChecks.Run(Check);
 MaintenanceDiagnosisChecks.Run(Check);
+DiagnosticAttributionChecks.Run(Check);
 LargeLogChecks.Run(Check);
 AiResponseFormatChecks.Run(Check);
 GameVersionCompatibilityChecks.Run(Check);
@@ -86,8 +118,10 @@ InsertionOrderingChecks.Run(Check);
 AutomaticPreparationChecks.Run(Check);
 AiConnectionImportChecks.Run(Check);
 AiServiceConfigurationChecks.Run(Check);
+AiTokenEstimationChecks.Run(Check);
 StorageMigrationChecks.Run(Check);
 ReleaseUpdateChecks.Run(Check);
+SaveImportChecks.Run(Check);
 if (args.Length == 2 && args[0] == "--diagnostic-replay") MaintenanceDiagnosisChecks.Replay(args[1]);
 if (args.Length > 1 && args[0] == "--metadata-no-dependencies")
     DependencyChecks.CheckOptionalMetadata(args.Skip(1), Check);

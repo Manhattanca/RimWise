@@ -83,4 +83,17 @@ internal static class InterfaceMotion
         animation.Completed += (_, _) => element.BeginAnimation(UIElement.OpacityProperty, null);
         element.BeginAnimation(UIElement.OpacityProperty, animation);
     }
+
+    internal static void SlidePage(FrameworkElement element, bool fromRight)
+    {
+        // Translation only: no singular scale, delayed selection or bitmap of a large list.
+        var offset = element.RenderTransform as TranslateTransform ?? new TranslateTransform();
+        element.RenderTransform = offset;
+        offset.BeginAnimation(TranslateTransform.XProperty, null);
+        offset.X = 0;
+        if (!Enabled) return;
+        offset.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(fromRight ? 24 : -24, 0, TimeSpan.FromMilliseconds(160))
+            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
+    }
 }

@@ -6,8 +6,11 @@ namespace RimWise.Integration.AI;
 public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, string[] TestedOrder,
     string[] DiagnosticCodes, int Attempt)
 {
+    public string? FailureFingerprint { get; init; }
     internal void Validate()
     {
+        if (FailureFingerprint is not null && !MaintenanceFailureSignature.Valid(FailureFingerprint))
+            throw new InvalidDataException("试排除错误指纹无效。");
         static bool Invalid(string[]? ids) => ids is null || ids.Length is < 1 or > 20000
             || ids.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > AiModIdentifier.MaximumLength || id.Any(char.IsControl))
             || ids.Distinct(StringComparer.OrdinalIgnoreCase).Count() != ids.Length;
@@ -26,6 +29,43 @@ public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, stri
 /// <summary>Trusted local hypotheses and dependency/protection checks, independent of model confidence.</summary>
 internal static class TrialExclusionPlanning
 {
+    // Combine independent, uniquely attributed error subjects. Shared stacks, shared patch
+    // targets and overlapping dependency closures are not independent experiments.
+    internal static TrialExclusion[] Batch(MaintenanceGameReport report, ModCatalogue catalogue,
+        IReadOnlyList<string> order, IReadOnlyList<string> retained, GameVersion version,
+        TrialExclusion first)
+    {
+        var result = new List<TrialExclusion> { first };
+        if (MaintenanceFailureSignature.Blocker(report) is not null) return result.ToArray();
+        var owners = report.LogContext?.Owners ?? [];
+        var independent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var error in report.Errors)
+        {
+            var subjects = Game.DiagnosticLogContext.SubjectSymbols([error]).ToHashSet(StringComparer.Ordinal);
+            var packages = owners.Where(o => o.Basis == "assembly-type" && subjects.Contains(o.Symbol))
+                .Select(o => o.PackageId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (packages.Length == 1) independent.Add(packages[0]);
+            else ambiguous.UnionWith(packages);
+        }
+        independent.ExceptWith(ambiguous);
+        bool Supported(string id) => independent.Contains(catalogue.Resolve(id, version).UniqueInstallation?.PackageId ?? id);
+        if (!Supported(first.SelectedId)) return result.ToArray();
+        var removed = first.RemovedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var remaining = order.Except(removed, StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (var candidate in Candidates(report, catalogue, order, retained, version, first.Attempt))
+        {
+            if (!Supported(candidate.SelectedId) || candidate.RemovedIds.Any(removed.Contains)) continue;
+            var next = Candidates(report, catalogue, remaining, retained, version, first.Attempt)
+                .FirstOrDefault(c => c.SelectedId.Equals(candidate.SelectedId, StringComparison.OrdinalIgnoreCase));
+            if (next is null) continue;
+            result.Add(next);
+            removed.UnionWith(next.RemovedIds);
+            remaining = remaining.Except(next.RemovedIds, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+        return result.ToArray();
+    }
+
     internal static TrialExclusion? Select(MaintenanceGameReport report, ModCatalogue catalogue,
         IReadOnlyList<string> order, IReadOnlyList<string> retained, GameVersion version, int attempt)
         => Candidates(report, catalogue, order, retained, version, attempt).FirstOrDefault();
@@ -47,6 +87,9 @@ internal static class TrialExclusionPlanning
         // owners are protected, excluding unrelated mods cannot bypass that protection.
         var blockers = facts.Where(f => f.Code == "GameTestBlockingFailure")
             .Select(f => Active(f.PackageId)!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // A captured journey blocker with unresolved ownership must not turn unrelated
+        // startup errors into a series of speculative exclusions.
+        if (MaintenanceFailureSignature.Blocker(report) is not null && blockers.Length == 0) return [];
         if (blockers.Length > 0) members = blockers;
         var options = DeclaredConflictResolution.Options(catalogue, order, retained, version, members);
         // Interceptor stacks list innocent patches too. A verified type named by
@@ -66,7 +109,8 @@ internal static class TrialExclusionPlanning
         {
             var codes = facts.Where(f => Active(f.PackageId) == selected.Identifier).Select(f => f.Code).Distinct().ToArray();
             return new TrialExclusion(selected.Identifier, selected.RemovedIds.ToArray(), order.ToArray(),
-                codes.Length == 0 ? ["GameLogError"] : codes, attempt);
+                codes.Length == 0 ? ["GameLogError"] : codes, attempt)
+                { FailureFingerprint = MaintenanceFailureSignature.Create(report) };
         }).ToArray();
     }
 

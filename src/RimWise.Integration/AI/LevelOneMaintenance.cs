@@ -64,6 +64,7 @@ public static class AutomaticMaintenanceAvailability
 
 internal sealed record MaintenanceGameReport(bool StartupVerified, IReadOnlyList<string> Errors)
 {
+    public string? FailureFingerprint { get; init; }
     public bool ExistingErrorsOnly { get; init; }
     public InsertionEvidence? InsertionEvidence { get; init; }
     public AiLogContext? LogContext { get; init; }
@@ -326,6 +327,16 @@ public sealed class LevelOneMaintenance
                 }
                 if (startupFailure is null && ((!report.StartupVerified && !report.CanDiagnose) || report.Errors.Count == 0))
                 { Stop("游戏未完成启动验证，不能将空日志判定为通过。"); break; }
+                var failureFingerprint = MaintenanceFailureSignature.Create(report);
+                if (recoveryTask.Current.Feedback is not { ReplyReceived: true } && failureFingerprint is not null
+                    && recoveryTask.Current.DiagnosedFailures.Contains(failureFingerprint, StringComparer.Ordinal))
+                {
+                    // One failed reorder may still justify a locally evidenced exclusion. A failed
+                    // exclusion for this same error does not justify removing unrelated mods in turn.
+                    if (!trials.Any(t => t.FailureFingerprint == failureFingerprint) && await TryTrialAsync(report)) continue;
+                    Stop("复测仍停在相同错误，上一轮调整未解决阻塞；已停止重复 AI 请求和无依据的连续排除。请查看本轮日志与诊断。");
+                    break;
+                }
                 if (recoveryTask.Current.Feedback is { ReplyReceived: true })
                 {
                     if (recoveryTask.Current.LastUsage?.Output > (recoveryTask.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest))
@@ -547,7 +558,10 @@ public sealed class LevelOneMaintenance
                 && GameVersion.Parse(request.GameVersion) is { } version && session is IMaintenanceConflictResolver)
                 conflict = conflicts.Conflicts.Select(c => RuntimeConflictResolution.FromReport(c, report,
                     catalogue, current, request.RetainedMods, version)?.RuntimeEvidence).FirstOrDefault(c => c is not null);
+            var signature = MaintenanceFailureSignature.Create(report);
             return checkpoint with { Phase = AiTaskPhase.ReplySaved, ReportedTokens = nextSpent,
+                DiagnosedFailures = signature is null ? checkpoint.DiagnosedFailures
+                    : checkpoint.DiagnosedFailures.Append(signature).Distinct(StringComparer.Ordinal).ToArray(),
                 OutputBudgetExhausted = reply.Failure == AiReplyFailure.OutputLimit,
                 UnknownUsage = unknown || usage is null, ReservedTokens = nextReserve, LastUsage = usage,
                 Feedback = checkpoint.Feedback! with { ReplyReceived = true,
@@ -618,7 +632,18 @@ public sealed class LevelOneMaintenance
                     : "已检查全部关联候选，均违反排序约束或已测试过，未重复执行。";
                 return false;
             }
-            trials = trials.Append(trial).ToArray();
+            var batch = TrialExclusionPlanning.Batch(report, catalogue, current, request.RetainedMods, version, trial);
+            if (batch.Length > 1)
+            {
+                var remaining = current.Except(batch.SelectMany(t => t.RemovedIds), StringComparer.OrdinalIgnoreCase).ToArray();
+                var sorted = new LoadOrderSorter().Sort(catalogue, remaining, version, version, rules, deferAdvisoryCycles: true);
+                var combined = sorted.Complete ? TrialExclusionPlanning.Plan(current, sorted.Order, catalogue,
+                    request.RetainedMods, version, rules, batch) : null;
+                if (combined is { CanApply: true } && !seen.Any(o => o.SequenceEqual(combined.After, StringComparer.OrdinalIgnoreCase)))
+                    plan = combined;
+                else batch = [trial];
+            }
+            trials = trials.Concat(batch).ToArray();
             // Persist authority before the test adapter can apply it. This is deliberately separate
             // from user approvals and cannot authorize publication to the personal game configuration.
             recoveryTask.Save(recoveryTask.Current with { TrialExclusions = trials, PendingConflict = null,
@@ -629,7 +654,8 @@ public sealed class LevelOneMaintenance
             current = plan.After.ToArray();
             seen.Add(current);
             Save(AiTaskPhase.Paused, clearFeedback: true);
-            Report("临时试排除：" + string.Join("、", trial.RemovedIds) + "；保留此前排除项，继续复测。结束后恢复原排序。");
+            Report((batch.Length > 1 ? $"合并试排除 {batch.Length} 组独立错误关联项，一次复测：" : "临时试排除：")
+                + string.Join("、", batch.SelectMany(t => t.RemovedIds)) + "；尚未证明各项根因。结束后恢复原排序，移除仍按用户设置确认。");
             return true;
         }
         MaintenanceResult Result(MaintenanceOutcome state, string text) =>

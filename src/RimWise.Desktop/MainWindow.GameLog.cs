@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using RimWise.Desktop.Views;
+using RimWise.Desktop.Services;
 using RimWise.Integration.Configuration;
 
 namespace RimWise.Desktop;
@@ -17,6 +18,7 @@ public partial class MainWindow
             GameLogHost.Content = gameLogPage = new GameLogPage(LocateGameLogs, () => ViewModel.CurrentCatalogue);
         ModEditorBody.Visibility = ModEditorFooter.Visibility = logs ? Visibility.Collapsed : Visibility.Visible;
         GameLogHost.Visibility = logs ? Visibility.Visible : Visibility.Collapsed;
+        if (IsLoaded) InterfaceMotion.SlidePage(logs ? GameLogHost : ModEditorBody, fromRight: logs);
     }
 
     private (string Startup, string Runtime) LocateGameLogs()

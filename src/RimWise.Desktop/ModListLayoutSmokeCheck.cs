@@ -52,7 +52,7 @@ internal static class ModListLayoutSmokeCheck
         Check(main.RowHeightSlider.Value == 29 && main.OrderGrid.RowHeight == 29, "Animated slider stopped before its target.");
         main.AnimateRowHeight(47);
         main.RowHeightPopup.IsOpen = false;
-        await Layout(main);
+        await SettleMotion(main);
         var persistedHeight = new ListDisplaySettingsStore(UserStorage.DirectoryPath).Load().RowHeight;
         Check(persistedHeight == 47, $"Closing the popup saved an intermediate animation value instead of the selected height: {persistedHeight}; slider={main.RowHeightSlider.Value}, input={main.RowHeightInput.Text}.");
 
@@ -76,6 +76,42 @@ internal static class ModListLayoutSmokeCheck
         var restored = new MainWindow(initializePaths: false);
         Check(restored.RowHeightSlider.Value == 48, "Row height not restored in new window.");
         restored.Close();
+
+        var originalWidth = main.Width;
+        var originalColumns = new[] { main.DetailsColumn.Width, main.AvailableColumn.Width, main.OrderColumn.Width };
+        foreach (var width in new[] { 960d, 1360d, 1031d })
+        foreach (var height in new[] { 28d, 64d })
+        {
+            main.Width = width;
+            main.SetModRowHeight(height);
+            main.AvailableColumn.Width = new GridLength(320);
+            main.OrderColumn.Width = new GridLength(240);
+            main.DetailsColumn.Width = new GridLength(1, GridUnitType.Star);
+            await Layout(main);
+            foreach (var grid in new[] { main.AvailableGrid, main.OrderGrid })
+            {
+                var viewer = Descendants(grid).OfType<ScrollViewer>().First();
+                Check(!grid.CanUserResizeColumns, "Header resizing can turn a fitted column into an overflowing fixed width.");
+                Check(viewer.ComputedHorizontalScrollBarVisibility != Visibility.Visible,
+                    $"Horizontal bar visible: {grid.Name}, window={width}, height={height}, extent={viewer.ExtentWidth}, viewport={viewer.ViewportWidth}.");
+                viewer.ScrollToHorizontalOffset(100);
+                await Layout(main);
+                Check(viewer.HorizontalOffset == 0, "Mod columns shifted sideways.");
+                foreach (var cell in Descendants(grid).OfType<DataGridCell>().Where(cell => cell.IsVisible))
+                {
+                    var point = cell.TranslatePoint(new Point(), viewer);
+                    Check(point.X >= -0.5 && point.X + cell.ActualWidth <= viewer.ViewportWidth + 0.5,
+                        $"Column clipped: {grid.Name}, column={cell.Column.DisplayIndex}, right={point.X + cell.ActualWidth}, viewport={viewer.ViewportWidth}.");
+                }
+            }
+        }
+        main.Width = originalWidth;
+        main.DetailsColumn.Width = originalColumns[0];
+        main.AvailableColumn.Width = originalColumns[1];
+        main.OrderColumn.Width = originalColumns[2];
+        await Layout(main);
+        File.WriteAllText(Path.Combine(output, "mod-horizontal-scroll.json"),
+            "{\"Passed\":true,\"WindowWidths\":[960,1360,1031],\"RowHeights\":[28,64],\"PaneWidths\":[320,240],\"AllCellsWithinViewport\":true,\"HorizontalOffset\":0}");
 
         // Thousands of items force the native proportional thumb below our minimum.
         var gridLarge = new DataGrid

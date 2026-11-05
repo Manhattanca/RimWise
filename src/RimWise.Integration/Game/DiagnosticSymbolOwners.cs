@@ -12,7 +12,8 @@ namespace RimWise.Integration.Game;
 internal static class DiagnosticSymbolOwners
 {
     internal static AiSymbolOwner[] Find(ModCatalogue catalogue, IReadOnlyList<string> order,
-        string[] symbols, CancellationToken token, out bool limited, IReadOnlyList<string>? observedAssemblies = null)
+        string[] symbols, CancellationToken token, out bool limited, IReadOnlyList<string>? observedAssemblies = null,
+        IReadOnlyList<string>? priorityAssemblyNames = null)
     {
         // Shared framework copies are not evidence that their containing mod caused an exception.
         symbols = symbols.Where(s => !DiagnosticLogContext.IsFrameworkSymbol(s)).Distinct(StringComparer.Ordinal).ToArray();
@@ -38,6 +39,8 @@ internal static class DiagnosticSymbolOwners
             @"(?:\bName\s*=\s*[""']|<(?:defName|workerClass|thingClass|className|hediffClass)>\s*)"
             + Regex.Escape(s) + @"(?=[""'\s<])", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)));
         var clock = System.Diagnostics.Stopwatch.StartNew();
+        var hints = (priorityAssemblyNames ?? []).Where(name => name == Path.GetFileName(name)
+            && name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)).Take(16).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // Cover each installation's standard code folders before recursive fallback.
         // Assembly filenames need not match namespaces. Small per-folder batches keep
         // bundled dependency trees from starving later installations of their turn.
@@ -57,7 +60,10 @@ internal static class DiagnosticSymbolOwners
                 {
                     var path = ScopedPaths.Child(folder, "Assemblies");
                     if (!Directory.Exists(path)) continue;
-                    namedFiles.AddRange(Directory.EnumerateFiles(path, "*.dll").Take(16));
+                    var entries = Directory.EnumerateFiles(path, "*.dll")
+                        .OrderBy(file => hints.Contains(Path.GetFileName(file)) ? 0 : 1).Take(17).ToArray();
+                    if (entries.Length > 16) limited = true;
+                    namedFiles.AddRange(entries.Take(16));
                 }
             }
             catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException) { limited=true; }
@@ -65,7 +71,10 @@ internal static class DiagnosticSymbolOwners
         // Runtime assembly inventories are useful hints, not permission to read arbitrary
         // paths. Only exact DLLs inside one active installation pass this first pass.
         var scanned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var observed in (observedAssemblies ?? []).Concat(namedFiles).Distinct(StringComparer.OrdinalIgnoreCase).Take(4096))
+        // The failing assembly gets its metadata inspected first, even in a very large catalogue.
+        // Filenames only prioritize reads; actual TypeDefinitions still establish ownership.
+        foreach (var observed in (observedAssemblies ?? []).Concat(namedFiles).Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => hints.Contains(Path.GetFileName(path)) ? 0 : 1).Take(4096))
         {
             token.ThrowIfCancellationRequested();
             var owners = catalogue.Installations.Where(m => active.Contains(m.PackageId)
@@ -74,9 +83,9 @@ internal static class DiagnosticSymbolOwners
             try
             {
                 using var stream = new FileStream(ScopedPaths.Ordinary(observed,true),FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
-                if (stream.Length > 8*1024*1024) { limited=true; continue; }
-                using var pe = new PEReader(stream,PEStreamOptions.PrefetchMetadata);
+                using var pe = new PEReader(stream);
                 if (!pe.HasMetadata) continue;
+                if (pe.PEHeaders.MetadataSize > 8*1024*1024) { limited=true; continue; }
                 bytes += pe.PEHeaders.MetadataSize; files++;
                 if (bytes > 64*1024*1024 || clock.Elapsed.TotalSeconds > 20) { limited=true; break; }
                 if (!AddAssemblyOwners(pe.GetMetadataReader(),owners[0].PackageId,symbols,AddOwner,token,clock)) { limited=true; return Ranked(); }
@@ -107,15 +116,17 @@ internal static class DiagnosticSymbolOwners
                     if (!extension.Equals(".dll", StringComparison.OrdinalIgnoreCase)
                         && !extension.Equals(".xml", StringComparison.OrdinalIgnoreCase)) continue;
                     var size = new FileInfo(path).Length;
-                    if (size > 8 * 1024 * 1024 || extension.Equals(".xml", StringComparison.OrdinalIgnoreCase) && bytes + size > 64 * 1024 * 1024)
+                    if (extension.Equals(".xml", StringComparison.OrdinalIgnoreCase)
+                        && (size > 8 * 1024 * 1024 || bytes + size > 64 * 1024 * 1024))
                     { limited = true; continue; }
                     using var stream = new FileStream(ScopedPaths.Ordinary(path, true), FileMode.Open,
                         FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     if (extension.Equals(".dll", StringComparison.OrdinalIgnoreCase))
                     {
-                        using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+                        using var pe = new PEReader(stream);
                         if (!pe.HasMetadata) continue;
-                        // PrefetchMetadata reads only this section, not embedded assets/resources.
+                        if (pe.PEHeaders.MetadataSize > 8*1024*1024) { limited=true; continue; }
+                        // Read metadata only; embedded assets do not consume the lookup budget.
                         bytes += pe.PEHeaders.MetadataSize;
                         if (bytes > 64 * 1024 * 1024) { limited = true; return Ranked(); }
                         if (!AddAssemblyOwners(pe.GetMetadataReader(),mod.PackageId,symbols,AddOwner,token,clock)) { limited=true; return Ranked(); }

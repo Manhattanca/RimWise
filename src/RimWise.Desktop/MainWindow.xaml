@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:p="clr-namespace:RimWise.Desktop.Presentation"
+        xmlns:motion="clr-namespace:RimWise.Desktop.Services"
         Style="{StaticResource {x:Type Window}}"
         Title="RimWise" Width="1360" Height="820" MinWidth="960" MinHeight="640"
         WindowStartupLocation="CenterScreen" AllowDrop="True" PreviewDragOver="Window_FileDragOver" PreviewDrop="Window_FileDrop">
@@ -37,6 +38,9 @@
             <Setter Property="AutoGenerateColumns" Value="False" /><Setter Property="IsReadOnly" Value="True" />
             <Setter Property="CanUserAddRows" Value="False" /><Setter Property="CanUserDeleteRows" Value="False" />
             <Setter Property="CanUserSortColumns" Value="False" /><Setter Property="CanUserReorderColumns" Value="False" />
+            <!-- These columns fill their pane; resize panes with the splitters instead of fixing a column wider than its viewport. -->
+            <Setter Property="CanUserResizeColumns" Value="False" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
             <Setter Property="SelectionMode" Value="Extended" /><Setter Property="SelectionUnit" Value="FullRow" />
             <Setter Property="AllowDrop" Value="True" />
             <EventSetter Event="SelectionChanged" Handler="ModSelection_Changed" />
@@ -155,11 +159,13 @@
             </MenuItem>
         </Menu>
         <DockPanel Grid.Row="1">
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="24,6,24,0">
+        <motion:NavigationTabStrip x:Name="MainPageTabs" DockPanel.Dock="Top" Margin="24,6,24,0" HorizontalAlignment="Left">
+        <StackPanel Orientation="Horizontal">
             <RadioButton x:Name="ModsPageTab" Content="模组排序" IsChecked="True" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
             <RadioButton x:Name="LogsPageTab" Content="游戏日志" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
         </StackPanel>
-        <Grid>
+        </motion:NavigationTabStrip>
+        <Grid ClipToBounds="True">
         <ContentControl x:Name="GameLogHost" Margin="24,0,24,16" Visibility="Collapsed"/>
         <Grid x:Name="ModEditorBody" Margin="24,12">
             <Grid.InputBindings>

@@ -1,5 +1,5 @@
 {
-  "Version": "0.5.3",
+  "Version": "0.5.4",
   "Purpose": "MIT source snapshot; third-party components retain their own licenses",
   "Excluded": [
     "Personal data and credentials",
@@ -134,15 +134,15 @@
     },
     {
       "Path": "packaging/README.preview.md",
-      "Sha256": "649cc1702faa653fa21327ce64917ea927724a27b26fd6f8a4ebe9fab6e7095f"
+      "Sha256": "16b3babbdb4deb21c5fdf233961e8642ae38f9b47626bcac85e41d561896b38f"
     },
     {
       "Path": "packaging/RimWise.iss",
-      "Sha256": "2cd2092095348053cbd4ebf60a48b1397dd104d87984f37cd91e02908ed4b2c7"
+      "Sha256": "c04d048af2b614be45737c4e8e1ce735bd1551ab4474a102be34fe1ce702730d"
     },
     {
       "Path": "scripts/Build-Installer.ps1",
-      "Sha256": "d58a4c973c5fc346d6a75ac0b2f217835115ee718f17f0c8b0ffd72b33f0e430"
+      "Sha256": "60ce00b6cecd6662cd785cf1a55387454c2a912d93dc0e02b1bc025c856cd01f"
     },
     {
       "Path": "scripts/Build-Source.ps1",
@@ -162,7 +162,7 @@
     },
     {
       "Path": "scripts/Publish-Preview.ps1",
-      "Sha256": "de3935907e9650ea8cc5026f866406ffc7910097b475d0b3dcee959bf45ec6ad"
+      "Sha256": "c579fb2e70d4f859e71ce66c96d4413a293c0c0b4db6f4b01795d5abd8f35a8b"
     },
     {
       "Path": "src/RimWise.Core/CatalogueAnalysis.cs",
@@ -258,7 +258,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/App.xaml",
-      "Sha256": "7766824843a5861c07f1a6e448ecc10317404da752c39eb0481bfecefe92c8d8"
+      "Sha256": "17dc16a49202f94ac8f7ed5d74d4685f04bac695f8bf050c2306f9ee1818129d"
     },
     {
       "Path": "src/RimWise.Desktop/App.xaml.cs",
@@ -306,7 +306,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/GameLogUiSmokeCheck.cs",
-      "Sha256": "9a38a24856119c3ed86bcb166a4826cff133c65b418af1c921e0859671f4d672"
+      "Sha256": "ff753f88b82d7fdb4112798acae1cab350eb12df546267481ca6bfa7c44b7bef"
     },
     {
       "Path": "src/RimWise.Desktop/HistoryAndSaveSmokeCheck.cs",
@@ -354,7 +354,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.GameLog.cs",
-      "Sha256": "01537943ce2a4ed8b3edab4502951b0d9634acd31b77b9649d11af3a6a143225"
+      "Sha256": "9eb6689a203b94cd1cf1ce23c78c337ea8dc14dc07696bbeb5e147e1bd25b7e4"
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.GameSave.cs",
@@ -394,7 +394,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.xaml",
-      "Sha256": "d14aacc717a3557163dfc3612170159f16be36ab002bb0a4d7a13bbef3412aec"
+      "Sha256": "6c75c73cafe499baf79a6544fddef342a6456f079834c7db9b029198ea6dc283"
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.xaml.cs",
@@ -414,7 +414,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/ModListLayoutSmokeCheck.cs",
-      "Sha256": "a20a444b402961bf396bb2dcd87e79b7a0c58669eda53b58d06ec1f1dde6878c"
+      "Sha256": "3c1357260eb18f8588c17604dedc46f36609ebef6656f17a5ba9de5eaf7364b0"
     },
     {
       "Path": "src/RimWise.Desktop/NamedCollectionSmokeCheck.cs",
@@ -586,7 +586,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/RimWise.Desktop.csproj",
-      "Sha256": "5e043f7310c748fe3709af63920e9f80d8e7ecbf4aa5d82c111642fcd94092dc"
+      "Sha256": "3f064060e2e7d009de39b74c72af536d4825f992ad144e41a0d95bbd41ef98d1"
     },
     {
       "Path": "src/RimWise.Desktop/RuntimeUiSmokeCheck.cs",
@@ -618,7 +618,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/Services/InterfaceMotion.cs",
-      "Sha256": "5aabc4f7df319dc6ed3fb49d0ae5c3480db06bebac4a4991e96b46585db211b0"
+      "Sha256": "37230f341b19c83d76c9f11e194df3caaafddaee9493aac619a77c92a0064fab"
     },
     {
       "Path": "src/RimWise.Desktop/Services/ModLocationOpener.cs",
@@ -631,6 +631,10 @@
     {
       "Path": "src/RimWise.Desktop/Services/ModThumbnailCache.cs",
       "Sha256": "df9a5b1f18c446a10e6e84c63572c8924f6a19f009d08541eebdcb4d98899355"
+    },
+    {
+      "Path": "src/RimWise.Desktop/Services/NavigationTabStrip.cs",
+      "Sha256": "1c2c03e1b6205fe81699f82fa8809f0d15b8908610dd40147551a2b191f9b86d"
     },
     {
       "Path": "src/RimWise.Desktop/Services/SteamRootLocator.cs",
@@ -802,7 +806,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/Views/GameLogPage.xaml",
-      "Sha256": "73750f568d031059d8d13e3a98aae05ca1a7312e9b90c8e6334f0302bfa534b0"
+      "Sha256": "9ef25d2413d7401cc8aeb214ffb08c626bf9406f33de97dabf5f9f3466be6f26"
     },
     {
       "Path": "src/RimWise.Desktop/Views/GameLogPage.xaml.cs",
@@ -902,7 +906,7 @@
     },
     {
       "Path": "src/RimWise.Diagnostics/RimWise.Diagnostics.csproj",
-      "Sha256": "1b7f9c094b119bc92b46dc366e189632363f14b6b1e3f2a4f8baef3c4fff9c2b"
+      "Sha256": "3166c5ba2e835c5789945fdf81e385f29d8b269d296251d9202386efe4137537"
     },
     {
       "Path": "src/RimWise.Formats/AssemblyInfo.cs",
@@ -1014,7 +1018,7 @@
     },
     {
       "Path": "src/RimWise.Integration/AI/AiLogContext.cs",
-      "Sha256": "a7aeed2518be3437253c3cb8c7490add647e6c8c399afd23e760bdff15a2f960"
+      "Sha256": "996bf094a28f4ea6e4b0f63ce9945d86a83f5b18f84b39ba530cfac7e91e26a1"
     },
     {
       "Path": "src/RimWise.Integration/AI/AiModIdentifier.cs",
@@ -1078,7 +1082,7 @@
     },
     {
       "Path": "src/RimWise.Integration/AI/AiTaskRecovery.cs",
-      "Sha256": "3cb5de088e7e2867f16d42144891ef0832e2b3c1b7af9456664bd1bdc1b5efe2"
+      "Sha256": "58f33bddacd7bb8c7797dc00c72d04c3abefc97438d2e3c7d4466cba02b596a1"
     },
     {
       "Path": "src/RimWise.Integration/AI/AiTokenEstimator.cs",
@@ -1138,15 +1142,19 @@
     },
     {
       "Path": "src/RimWise.Integration/AI/LevelOneMaintenance.cs",
-      "Sha256": "8d6540f232c7e88099db1ee31b32a6c80ed9d383c7c0d5cea99ae8ec56d06464"
+      "Sha256": "e1a5d7bbe5a9790b7d3bf6e37b8074c6f7db7e6193cc57eba21cd8a7e6c5c27c"
     },
     {
       "Path": "src/RimWise.Integration/AI/LocalEncryptedSecretStore.cs",
       "Sha256": "b6976cecbfcfea06f308b82fe303f4f747c7ffb1907f51bdfd6f77612b93d975"
     },
     {
+      "Path": "src/RimWise.Integration/AI/MaintenanceFailureSignature.cs",
+      "Sha256": "f3688144247a027ea261f852ea6e0bf831b96038c3e45340a23396c494017aa0"
+    },
+    {
       "Path": "src/RimWise.Integration/AI/MaintenanceFeedback.cs",
-      "Sha256": "d5e6a5b0c718eea266fd457a6789ac1cdfed13306eed794436f40fcbf106d00b"
+      "Sha256": "e211c53f28e0184340c6e4fb774339237bbf131dcb9b3e5904fd9ffdc8f47128"
     },
     {
       "Path": "src/RimWise.Integration/AI/MissingModResolution.cs",
@@ -1170,7 +1178,7 @@
     },
     {
       "Path": "src/RimWise.Integration/AI/TrialExclusion.cs",
-      "Sha256": "2eb98f05f9fa12096296d720b7387a9e960b3c52a2087898108561ca2cdd3071"
+      "Sha256": "f460b89d8deca0a3aba7c84e1d5fd502a9f791cc75f868270380a3c02e5a83bf"
     },
     {
       "Path": "src/RimWise.Integration/AI/WindowsCredentialSecretStore.cs",
@@ -1342,7 +1350,7 @@
     },
     {
       "Path": "src/RimWise.Integration/Game/DiagnosticLogContext.cs",
-      "Sha256": "3ee00b43e09ca4d56acb1995f4b2e33e05e5ce2c7df8064c0b0b30a85c758cb3"
+      "Sha256": "4d51596f36705b93fa99d7ca5f563781091bca2af8bf48c3c5ae782252a1bf95"
     },
     {
       "Path": "src/RimWise.Integration/Game/DiagnosticPatchEvidence.cs",
@@ -1350,7 +1358,7 @@
     },
     {
       "Path": "src/RimWise.Integration/Game/DiagnosticSymbolOwners.cs",
-      "Sha256": "57ab1233dd874c6a60ae3e786079c6681f20118fe777ed53cee2c2a38420b59f"
+      "Sha256": "d1a2135ca55994f85b85784d96ed32d99c9a19eec031fd7a976b70a289ac4605"
     },
     {
       "Path": "src/RimWise.Integration/Game/DiagnosticXmlTargets.cs",
@@ -1721,12 +1729,16 @@
       "Sha256": "436add7c7149080fbb64cf7ee831a95005efcd29a6baf7bc9857ff5b82b2fdf9"
     },
     {
+      "Path": "tests/RimWise.SteamChecks/MaintenanceProgressChecks.cs",
+      "Sha256": "66dbef3c176695d2fdc2c17f6010f4a235cc32b736582da86c9571818599b31c"
+    },
+    {
       "Path": "tests/RimWise.SteamChecks/OfflineSortingChecks.cs",
       "Sha256": "87ace547781c84218970cb44054ea2fbad1e91618a7600708d0fe2facb95ecc4"
     },
     {
       "Path": "tests/RimWise.SteamChecks/Program.cs",
-      "Sha256": "50414afd5733fb5a5e8b2bf4a288267718ff4ef77c47821411b8578283c40290"
+      "Sha256": "ef8fc8aab256509d1146dab3c2defe5745cffb6c8f256e76b6eee1ed5b6e0be6"
     },
     {
       "Path": "tests/RimWise.SteamChecks/ReleaseUpdateChecks.cs",

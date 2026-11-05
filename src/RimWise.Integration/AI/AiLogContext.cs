@@ -12,12 +12,15 @@ public sealed record AiModFileEvidence(string Kind, string PackageId, int OrderI
 public sealed record AiLogContext(IReadOnlyList<AiLogExcerpt> Excerpts, IReadOnlyList<AiSymbolOwner> Owners,
     bool SelectionLimited)
 {
+    // Kept separately so a busy startup log cannot hide the exception that stopped the journey.
+    public string? BlockingError { get; init; }
     public IReadOnlyList<AiModFileEvidence> Files { get; init; } = [];
     public IReadOnlyList<AiCodeEvidence> Code { get; init; } = [];
     public string CodeStatus { get; init; } = "not-needed";
     public IReadOnlyList<AiAssemblyFact> Assemblies { get; init; } = [];
     internal AiLogContext CopyValidated()
     {
+        if (BlockingError is { Length: > 4096 }) throw new InvalidDataException("测试阻塞证据过长。");
         if (Assemblies is null || Assemblies.Count > 16 || Assemblies.Any(f => !ValidAssemblyFact(f)))
             throw new InvalidDataException("程序集诊断上下文无效。");
         if (Code is null || Code.Count > 6 || CodeStatus is not ("not-needed" or "available" or "unavailable" or "timeout" or "limited" or "no-matching-method")

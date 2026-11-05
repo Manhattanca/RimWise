@@ -10,6 +10,7 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
     [System.Text.Json.Serialization.JsonIgnore]
     public bool Passed => StartupVerified && (!HadErrors || ExistingErrorsOnly);
     public AiDiagnosticFact[] DiagnosticFacts { get; init; } = [];
+    public string? FailureFingerprint { get; init; }
     public bool ReplyReceived { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public AiReplyFailure ReplyFailure { get; init; }
@@ -27,6 +28,7 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
         new(attempt, order.ToArray(), report.StartupVerified, report.Errors.Count > 0, report.CanDiagnose)
         {
             ContextHash = contextHash,
+            FailureFingerprint = MaintenanceFailureSignature.Create(report),
             ExistingErrorsOnly = report.ExistingErrorsOnly,
             InsertionEvidence = report.InsertionEvidence?.Copy(),
             StartupFailure = report.StartupFailure?.CopyValidated(),
@@ -39,11 +41,13 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
         };
 
     internal MaintenanceGameReport Restore() => new(StartupVerified, HadErrors ? ["本轮游戏测试检测到报错。"] : [])
-        { ExistingErrorsOnly = ExistingErrorsOnly, InsertionEvidence = InsertionEvidence?.Copy(), CanDiagnose = CanDiagnose, DiagnosticFacts = DiagnosticFacts.ToArray(), StartupFailure = StartupFailure?.CopyValidated(),
+        { FailureFingerprint = FailureFingerprint, ExistingErrorsOnly = ExistingErrorsOnly, InsertionEvidence = InsertionEvidence?.Copy(), CanDiagnose = CanDiagnose, DiagnosticFacts = DiagnosticFacts.ToArray(), StartupFailure = StartupFailure?.CopyValidated(),
             RuntimeContext = RuntimeContext?.CopyValidated(), LogContext = LogContext?.CopyValidated(), LogPaths = LogPaths.ToArray() };
 
     internal void Validate(AiTaskCheckpoint task)
     {
+        if (FailureFingerprint is not null && !MaintenanceFailureSignature.Valid(FailureFingerprint))
+            throw new InvalidDataException("测试错误指纹无效。");
         InsertionEvidence?.Validate();
         if (ExistingErrorsOnly && (!StartupVerified || !HadErrors || !global::RimWise.Integration.AI.InsertionEvidence.Matches(task.InsertionControl, InsertionEvidence)
             || task.Limits?.InsertionBaselineJson is null)) throw new InvalidDataException("原排序错误判定缺少完整对照测试。");

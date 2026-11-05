@@ -40,6 +40,7 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
     public ConflictRemovalApproval[] ConflictApprovals { get; init; } = [];
     public RuntimeConflictEvidence? PendingConflict { get; init; }
     public TrialExclusion[] TrialExclusions { get; init; } = [];
+    public string[] DiagnosedFailures { get; init; } = [];
     public bool TrialRemovalsApproved { get; init; }
     public bool TrialDecisionRecorded { get; init; }
     public AiUsageRequest[] UsageRequests { get; init; } = [];
@@ -76,7 +77,11 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
             || StoppedOrderDecision is not null && (Kind != AiTaskKind.Maintenance || CandidatePendingApply))
             throw new InvalidDataException("Stopped order decision is invalid.");
         PendingConflict?.Validate();
-        if (TrialExclusions is null || TrialExclusions.Length > Attempts
+        if (DiagnosedFailures is null || DiagnosedFailures.Length > Requests
+            || DiagnosedFailures.Any(f => !MaintenanceFailureSignature.Valid(f))
+            || DiagnosedFailures.Distinct(StringComparer.Ordinal).Count() != DiagnosedFailures.Length)
+            throw new InvalidDataException("重复错误诊断记录无效。");
+        if (TrialExclusions is null || TrialExclusions.Length > 20000
             || TrialExclusions.Length > 0 && Kind != AiTaskKind.Maintenance
             || (TrialRemovalsApproved || TrialDecisionRecorded)
                 && (TrialExclusions.Length == 0 || Phase != AiTaskPhase.Completed))
@@ -87,7 +92,7 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
         {
             if (trial is null) throw new InvalidDataException("临时试排除记录缺失。");
             trial.Validate();
-            if (trial.Attempt <= lastTrialAttempt || trial.Attempt > Attempts
+            if (trial.Attempt < lastTrialAttempt || trial.Attempt > Attempts
                 || trial.RemovedIds.Any(id => !trialRemoved.Add(id)))
                 throw new InvalidDataException("临时试排除轮次或移出项重复。");
             lastTrialAttempt = trial.Attempt;
@@ -464,6 +469,7 @@ public sealed class AiTaskRecoveryStore
                 || (old.Phase is AiTaskPhase.Completed or AiTaskPhase.Cancelled) && next.Phase != old.Phase
                 || next.SeenOrders.Length < old.SeenOrders.Length
                 || next.TrialExclusions.Length < old.TrialExclusions.Length
+                || !old.DiagnosedFailures.SequenceEqual(next.DiagnosedFailures.Take(old.DiagnosedFailures.Length), StringComparer.Ordinal)
                 || old.TrialExclusions.Where((t, i) => JsonSerializer.Serialize(t, Json)
                     != JsonSerializer.Serialize(next.TrialExclusions[i], Json)).Any()
                 || old.TrialRemovalsApproved && !next.TrialRemovalsApproved
@@ -498,6 +504,7 @@ public sealed class AiTaskRecoveryStore
             UsagePeriods = value.UsagePeriods.ToArray(),
             PendingConflict = value.PendingConflict?.Copy(),
             TrialExclusions = value.TrialExclusions.Select(t => t.Copy()).ToArray(),
+            DiagnosedFailures = value.DiagnosedFailures.ToArray(),
             Feedback = value.Feedback?.Copy(),
             InsertionControl = value.InsertionControl?.Copy(),
             ConflictApprovals = value.ConflictApprovals.Select(a => a with { RemovedIds = a.RemovedIds.ToArray(),

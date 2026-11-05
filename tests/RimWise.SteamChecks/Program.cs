@@ -38,11 +38,16 @@ if (args.Length >= 1 && args[0] == "--diagnostic-attribution-checks")
     var results = new List<string>();
     void Record(string name, Action test) { test(); results.Add(name); }
     DiagnosticAttributionChecks.Run(Record);
+    MaintenanceProgressChecks.Run(Record);
     MaintenanceDiagnosisChecks.Run(Record);
     AiContextRetentionChecks.Run(Record);
     AiResponseFormatChecks.Run(Record);
     if (args.Length == 3) DiagnosticAttributionChecks.Replay(args[1], args[2]);
-    if (args.Length == 2) DiagnosticAttributionChecks.ReplayArchivedReport(args[1]);
+    if (args.Length == 2)
+    {
+        if (Directory.Exists(args[1])) MaintenanceProgressChecks.ReplayHistory(args[1]);
+        else DiagnosticAttributionChecks.ReplayArchivedReport(args[1]);
+    }
     Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
     return;
 }
@@ -144,6 +149,7 @@ AiContextRetentionChecks.Run(Check);
 AutomaticLogChecks.Run(Check);
 MaintenanceDiagnosisChecks.Run(Check);
 DiagnosticAttributionChecks.Run(Check);
+MaintenanceProgressChecks.Run(Check);
 LargeLogChecks.Run(Check);
 AiResponseFormatChecks.Run(Check);
 GameVersionCompatibilityChecks.Run(Check);

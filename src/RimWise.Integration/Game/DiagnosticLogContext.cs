@@ -24,6 +24,9 @@ internal static partial class DiagnosticLogContext
     [GeneratedRegex(@"^\s*at\s+([A-Za-z_][A-Za-z0-9_`+]*(?:\.[A-Za-z_][A-Za-z0-9_`+]*)+)\s*\(", RegexOptions.Multiline)]
     private static partial Regex StackMethods();
 
+    [GeneratedRegex(@"\bin\s+([A-Za-z0-9_.-]+\.dll)(?=[:\s]|$)", RegexOptions.IgnoreCase)]
+    private static partial Regex StackAssemblies();
+
     [GeneratedRegex(@"(?:\bClass\s*=\s*[""']|(?:type(?: initializer for)?|Could not find type named)\s+[""'])([A-Za-z_][A-Za-z0-9_.+`-]{0,159})", RegexOptions.IgnoreCase)]
     private static partial Regex ConcreteTypes();
 
@@ -97,8 +100,13 @@ internal static partial class DiagnosticLogContext
         var lookupLimited = false;
         var owners = exactPatchErrors ? [] : DiagnosticSymbolOwners.Find(catalogue, order, symbols, token, out lookupLimited,
             report.Logs.Take(48).SelectMany(log => AssemblyPaths().Matches(log.Text).Select(m => m.Value))
-                .Distinct(StringComparer.OrdinalIgnoreCase).Take(96).ToArray());
-        return new AiLogContext(excerpts, owners, limited || lookupLimited || fileLimited) { Files = files }.CopyValidated();
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(96).ToArray(),
+            report.Logs.Where(GameTestDiagnostics.IsHelperDiagnostic).SelectMany(log =>
+                StackAssemblies().Matches(log.Text).Select(m => m.Groups[1].Value))
+                .Where(name => !IsFrameworkSymbol(name)).Distinct(StringComparer.OrdinalIgnoreCase).Take(16).ToArray());
+        var blocker = report.Logs.FirstOrDefault(GameTestDiagnostics.IsHelperDiagnostic);
+        return new AiLogContext(excerpts, owners, limited || lookupLimited || fileLimited)
+        { Files = files, BlockingError = blocker is null ? null : HeadAndTail(Sanitize(blocker.Text), 4096) }.CopyValidated();
     }
 
     private static IEnumerable<GameLogIssue?> Candidates(GameLogSnapshot log)
@@ -120,8 +128,11 @@ internal static partial class DiagnosticLogContext
         .Where(GameTestDiagnostics.IsHelperDiagnostic)
         // Only actual exception frames qualify. Harmony's appended patch inventory lists
         // interceptors that may never have run, so it must not create blocking candidates.
-        .SelectMany(log => StackMethods().Matches(Sanitize(log.Text)).Select(m => m.Groups[1].Value))
-        .Where(symbol => !IsFrameworkSymbol(symbol)).Distinct(StringComparer.Ordinal).Take(32).ToArray();
+        .SelectMany(log => ExceptionSymbols(log.Text)).Distinct(StringComparer.Ordinal).Take(32).ToArray();
+
+    internal static string[] ExceptionSymbols(string text) => StackMethods().Matches(Sanitize(text))
+        .Select(m => m.Groups[1].Value).Where(symbol => !IsFrameworkSymbol(symbol))
+        .Distinct(StringComparer.Ordinal).Take(32).ToArray();
 
     internal static bool IsFrameworkSymbol(string symbol) => new[] {
         "System.", "UnityEngine.", "Verse.", "RimWorld.", "HarmonyLib.", "MonoMod.", "RimWise.TestHelper."

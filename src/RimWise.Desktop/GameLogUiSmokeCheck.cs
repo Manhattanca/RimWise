@@ -3,6 +3,8 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
 using System.Windows.Threading;
 using RimWise.Desktop.Views;
 using RimWise.Integration.Configuration;
@@ -57,6 +59,27 @@ internal static class GameLogUiSmokeCheck
         await WaitRead(page, 1);
         page.StartupTab.IsChecked = true;
         await WaitRead(page, 5);
+        Assert(page.CountsText.Inlines.OfType<LineBreak>().Count() == 4, "Each statistic must occupy its own line");
+        for (var i = 0; i < 12; i++)
+        {
+            window.ModsPageTab.IsChecked = true;
+            await Idle(window);
+            window.LogsPageTab.IsChecked = true;
+            page.RuntimeTab.IsChecked = true;
+            await Idle(window);
+            page.StartupTab.IsChecked = true;
+            await Idle(window);
+        }
+        await Task.Delay(230);
+        await Idle(window);
+        Assert(ReferenceEquals(page, window.GameLogHost.Content), "Rapid switching rebuilt the log reader");
+        Assert(Math.Abs(window.MainPageTabs.IndicatorX - window.LogsPageTab.TranslatePoint(new Point(), window.MainPageTabs).X) < 1,
+            "Main indicator did not settle on selected tab");
+        Assert(Math.Abs(page.SourceTabs.IndicatorX - page.StartupTab.TranslatePoint(new Point(), page.SourceTabs).X) < 1,
+            "Source indicator did not settle on selected tab");
+        Assert(window.GameLogHost.RenderTransform is TranslateTransform { X: 0 }, "Page transition retained an offset");
+        Assert(page.RenderTransform.Value.IsIdentity && page.LinesList.RenderTransform.Value.IsIdentity,
+            "Source switching must not animate log content");
         foreach (var theme in new[] { ThemePreference.Light, ThemePreference.Dark })
         {
             ((App)Application.Current).Themes.Select(theme, save: false);
@@ -64,6 +87,7 @@ internal static class GameLogUiSmokeCheck
             {
                 window.Width = size.Item1; window.Height = size.Item2;
                 await Idle(window);
+                Assert(Math.Abs(page.SourceTabs.IndicatorWidth - page.StartupTab.ActualWidth) < 1, "Indicator width after resize");
                 Assert(page.LinesList.ActualWidth > 250 && page.LinesList.ActualHeight > 80, "Log list clipped");
                 Assert(page.AnalyzeButton.IsVisible && page.AnalyzeButton.ActualWidth > 100, "Analysis control missing");
                 PrototypeSmokeCheck.SavePreview(window, Path.Combine(output, $"logs-{theme}-{size.Item1}.png"));
@@ -75,7 +99,8 @@ internal static class GameLogUiSmokeCheck
         Assert(revision == window.ViewModel.ContentRevision && order.SequenceEqual(window.ViewModel.Rows.Select(r => r.PackageId)), "Editor state changed");
         window.ViewModel.MarkExported();
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new { Passed = true,
-            Checks = new[] { "Live append", "Search", "Severity and stack filter", "Source cache", "Details", "Light/dark narrow/wide layout", "Editor preserved" } }));
+            Checks = new[] { "Live append", "Search", "Severity and stack filter", "Source cache", "Details", "Light/dark narrow/wide layout", "Editor preserved",
+                "Vertical statistics", "Rapid page/source reversal", "Indicator alignment after resize", "Source content stays stationary", "Page transform settles" } }));
     }
     private static async Task WaitRead(GameLogPage page, int count)
     {

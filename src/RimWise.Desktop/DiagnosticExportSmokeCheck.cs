@@ -66,6 +66,7 @@ internal static class DiagnosticExportSmokeCheck
         new RelayCommand(() => { }).Execute(null);
         window.Close();
         DiagnosticEventLog.Current!.Record("automatic-sorting", "failed", "中文错误 " + secret);
+        Services.UiDiagnosticEvents.Failure("synthetic-failure", new InvalidOperationException("Synthetic crash " + secret));
         var attempt = Path.Combine(UserStorage.DirectoryPath, "Data", "GameTests", "game-smoke");
         Directory.CreateDirectory(attempt);
         foreach (var name in new[] { "session.json", "process.json", "finished.json", "recovered.json" })
@@ -81,6 +82,7 @@ internal static class DiagnosticExportSmokeCheck
         Assert(ticks > 0, "Export blocked dispatcher");
         using var zip = ZipFile.OpenRead(result.Path);
         var files = zip.Entries.ToDictionary(e => e.FullName, e => { using var reader = new StreamReader(e.Open()); return reader.ReadToEnd(); });
+        Assert(files.Keys.Any(name => name.Contains("crash-")), "Durable crash evidence missing");
         var events = string.Join('\n', files.Where(f => f.Key.EndsWith(".jsonl")).Select(f => f.Value));
         foreach (var operation in new[] { "button-clicked", "selection-changed", "command-executed", "window-opened", "window-closed", "automatic-sorting" })
             Assert(events.Contains(operation), "Missing event " + operation);

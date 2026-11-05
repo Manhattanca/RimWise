@@ -137,7 +137,7 @@ public sealed class InstallationMaintenance
 
     private bool OtherInstallationProcess()
     {
-        foreach (var name in new[] { "RimWise", "RimWise.SteamBridge", "RimWise.Decompiler", "RimSortWorkbench" })
+        foreach (var name in new[] { "RimWise", "RimWise.SteamBridge", "RimWise.Decompiler", "RimWise.Diagnostics", "RimSortWorkbench" })
         {
             foreach (var process in Process.GetProcessesByName(name))
             {

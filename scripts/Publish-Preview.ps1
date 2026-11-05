@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param([string]$Version = '0.5.2')
+param([string]$Version = '0.5.3')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Initialize-Environment.ps1')
 
@@ -43,12 +43,17 @@ try {
         'RimWise.SteamBridge.deps.json', 'RimWise.SteamBridge.runtimeconfig.json',
         'Steamworks.NET.dll', 'steam_api64.dll')
     $bridgeFiles = @(Get-ChildItem -LiteralPath $bridgeDirectory -File)
-    if (@(Compare-Object @('Decompiler','SteamBridge') @((Get-ChildItem -LiteralPath $staging -Directory).Name | Sort-Object)).Count -ne 0 -or
+    if (@(Compare-Object @('Decompiler','Diagnostics','SteamBridge') @((Get-ChildItem -LiteralPath $staging -Directory).Name | Sort-Object)).Count -ne 0 -or
         @(Get-ChildItem -LiteralPath $bridgeDirectory -Directory).Count -ne 0 -or
         @(Compare-Object ($bridgeNames | Sort-Object) ($bridgeFiles.Name | Sort-Object)).Count -ne 0) {
         throw 'Steam bridge publish contents do not match the fixed runtime list.'
     }
     $decompilerDirectory = Join-Path $staging 'Decompiler'
+    $diagnosticDirectory = Join-Path $staging 'Diagnostics'
+    $diagnosticNames = @('RimWise.Diagnostics.exe','RimWise.Diagnostics.dll','RimWise.Diagnostics.deps.json',
+        'RimWise.Diagnostics.runtimeconfig.json','RimWise.Core.dll','RimWise.Formats.dll','RimWise.Integration.dll','ZstdSharp.dll')
+    if (@(Compare-Object ($diagnosticNames | Sort-Object) @((Get-ChildItem -LiteralPath $diagnosticDirectory -File).Name | Sort-Object)).Count -or
+        @(Get-ChildItem -LiteralPath $diagnosticDirectory -Directory).Count) { throw 'Unexpected diagnostic tool files.' }
     $decompilerNames = [IO.File]::ReadAllLines((Join-Path $script:ProjectRoot 'packaging\decompiler-runtime-files.txt'))
     $decompilerFiles = @(Get-ChildItem -LiteralPath $decompilerDirectory -File -Recurse | ForEach-Object {
         $_.FullName.Substring($decompilerDirectory.Length + 1).Replace('\', '/')
@@ -63,6 +68,7 @@ try {
     }
     Copy-Item -LiteralPath $bridgeDirectory -Destination (Join-Path $releaseDirectory 'SteamBridge') -Recurse
     Copy-Item -LiteralPath $decompilerDirectory -Destination (Join-Path $releaseDirectory 'Decompiler') -Recurse
+    Copy-Item -LiteralPath $diagnosticDirectory -Destination (Join-Path $releaseDirectory 'Diagnostics') -Recurse
     Copy-Item -LiteralPath $readmePath -Destination (Join-Path $releaseDirectory 'README.md')
     # Acceptance records and recovery design notes belong in development/docs only.
     $licenseDirectory = Join-Path $script:ProjectRoot 'packaging\licenses'

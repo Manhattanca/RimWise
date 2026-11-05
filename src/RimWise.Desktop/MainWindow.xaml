@@ -5,11 +5,6 @@
         Style="{StaticResource {x:Type Window}}"
         Title="RimWise" Width="1360" Height="820" MinWidth="960" MinHeight="640"
         WindowStartupLocation="CenterScreen" AllowDrop="True" PreviewDragOver="Window_FileDragOver" PreviewDrop="Window_FileDrop">
-    <Window.InputBindings>
-        <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}" />
-        <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoCommand}" />
-        <KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding RedoCommand}" />
-    </Window.InputBindings>
     <Window.Resources>
         <Style x:Key="PaneSplitter" TargetType="GridSplitter">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
@@ -159,7 +154,19 @@
                 <MenuItem Header="关于" Click="About_Click" />
             </MenuItem>
         </Menu>
-        <Grid Grid.Row="1" Margin="24,20">
+        <DockPanel Grid.Row="1">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="24,6,24,0">
+            <RadioButton x:Name="ModsPageTab" Content="模组排序" IsChecked="True" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
+            <RadioButton x:Name="LogsPageTab" Content="游戏日志" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
+        </StackPanel>
+        <Grid>
+        <ContentControl x:Name="GameLogHost" Margin="24,0,24,16" Visibility="Collapsed"/>
+        <Grid x:Name="ModEditorBody" Margin="24,12">
+            <Grid.InputBindings>
+                <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}"/>
+                <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoCommand}"/>
+                <KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding RedoCommand}"/>
+            </Grid.InputBindings>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" />
             </Grid.RowDefinitions>
@@ -348,7 +355,9 @@
                 </Border>
             </Grid>
         </Grid>
-        <Border Grid.Row="2" BorderBrush="{DynamicResource BorderBrush}" Background="{DynamicResource PanelBrush}" BorderThickness="0,1,0,0" Padding="24,12">
+        </Grid>
+        </DockPanel>
+        <Border x:Name="ModEditorFooter" Grid.Row="2" BorderBrush="{DynamicResource BorderBrush}" Background="{DynamicResource PanelBrush}" BorderThickness="0,1,0,0" Padding="24,12">
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">

@@ -13,7 +13,7 @@ function Test-ProgramPath([string]$Path) {
             $part.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) { return $false }
     }
     return $Path -match '^[^/]+\.(dll|exe|deps\.json|runtimeconfig\.json|md)$' -or
-        $Path -cmatch '^(SteamBridge|Decompiler)/[^/]+\.(dll|exe|deps\.json|runtimeconfig\.json)$' -or
+        $Path -cmatch '^(SteamBridge|Decompiler|Diagnostics)/[^/]+\.(dll|exe|deps\.json|runtimeconfig\.json)$' -or
         $Path -cmatch '^Decompiler/runtimes/win/lib/net10\.0/System\.Diagnostics\.EventLog(\.Messages)?\.dll$' -or
         $Path -cmatch '^licenses/[^/]+\.txt$'
 }

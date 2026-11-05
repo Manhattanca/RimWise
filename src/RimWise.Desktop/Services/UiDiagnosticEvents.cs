@@ -8,6 +8,13 @@ namespace RimWise.Desktop.Services;
 /// <summary>Control identities and actions only. Never observe passwords, text entry or key presses.</summary>
 internal static class UiDiagnosticEvents
 {
+    public static void InstallFailures(Application app)
+    {
+        app.DispatcherUnhandledException += (_, e) => Failure("dispatcher-failure", e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Failure("process-failure", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) => Failure("unobserved-task-failure", e.Exception);
+    }
+
     public static void Install(Application app)
     {
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler((sender, e) =>
@@ -26,9 +33,6 @@ internal static class UiDiagnosticEvents
                 var control = (ComboBox)sender;
                 Record(control, "selection-changed", "selectedIndex=" + control.SelectedIndex);
             }), true);
-        app.DispatcherUnhandledException += (_, e) => Failure("dispatcher-failure", e.Exception);
-        AppDomain.CurrentDomain.UnhandledException += (_, e) => Failure("process-failure", e.ExceptionObject as Exception);
-        TaskScheduler.UnobservedTaskException += (_, e) => Failure("unobserved-task-failure", e.Exception);
     }
 
     private static void Record(FrameworkElement control, string action, string? detail = null)
@@ -39,9 +43,18 @@ internal static class UiDiagnosticEvents
             $"window={Window.GetWindow(control)?.GetType().Name}; control={control.GetType().Name}; name={control.Name}; caption={caption}; {detail}");
     }
 
-    private static void Failure(string operation, Exception? error)
+    internal static void Failure(string operation, Exception? error)
     {
-        DiagnosticEventLog.Current?.Record("application", operation, error?.ToString());
+        try
+        {
+            var profile = UserStorage.DirectoryPath;
+            if (string.IsNullOrEmpty(profile))
+                profile = EmergencyDiagnostics.ResolveProfile(System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RimWise"));
+            CrashEvidence.Write(profile, error);
+            DiagnosticEventLog.Current?.Record("application", operation, error?.ToString());
+        }
+        catch { }
         // Preserve normal exception behavior; diagnostics never marks an exception handled.
     }
 }

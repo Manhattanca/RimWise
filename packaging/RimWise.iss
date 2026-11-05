@@ -57,6 +57,7 @@ Source: "{#PackageDirectory}\*"; DestDir: "{app}\versions\{#AppVersion}"; Flags:
 Source: "{#RuntimeInstaller}"; DestName: "windowsdesktop-runtime.exe"; Flags: dontcopy
 
 [Icons]
+Name: "{autoprograms}\RimWise 独立诊断导出"; Filename: "{app}\versions\{#AppVersion}\Diagnostics\RimWise.Diagnostics.exe"; WorkingDir: "{app}\versions\{#AppVersion}\Diagnostics"
 Name: "{autoprograms}\{#AppNameValue}"; Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; WorkingDir: "{app}\versions\{#AppVersion}"
 Name: "{autodesktop}\{#AppNameValue}"; Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; WorkingDir: "{app}\versions\{#AppVersion}"; Tasks: desktopicon
 

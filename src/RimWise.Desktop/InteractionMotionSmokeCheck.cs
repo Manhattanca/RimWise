@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -240,6 +241,30 @@ internal static class InteractionMotionSmokeCheck
             return (FrameworkElement)root;
         }
         ScaleTransform? Scale() => (Root().RenderTransform as TransformGroup)?.Children.OfType<ScaleTransform>().LastOrDefault();
+        void VerifyInputTransform(string phase)
+        {
+            var root = Root();
+            var matrix = root.RenderTransform.Value;
+            check(matrix.HasInverse, name + " invertible input transform " + phase);
+            matrix.Invert();
+            if (Scale() is { } activeScale)
+            {
+                // FillBehavior.Stop exposes this value before WPF destroys the popup HWND.
+                var restingY = (double)activeScale.GetAnimationBaseValue(ScaleTransform.ScaleYProperty);
+                check(restingY > 0 && double.IsFinite(restingY), name + " invertible resting transform " + phase);
+            }
+            if (PresentationSource.FromVisual(root) is null) return;
+            var point = new Point(4, 6);
+            var screen = popup.Child.PointToScreen(point);
+            var translated = popup.Child.PointFromScreen(screen);
+            // Native screen coordinates round to pixels; a contracted surface magnifies
+            // that rounding in local units, so compare the round trip in screen pixels.
+            check(double.IsFinite(translated.X) && double.IsFinite(translated.Y)
+                && (popup.Child.PointToScreen(translated) - screen).Length <= 1.5,
+                name + " screen coordinate round trip " + phase);
+            var pointer = Mouse.GetPosition(popup.Child);
+            check(double.IsFinite(pointer.X) && double.IsFinite(pointer.Y), name + " mouse coordinates " + phase);
+        }
         void Frame(string phase)
         {
             if (frames is null) return;
@@ -252,8 +277,10 @@ internal static class InteractionMotionSmokeCheck
             encoder.Save(file);
         }
         Frame("expanded");
+        VerifyInputTransform("expanded");
         var scaleBeforeClose = Scale()?.ScaleY ?? 1;
         close();
+        VerifyInputTransform("close starts");
         check(!popup.IsOpen, name + " logical close immediate");
         if (InterfaceMotion.Enabled)
         {
@@ -261,17 +288,21 @@ internal static class InteractionMotionSmokeCheck
             check(Root().Opacity == 1 && Scale() is { HasAnimatedProperties: true }, name + $" contracts with full opacity: opacity={Root().Opacity}, scale={Scale()}, attached={AnchoredPopupMotion.GetIsEnabled(popup)}");
             await Task.Delay(60);
             // A busy dispatcher may resume after the short animation has already finished.
-            check(Root().Opacity == 1 && Scale() is { } shrinking && shrinking.ScaleY < scaleBeforeClose && shrinking.ScaleY >= 0,
+            check(Root().Opacity == 1 && Scale() is { } shrinking && shrinking.ScaleY < scaleBeforeClose && shrinking.ScaleY > 0,
                 name + $" shrinks toward trigger: before={scaleBeforeClose}, now={Scale()?.ScaleY}, opacity={Root().Opacity}");
             Frame("contracting");
+            VerifyInputTransform("contracting");
+            await Task.Delay(50);
+            VerifyInputTransform("close endpoint");
         }
         await Task.Delay(240);
         check(closed == 1 && PresentationSource.FromVisual(popup.Child) is null, name + " closes once without orphan window");
         open();
+        VerifyInputTransform("open starts");
         await Task.Delay(35);
         if (InterfaceMotion.Enabled)
         {
-            check(Root().Opacity == 1 && Scale() is { HasAnimatedProperties: true, ScaleY: >= 0 and <= 1 }, name + " expands with full opacity");
+            check(Root().Opacity == 1 && Scale() is { HasAnimatedProperties: true, ScaleY: > 0 and <= 1 }, name + " expands with full opacity");
             var anchor = Scale()!;
             check(anchor.ScaleX == 1, name + " width stays unchanged");
             check(anchor.CenterX >= 0 && anchor.CenterX <= Root().ActualWidth
@@ -283,11 +314,24 @@ internal static class InteractionMotionSmokeCheck
         await Task.Delay(30);
         close();
         open();
+        VerifyInputTransform("rapid reopen");
         await Task.Delay(240);
         check(popup.IsOpen && PresentationSource.FromVisual(popup.Child) is not null, name + " rapid reopen stays open");
         close();
         await Task.Delay(240);
         check(!popup.IsOpen && PresentationSource.FromVisual(popup.Child) is null, name + " rapid reopen cleans up");
+        for (var cycle = 0; cycle < 5; cycle++)
+        {
+            open();
+            VerifyInputTransform("repeated open " + cycle);
+            await Task.Delay(16);
+            VerifyInputTransform("repeated opening frame " + cycle);
+            close();
+            VerifyInputTransform("repeated close " + cycle);
+            await Task.Delay(16);
+        }
+        await Task.Delay(240);
+        check(!popup.IsOpen && PresentationSource.FromVisual(popup.Child) is null, name + " repeated toggles release popup");
         popup.Closed -= handler;
     }
 

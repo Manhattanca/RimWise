@@ -24,7 +24,10 @@ public sealed class AnchoredPopupMotion
     private Transform? originalTransform;
     private ScaleTransform? scale;
     private bool closing;
-    private const double CollapsedScale = 0;
+    // PopupRoot stays connected while capture changes and during WPF's close delay.
+    // A zero scale makes its input-coordinate transform noninvertible, even after
+    // the animation clock stops. Keep both endpoints and the base value positive.
+    private const double CollapsedScale = 0.001;
 
     private AnchoredPopupMotion(Popup popup) => this.popup = popup;
 

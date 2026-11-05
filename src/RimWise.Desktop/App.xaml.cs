@@ -12,6 +12,7 @@ namespace RimWise.Desktop;
 
 public partial class App : Application
 {
+    public App() => UiDiagnosticEvents.InstallFailures(this);
     // Existence only: multiple RimWise windows remain supported. Installers must wait
     // for all instances to exit before replacing or uninstalling managed files.
     private readonly Mutex installationMutex = new(false, @"Local\RimWise.Installation.Active");
@@ -22,7 +23,7 @@ public partial class App : Application
         var isSmokeTest = false;
         string? migrationNotice = null;
 #if DEBUG
-        isSmokeTest = e.Args.Length == 2 && e.Args[0] is "--smoke-test" or "--interaction-smoke" or "--marker-smoke" or "--ai-ui-smoke" or "--performance-smoke" or "--runtime-ui-smoke" or "--ai-sorting-smoke" or "--message-dialog-smoke" or "--diagnostic-export-smoke" or "--diagnostics-smoke" or "--steam-ui-smoke";
+        isSmokeTest = e.Args.Length == 2 && e.Args[0] is "--smoke-test" or "--interaction-smoke" or "--marker-smoke" or "--ai-ui-smoke" or "--performance-smoke" or "--runtime-ui-smoke" or "--game-log-ui-smoke" or "--ai-sorting-smoke" or "--message-dialog-smoke" or "--diagnostic-export-smoke" or "--diagnostics-smoke" or "--steam-ui-smoke";
 #endif
         // Storage migration can include hashing/copying. Keep the dispatcher responsive and
         // show a small opening window instead of appearing to do nothing before MainWindow.
@@ -57,6 +58,7 @@ public partial class App : Application
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or JsonException)
         {
+            UiDiagnosticEvents.Failure("profile-startup-failure", ex);
             opening?.Close();
             MessageBox.Show("无法打开用户数据。请检查数据目录是否可用。\n\n" + ex.Message,
                 "RimWise", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -119,6 +121,8 @@ public partial class App : Application
             StartupPerformanceSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--runtime-ui-smoke")
             RuntimeUiSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--game-log-ui-smoke")
+            GameLogUiSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--ai-sorting-smoke")
             AiSortingSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--message-dialog-smoke")

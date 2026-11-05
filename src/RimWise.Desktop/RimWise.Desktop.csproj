@@ -3,8 +3,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <Version>0.5.2</Version>
-    <InformationalVersion>0.5.2</InformationalVersion>
+    <Version>0.5.3</Version>
+    <InformationalVersion>0.5.3</InformationalVersion>
     <AssemblyName>RimWise</AssemblyName>
     <RootNamespace>RimWise.Desktop</RootNamespace>
     <Product>RimWise</Product>
@@ -19,6 +19,7 @@
     <ProjectReference Include="..\RimWise.Integration\RimWise.Integration.csproj" />
     <ProjectReference Include="..\RimWise.SteamBridge\RimWise.SteamBridge.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\RimWise.Decompiler\RimWise.Decompiler.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\RimWise.Diagnostics\RimWise.Diagnostics.csproj" ReferenceOutputAssembly="false" Private="false" />
     <Resource Include="Samples\ModsConfig.xml" />
     <Resource Include="Resources\Branding\RimWise.ico" />
     <EmbeddedResource Include="Resources\Pinyin\characters.tsv" LogicalName="RimWise.Pinyin.Characters" />
@@ -49,6 +50,19 @@
       <DecompilerPublishFiles Include="$(TargetDir)Decompiler\**\*" />
       <ResolvedFileToPublish Include="@(DecompilerPublishFiles)">
         <RelativePath>Decompiler\%(DecompilerPublishFiles.RecursiveDir)%(DecompilerPublishFiles.Filename)%(DecompilerPublishFiles.Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+  <Target Name="CopyDiagnosticTool" AfterTargets="Build">
+    <ItemGroup><DiagnosticFiles Include="$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.Diagnostics\$(Configuration)\net10.0\*.exe;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.Diagnostics\$(Configuration)\net10.0\*.dll;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.Diagnostics\$(Configuration)\net10.0\*.json" /></ItemGroup>
+    <Copy SourceFiles="@(DiagnosticFiles)" DestinationFolder="$(TargetDir)Diagnostics" />
+  </Target>
+  <Target Name="PublishDiagnosticTool" BeforeTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <DiagnosticPublishFiles Include="$(TargetDir)Diagnostics\*" />
+      <ResolvedFileToPublish Include="@(DiagnosticPublishFiles)">
+        <RelativePath>Diagnostics\%(DiagnosticPublishFiles.Filename)%(DiagnosticPublishFiles.Extension)</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       </ResolvedFileToPublish>
     </ItemGroup>

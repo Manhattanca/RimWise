@@ -63,7 +63,7 @@ public sealed record PackageManifest(int Schema, string Product, string Version,
             || path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             || path is "Decompiler/runtimes/win/lib/net10.0/System.Diagnostics.EventLog.dll"
                 or "Decompiler/runtimes/win/lib/net10.0/System.Diagnostics.EventLog.Messages.dll"
-            || parts.Length == 2 && ((parts[0] is "SteamBridge" or "Decompiler") && (parts[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            || parts.Length == 2 && ((parts[0] is "SteamBridge" or "Decompiler" or "Diagnostics") && (parts[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
                 || parts[1].EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
                 || parts[1].EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase)
                 || parts[1].EndsWith(".runtimeconfig.json", StringComparison.OrdinalIgnoreCase))

@@ -4,7 +4,7 @@ using RimWise.Integration.Safety;
 
 namespace RimWise.Integration.AI;
 
-public enum AiTaskKind { Sorting, Maintenance, Connection }
+public enum AiTaskKind { Sorting, Maintenance, Connection, LogDiagnosis }
 public enum AiTaskPhase { Prepared, RequestPending, ReplySaved, Applying, Applied, Testing, TestSaved, Paused, Completed, Cancelled }
 public sealed record RequiredModDownload(string PackageId, string WorkshopId)
 {

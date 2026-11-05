@@ -97,6 +97,7 @@ public static class DiagnosticExportService
                 WriteObject("application.json", new
                 {
                     version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(),
+                    collector = Assembly.GetEntryAssembly()?.GetName().Name,
                     productVersion = ApplicationBuildIdentity.ProductVersion(Assembly.GetEntryAssembly()),
                     components = ApplicationBuildIdentity.Capture(),
                     runtime = Environment.Version.ToString(), operatingSystem = Environment.OSVersion.VersionString,
@@ -193,12 +194,16 @@ public static class DiagnosticExportService
                 var path = ScopedPaths.Child(root, group);
                 if (!Directory.Exists(path)) continue;
                 var ui = group.EndsWith("Diagnostics", StringComparison.Ordinal);
-                var candidates = (ui ? Directory.EnumerateFiles(path, "ui-*.jsonl*")
-                    .Where(p => p.EndsWith(".jsonl") || p.EndsWith(".jsonl.gz"))
+                var candidates = (ui ? Directory.EnumerateFiles(path)
+                    .Where(p => (Path.GetFileName(p).StartsWith("ui-", StringComparison.Ordinal)
+                        && (p.EndsWith(".jsonl") || p.EndsWith(".jsonl.gz")))
+                        || (Path.GetFileName(p).StartsWith("crash-", StringComparison.Ordinal) && p.EndsWith(".json")))
                     .Select(TestDataRetention.LogicalPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(StoredEvidence.Resolve)
                     : Directory.EnumerateDirectories(path, "game-*"))
                     .OrderByDescending(p => Path.GetFileName(p), StringComparer.Ordinal).ToArray();
-                if (!ui) candidates = candidates.OrderByDescending(Directory.GetLastWriteTimeUtc).ToArray();
+                // Different filename prefixes must not push every crash behind UI logs.
+                candidates = ui ? candidates.OrderByDescending(File.GetLastWriteTimeUtc).ToArray()
+                    : candidates.OrderByDescending(Directory.GetLastWriteTimeUtc).ToArray();
                 if (run is not null) candidates = candidates.Where(p => ui
                     ? File.GetLastWriteTimeUtc(p) >= run.StartedUtc.UtcDateTime
                     : run.Sessions.Contains(Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)).ToArray();

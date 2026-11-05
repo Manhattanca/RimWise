@@ -129,6 +129,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        gameLogPage?.Dispose();
         recoveryEnabled = false;
         recoveryTimer.Stop();
         if (ViewModel is not null)

@@ -29,6 +29,7 @@ public partial class MainWindow
     private void Window_FileDragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop, false)) return;
+        if (LogsPageTab.IsChecked == true) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
         ClearDropIndicator();
         e.Effects = IsOrderDrop(e.Data, out _) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
@@ -39,6 +40,7 @@ public partial class MainWindow
         if (!e.Data.GetDataPresent(DataFormats.FileDrop, false)) return;
         e.Handled = true;
         e.Effects = DragDropEffects.None;
+        if (LogsPageTab.IsChecked == true) return;
         if (!IsOrderDrop(e.Data, out var file))
         { ViewModel.Status = "请一次拖入一个排序文件（XML／JSON／RML）或环世界存档（RWS）"; return; }
         e.Effects = DragDropEffects.Copy;

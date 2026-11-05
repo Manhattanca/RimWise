@@ -52,19 +52,7 @@ public partial class MainWindow
         { ViewModel.Status = "无法启动游戏：" + ex.Message; }
     }
 
-    private void GameLog_Click(object sender, RoutedEventArgs e)
-    {
-        string? suggested = null;
-        try
-        {
-            var config = Path.GetDirectoryName(CurrentOrderLocation.Resolve(paths));
-            suggested = config is null ? null : Path.GetDirectoryName(config);
-        }
-        catch (ArgumentException) { }
-        var dialog = new OpenFileDialog { Title = "选择游戏日志", Filter = "游戏日志 (*.log;*.txt)|*.log;*.txt|所有文件|*.*",
-            InitialDirectory = suggested is not null && Directory.Exists(suggested) ? suggested : UserStorage.DirectoryPath };
-        if (dialog.ShowDialog(this) == true) new GameLogWindow(dialog.FileName, ViewModel.CurrentCatalogue) { Owner = this }.Show();
-    }
+    private void GameLog_Click(object sender, RoutedEventArgs e) => LogsPageTab.IsChecked = true;
 
     private void CompareGameOrder_Click(object sender, RoutedEventArgs e) => RunFileAction(() =>
     {

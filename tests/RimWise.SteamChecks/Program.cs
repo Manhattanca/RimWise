@@ -1,6 +1,22 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (args.Length == 1 && args[0] == "--emergency-diagnostics-checks")
+{
+    var results = new List<string>();
+    EmergencyDiagnosticsChecks.Run((name, test) => { test(); results.Add(name); });
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--live-game-log-checks")
+{
+    var results = new List<string>();
+    LiveGameLogChecks.Run((name, test) => { test(); results.Add(name); });
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--offline-sorting-checks")
 {
     var results = new List<string>();

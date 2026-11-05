@@ -14,6 +14,7 @@ public sealed record AiRequest(
     IReadOnlyList<string> Diagnostics)
 {
     public int? OutputTokenLimit { get; init; }
+    public bool LogDiagnosisOnly { get; init; }
     // Local provenance only; never sent as model instructions.
     public string DatabaseSnapshotId { get; init; } = "";
     // Local display callback only; never included in a prompt or recovery checkpoint.

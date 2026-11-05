@@ -10,6 +10,21 @@
                 <ResourceDictionary Source="Resources/ModPresentation.xaml" />
             </ResourceDictionary.MergedDictionaries>
             <sys:Double x:Key="ModRowHeight">38</sys:Double>
+            <Style x:Key="NavigationTab" TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                <Setter Property="Padding" Value="16,7"/><Setter Property="Margin" Value="0,0,6,0"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="Tab" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,2" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter RecognizesAccessKey="True"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Tab" Property="Background" Value="{DynamicResource HoverBrush}"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Tab" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/><Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Tab" Property="Background" Value="{DynamicResource SelectionBrush}"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value></Setter>
+            </Style>
             <Style TargetType="Popup">
                 <Setter Property="motion:AnchoredPopupMotion.IsEnabled" Value="True" />
                 <Setter Property="PopupAnimation" Value="{DynamicResource RimWisePopupAnimation}" />

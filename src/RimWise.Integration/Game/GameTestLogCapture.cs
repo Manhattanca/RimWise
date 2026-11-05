@@ -20,6 +20,12 @@ internal sealed class GameTestLogCapture(string executable, string data, int pro
         return stream?.Length ?? 0;
     }
 
+    internal void PollReset(GameModResetDetection detector)
+    {
+        using var stream = OpenCorrelated();
+        if (stream is not null) detector.Poll(stream);
+    }
+
     internal bool CopyCorrelated(string destination)
     {
         using var source = OpenCorrelated();

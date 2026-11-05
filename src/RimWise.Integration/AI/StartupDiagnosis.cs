@@ -6,7 +6,7 @@ public sealed record AiStartupEvidence(string Code, string Symbol = "", string S
 public sealed record AiStartupContext(string Stage, bool HasLog, bool CompleteCapture,
     IReadOnlyList<AiStartupEvidence> Evidence)
 {
-    private static readonly HashSet<string> Stages = ["Exited", "TimedOut", "LogLimit", "LaunchFailed", "ProbeCompleted", "ErrorDetected"];
+    private static readonly HashSet<string> Stages = ["Exited", "TimedOut", "LogLimit", "LaunchFailed", "ProbeCompleted", "ErrorDetected", "ModsReset"];
     private static readonly HashSet<string> Codes = ["GraphicsDriverUnavailable", "GraphicsInitializationFailed",
         "OutOfMemory", "AccessDenied", "MissingNativeLibrary", "MissingManagedAssembly", "MissingType",
         "MissingMethod", "XmlParentMissing", "PatchFailure", "HarmonyFailure", "InitializationFailure",
@@ -14,7 +14,7 @@ public sealed record AiStartupContext(string Stage, bool HasLog, bool CompleteCa
         "MainMenuFailure", "NewGameConfigurationFailure", "WorldGenerationFailure", "FactionGenerationFailure", "MapGenerationFailure", "PawnTestFailure", "UnexpectedExit", "TestHelperFailure",
         "ExceptionType", "StackMethod", "PatchTarget", "PatchOwner", "NativeModule", "NativeAccessViolation",
         "SourceAvailable", "SourceUnavailable", "XmlParent", "XmlDefinition", "XmlWorker", "ObservedGameVersion",
-        "TesterDetectedLogErrors", "TesterStoppedProcess", "StoppedBeforeHelperReady", "MainMenuObserved", "FactionsObserved"];
+        "TesterDetectedLogErrors", "TesterStoppedProcess", "StoppedBeforeHelperReady", "MainMenuObserved", "FactionsObserved", "ModsResetAfterLoadFailure"];
 
     public bool EnvironmentFailure => Evidence.Any(e => e.Code is "GraphicsDriverUnavailable"
         or "GraphicsInitializationFailed" or "OutOfMemory" or "AccessDenied");
@@ -79,6 +79,7 @@ public sealed record StartupFailureDetails(AiStartupContext Context, IReadOnlyLi
     public string LocalReason() => Context.EnvironmentFailure
         ? "本轮记录包含图形驱动、资源或访问权限相关错误，自动排序已停止。"
         : Context.Stage == "LaunchFailed" ? "未能确认本轮游戏进程启动；请检查 Steam 启动记录。"
+        : Context.Stage == "ModsReset" ? "游戏加载异常后自行重置了模组排序，导致本轮测试失效；已保留原候选排序与异常链，继续根据失败证据排障。"
         : !Context.HasLog ? "游戏未完成地图验证，且未取得可分析的本轮日志，暂时无法确定原因。"
         : Context.Stage == "LogLimit" ? "本轮日志达到大小上限，测试器已停止游戏；已保留错误证据，但本轮没有完成地图验证，不能判定排序成功。"
         : Context.Evidence.Any(e => e.Code == "TesterDetectedLogErrors")

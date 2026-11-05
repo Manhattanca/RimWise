@@ -210,19 +210,22 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         var keepTrialMods = NeedsStoppedRemovalConfirmation(result) && !approveTrialRemovals;
         var removalMessage = result.Maintenance.TrialExclusions.Count == 0 ? "" : keepTrialMods
             ? "试排除模组已放回，保留排序调整。" : "已按移出选择保存临时排除项，安装文件保留。";
-        new AiAuditStore(directory).Append(new(DateTimeOffset.UtcNow, "automatic-stopped-order-choice",
-            state.Settings.PermissionLevel, true, "玩家明确选择保留最后测试顺序；该组合未验证通过。" + removalMessage, plan.After.Count, []));
-        if (result.Scan is not null) editor.ApplyScan(result.Scan);
-        if (plan.CanApply)
+        void SaveChosenOrder()
         {
-            editor.ValidateAiPlan(plan, state.Revision, rules, state.Request.RetainedMods);
-            var journal = new ExecutionJournal(directory);
-            var id = journal.Prepare(plan, state.Settings.PermissionLevel);
-            editor.ApplyAiPlan(plan, state.Revision, rules, state.Request.RetainedMods);
-            journal.Complete(id);
+            new AiAuditStore(directory).Append(new(DateTimeOffset.UtcNow, "automatic-stopped-order-choice",
+                state.Settings.PermissionLevel, true, "玩家明确选择保留最后测试顺序；该组合未验证通过。" + removalMessage, plan.After.Count, []));
+            if (result.Scan is not null) editor.ApplyScan(result.Scan);
+            if (plan.CanApply)
+            {
+                editor.ValidateAiPlan(plan, state.Revision, rules, state.Request.RetainedMods);
+                var journal = new ExecutionJournal(directory);
+                var id = journal.Prepare(plan, state.Settings.PermissionLevel);
+                editor.ApplyAiPlan(plan, state.Revision, rules, state.Request.RetainedMods);
+                journal.Complete(id);
+            }
+            state.SaveOrder?.Invoke();
         }
-        state.SaveOrder?.Invoke();
-        SaveStoppedDecision(result, "keep", result.Maintenance.TrialExclusions.Count > 0 ? !keepTrialMods : null);
+        SaveStoppedDecision(result, "keep", result.Maintenance.TrialExclusions.Count > 0 ? !keepTrialMods : null, SaveChosenOrder);
         stoppedOrder = null;
         return result with { LastOrderDecisionRecorded = true, LastOrderKept = true, Maintenance = result.Maintenance with
             { TrialDecisionRecorded = result.Maintenance.TrialExclusions.Count > 0,
@@ -232,13 +235,17 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
                 : "\n已保留并保存最后测试顺序，原配置已备份，可撤销；该组合未验证通过。") } };
     }
 
-    private void SaveStoppedDecision(AutomaticMaintenanceResult result, string decision, bool? approvedRemovals = null)
+    private void SaveStoppedDecision(AutomaticMaintenanceResult result, string decision, bool? approvedRemovals = null,
+        Action? saveOrder = null)
     {
-        if (result.Maintenance.TaskId is not { } id) return;
+        if (result.Maintenance.TaskId is not { } id) { saveOrder?.Invoke(); return; }
         using var task = sorting.Tasks.Open(id);
-        task.Save(task.Current with { StoppedOrderDecision = decision, MayApply = false, Actions = [],
+        var decisionCheckpoint = task.Current with { StoppedOrderDecision = decision, MayApply = false, Actions = [],
             TrialDecisionRecorded = approvedRemovals.HasValue || task.Current.TrialDecisionRecorded,
-            TrialRemovalsApproved = approvedRemovals ?? task.Current.TrialRemovalsApproved });
+            TrialRemovalsApproved = approvedRemovals ?? task.Current.TrialRemovalsApproved };
+        task.ValidateSave(decisionCheckpoint);
+        saveOrder?.Invoke();
+        task.Save(decisionCheckpoint);
     }
 
     // Preserve deterministic preparation even when a later experiment cannot pass.

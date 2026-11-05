@@ -242,7 +242,8 @@ public static class TestDataRetention
         var name = Path.GetFileName(path);
         if (name.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)) name = name[..^3];
         return name.EndsWith(".log", StringComparison.OrdinalIgnoreCase) || name == "output_log.txt"
-            || name is "result.json" or "diagnostic-context.json" or "diagnostic-sources.json";
+            || name is "result.json" or "diagnostic-context.json" or "diagnostic-sources.json"
+                or "intended-ModsConfig.xml" or "observed-ModsConfig.xml";
     }
 
     private static IEnumerable<string> Files(string directory)

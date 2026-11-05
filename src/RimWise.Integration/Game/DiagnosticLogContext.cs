@@ -104,13 +104,14 @@ internal static partial class DiagnosticLogContext
             report.Logs.Where(GameTestDiagnostics.IsHelperDiagnostic).SelectMany(log =>
                 StackAssemblies().Matches(log.Text).Select(m => m.Groups[1].Value))
                 .Where(name => !IsFrameworkSymbol(name)).Distinct(StringComparer.OrdinalIgnoreCase).Take(16).ToArray());
-        var blocker = report.Logs.FirstOrDefault(GameTestDiagnostics.IsHelperDiagnostic);
+        var blocker = BlockingTexts(report.Logs).FirstOrDefault();
         return new AiLogContext(excerpts, owners, limited || lookupLimited || fileLimited)
-        { Files = files, BlockingError = blocker is null ? null : HeadAndTail(Sanitize(blocker.Text), 4096) }.CopyValidated();
+        { Files = files, BlockingError = blocker is null ? null : HeadAndTail(Sanitize(blocker), 4096) }.CopyValidated();
     }
 
     private static IEnumerable<GameLogIssue?> Candidates(GameLogSnapshot log)
     {
+        if (log.ModResetError is { } reset) yield return new(GameModResetDetection.Marker, 1, [], reset);
         // Severity wins over position. Early repeated WARN stacks must never consume the quota
         // before concrete ERROR entries near the end of a loading log.
         int Offset(GameLogIssue issue) => PlayerLogReader.OccurrenceOffset(log.Text, issue);
@@ -124,11 +125,18 @@ internal static partial class DiagnosticLogContext
 
     // The helper records the exception which stopped the current journey, including nested mod
     // exceptions. Select it before startup noise, but verify ownership locally before attributing it.
-    internal static string[] BlockingSymbols(IEnumerable<GameLogSnapshot> logs) => logs
-        .Where(GameTestDiagnostics.IsHelperDiagnostic)
+    internal static IEnumerable<string> BlockingTexts(IEnumerable<GameLogSnapshot> logs)
+    {
+        var snapshots = logs.ToArray();
+        // A reset invalidates even a subsequent helper result from the reduced configuration.
+        return snapshots.Where(log => log.ModResetError is not null).Select(log => log.ModResetError!)
+            .Concat(snapshots.Where(GameTestDiagnostics.IsHelperDiagnostic).Select(log => log.Text));
+    }
+
+    internal static string[] BlockingSymbols(IEnumerable<GameLogSnapshot> logs) => BlockingTexts(logs)
         // Only actual exception frames qualify. Harmony's appended patch inventory lists
         // interceptors that may never have run, so it must not create blocking candidates.
-        .SelectMany(log => ExceptionSymbols(log.Text)).Distinct(StringComparer.Ordinal).Take(32).ToArray();
+        .SelectMany(ExceptionSymbols).Distinct(StringComparer.Ordinal).Take(32).ToArray();
 
     internal static string[] ExceptionSymbols(string text) => StackMethods().Matches(Sanitize(text))
         .Select(m => m.Groups[1].Value).Where(symbol => !IsFrameworkSymbol(symbol))

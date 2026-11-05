@@ -196,6 +196,8 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         var facts = GameTestDiagnostics.Project(report.Logs, logContext.Owners);
         var errors = report.Logs.Where(log => !GameTestDiagnostics.IsHelperDiagnostic(log))
             .SelectMany(log => log.Issues).Select(issue => issue.Summary).Take(100).ToArray();
+        if (report.StopReason == GameTestStopReason.ModsReset)
+            errors = new[] { "游戏加载异常后自动重置了模组排序，本轮原始组合未通过测试。" }.Concat(errors).Take(100).ToArray();
         if (errors.Length == 0 && facts.Any(f => f.Code == "GameTestBlockingFailure"))
             errors = ["测试流程被包含模组调用的异常中断；异常链及本地归属见本轮日志。"];
         // The helper count includes the explicitly approved flavor ERROR. Reconcile only

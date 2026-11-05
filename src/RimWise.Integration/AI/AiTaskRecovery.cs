@@ -81,10 +81,14 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
             || DiagnosedFailures.Any(f => !MaintenanceFailureSignature.Valid(f))
             || DiagnosedFailures.Distinct(StringComparer.Ordinal).Count() != DiagnosedFailures.Length)
             throw new InvalidDataException("重复错误诊断记录无效。");
+        // Publishing an explicitly chosen stopped order does not turn its test into a pass.
+        // ReplySaved/Applying can be retained when a stopped run still had a pending action.
+        var stoppedTrialDecision = StoppedOrderDecision == "keep" && !MayApply && Actions is { Length: 0 }
+            && Phase is AiTaskPhase.Cancelled or AiTaskPhase.Paused or AiTaskPhase.ReplySaved or AiTaskPhase.Applying;
         if (TrialExclusions is null || TrialExclusions.Length > 20000
             || TrialExclusions.Length > 0 && Kind != AiTaskKind.Maintenance
             || (TrialRemovalsApproved || TrialDecisionRecorded)
-                && (TrialExclusions.Length == 0 || Phase != AiTaskPhase.Completed))
+                && (TrialExclusions.Length == 0 || Phase != AiTaskPhase.Completed && !stoppedTrialDecision))
             throw new InvalidDataException("临时试排除任务状态无效。");
         var trialRemoved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var lastTrialAttempt = 0;
@@ -430,7 +434,11 @@ public sealed class AiTaskRecoveryStore
             }
         }
 
-        public void Save(AiTaskCheckpoint value)
+        // Call while holding this lease before applying external changes. Save rechecks the
+        // same invariants; this preflight performs no writes and cannot guarantee later I/O.
+        public void ValidateSave(AiTaskCheckpoint value) => PrepareSave(value);
+
+        private (AiTaskCheckpoint Checkpoint, byte[] Payload) PrepareSave(AiTaskCheckpoint value)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             if (ReferenceEquals(lease, Stream.Null)) throw new InvalidOperationException("用量快照只读。");
@@ -440,6 +448,14 @@ public sealed class AiTaskRecoveryStore
             if (current is not null) ValidateTransition(current, value);
             var payload = JsonSerializer.SerializeToUtf8Bytes(value, Json);
             if (payload.Length > MaximumBytes) throw new IOException("任务检查点过大。");
+            return (value, payload);
+        }
+
+        public void Save(AiTaskCheckpoint value)
+        {
+            var prepared = PrepareSave(value);
+            value = prepared.Checkpoint;
+            var payload = prepared.Payload;
             var next = checked(sequence + 1);
             var hash = Hash(next, previousHash, payload);
             var temporary = ScopedPaths.Child(directory, Guid.NewGuid().ToString("N") + ".tmp");

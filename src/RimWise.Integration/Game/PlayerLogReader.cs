@@ -11,6 +11,7 @@ public sealed record GameLogSnapshot(string Path, DateTimeOffset LastWriteUtc, s
 {
     // Only the UI/AI context is abbreviated; Issues and Warnings scan the entire file.
     public bool ContextAbbreviated { get; init; }
+    public string? ModResetError { get; init; }
     public IReadOnlyList<GameLogIssue> Warnings { get; init; } = [];
     public IReadOnlyList<GameLogIssue> ExcludedErrors { get; init; } = [];
     public string Kind { get; init; } = "startup";
@@ -60,6 +61,7 @@ public static partial class PlayerLogReader
         var tail = new Queue<string>();
         var tailLength = 0;
         long characters = 0;
+        var reset = new GameModResetDetection.Evidence();
         const int half = MaximumBytes / 2;
         IEnumerable<string> Lines(bool collectText = false)
         {
@@ -70,6 +72,7 @@ public static partial class PlayerLogReader
             {
                 if (collectText)
                 {
+                    reset.Observe(line);
                     var value = line + "\n";
                     characters += value.Length;
                     var prefix = Math.Min(value.Length, half - head.Length);
@@ -91,7 +94,7 @@ public static partial class PlayerLogReader
         var abbreviated = characters > head.Length + tailLength;
         var text = head + (abbreviated ? "\n[Context abbreviated; full log retained on disk.]\n" : "") + string.Concat(tail);
         return new(path, File.GetLastWriteTimeUtc(path), text, issues, false)
-            { Warnings = warnings, ExcludedErrors = excluded, ContextAbbreviated = abbreviated };
+            { Warnings = warnings, ExcludedErrors = excluded, ContextAbbreviated = abbreviated, ModResetError = reset.Text };
     }
     public static IReadOnlyList<GameLogIssue> Parse(string text, ModCatalogue? catalogue = null)
         => ParseSeverity(text, catalogue, false);

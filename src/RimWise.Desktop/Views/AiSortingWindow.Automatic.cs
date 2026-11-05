@@ -179,6 +179,7 @@ public partial class AiSortingWindow
                     : p.StartupDelayWarning
                     ? "游戏启动已等待 30 分钟，可能已卡死；游戏仍在运行，可继续等待或取消测试。"
                     : (p.Phase switch {
+                        "mods-reset" => "游戏加载异常并重置了模组排序，正在收集异常链以继续排障",
                         "main-menu" => "正在检查主界面和加载报错",
                         "scenario-selection" => "正在选择测试剧本",
                         "storyteller-selection" => "正在选择叙述者和难度",
@@ -329,7 +330,9 @@ public partial class AiSortingWindow
             : "任务记录已保存，可在恢复任务中查看。";
         if (result.LastOrderDecisionRecorded) SummaryText.Text = result.LastOrderKept
             ? "已保留最后测试顺序；该组合尚未验证通过，可在主界面撤销。" : "已恢复原排序，未保留本次调整。";
-        if (keptTrialMods) SummaryText.Text = "已保留模组和排序调整。通过验证的是移除候选后的组合，保留全部模组后仍可能出现原有报错。";
+        if (keptTrialMods) SummaryText.Text = result.Maintenance.Outcome == MaintenanceOutcome.Passed
+            ? "已保留模组和排序调整。通过验证的是移除候选后的组合，保留全部模组后仍可能出现原有报错。"
+            : "已保留模组和排序调整；该组合尚未验证通过，仍可能出现原有报错。";
         if (result.Maintenance.Analysis is { Length: > 0 } analysis)
             SummaryText.Text += "\n\nAI 分析：\n" + analysis;
         if (result.Maintenance.HasWarnings)

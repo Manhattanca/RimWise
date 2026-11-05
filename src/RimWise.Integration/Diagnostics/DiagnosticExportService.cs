@@ -26,6 +26,7 @@ public static class DiagnosticExportService
         "runtime-Player.log", "Player.log", "output_log.txt", "launch.json", "launch-failure.log", "result.json",
         "session.json", "process.json", "finished.json", "recovered.json",
         "diagnostic-sources.json", "diagnostic-context.json", "ModsConfig.xml",
+        "intended-ModsConfig.xml", "observed-ModsConfig.xml",
         "workbench-helper-failure.txt", "workbench-progress.xml", "workbench-signal.xml", "workbench-probe.xml",
         "workbench-messages.log", "workbench-factions.txt", "workbench-startup.xml", "workbench-log-locations.xml"
     };

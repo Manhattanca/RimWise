@@ -1,6 +1,20 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (args.Length >= 1 && args[0] == "--mod-reset-checks")
+{
+    var results = new List<string>();
+    GameModResetChecks.Run((name, test) => { test(); results.Add(name); });
+    if (args.Length == 2) GameModResetChecks.Replay(args[1]);
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+if (args.Length == 3 && args[0] == "--mod-reset-probe")
+{
+    await GameModResetChecks.Probe(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--emergency-diagnostics-checks")
 {
     var results = new List<string>();
@@ -142,6 +156,7 @@ DependencyChecks.Run(Check);
 OfflineSortingChecks.Run(Check);
 DiagnosticSummaryChecks.Run(Check);
 GameLifecycleChecks.Run(Check);
+GameModResetChecks.Run(Check);
 TestHelperCleanupChecks.Run(Check);
 DuplicateInstallationChecks.Run(Check);
 DuplicateCopyChecks.Run(Check);

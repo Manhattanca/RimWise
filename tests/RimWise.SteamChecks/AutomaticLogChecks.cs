@@ -38,6 +38,9 @@ internal static class AutomaticLogChecks
         }
         var earlier = Session("OLDER_GAME_SENTINEL");
         var recent = Session("RECENT_GAME_SENTINEL SyntheticLogSecret629481");
+        foreach (var name in new[] { "intended-ModsConfig.xml", "observed-ModsConfig.xml" })
+            File.WriteAllText(Path.Combine(recent, "attempt-01 测试数据", name),
+                "<ModsConfigData><activeMods><li>test.reset.evidence</li></activeMods></ModsConfigData>");
         string TaskId(DateTimeOffset time)
         {
             using var task = new AiTaskRecoveryStore(profile).Create(new(AiTaskKind.Sorting, AiTaskPhase.Completed,
@@ -54,6 +57,7 @@ internal static class AutomaticLogChecks
             TestDataRetention.MaintainTestRoot(gameRoot);
             Assert(StoredEvidence.ReadText(Path.Combine(recent, "attempt-01 测试数据", "runtime-Player.log"), 4096).Contains("RECENT_GAME"));
             Assert(TestDataRetention.InspectStorage(profile).ProtectedEvidenceBytes > 0);
+            Assert(File.Exists(Path.Combine(recent, "attempt-01 测试数据", "intended-ModsConfig.xml.gz")));
         });
         check("Last-run ZIP selects its task and sessions, filters UI time, redacts keys and keeps token summary", () =>
         {
@@ -70,6 +74,8 @@ internal static class AutomaticLogChecks
             using var zip = ZipFile.OpenRead(target);
             Assert(zip.GetEntry("token-summary.json") is not null && zip.GetEntry("automatic-run.json") is not null);
             Assert(zip.GetEntry("tasks/" + recentId + ".json") is not null && zip.GetEntry("tasks/" + oldId + ".json") is null);
+            foreach (var name in new[] { "intended-ModsConfig.xml", "observed-ModsConfig.xml" })
+                Assert(zip.Entries.Any(entry => entry.FullName.EndsWith("/" + name, StringComparison.Ordinal)));
             var content = string.Join('\n', zip.Entries.Select(e => { using var reader = new StreamReader(e.Open()); return reader.ReadToEnd(); }));
             Assert(content.Contains("RECENT_GAME_SENTINEL") && content.Contains("RECENT_UI_SENTINEL")
                 && !content.Contains("OLDER_GAME_SENTINEL") && !content.Contains("OLDER_UI_SENTINEL")
@@ -105,6 +111,7 @@ internal static class AutomaticLogChecks
             Assert(File.Exists(StoredEvidence.Resolve(Path.Combine(unfinished, "attempt-01 测试数据", "runtime-Player.log"))));
             Assert(File.ReadAllText(unknown) == "keep" && new AiTaskRecoveryStore(profile).InspectUsage().Any(t => t.Id == recentId));
             Assert(File.Exists(Path.Combine(recent, "finished.json")));
+            Assert(!File.Exists(StoredEvidence.Resolve(Path.Combine(recent, "attempt-01 测试数据", "intended-ModsConfig.xml"))));
         });
         check("Export cleanup deletes verified sorting ZIPs only, preserving unrelated files and subfolders", () =>
         {

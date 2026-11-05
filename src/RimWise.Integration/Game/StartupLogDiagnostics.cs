@@ -73,6 +73,7 @@ internal static partial class StartupLogDiagnostics
             evidence.AddRange(perLog.Distinct());
         }
         if (report.StartFailureCode is { } failure) evidence.Add(new(failure));
+        if (report.StopReason == GameTestStopReason.ModsReset) evidence.Add(new("ModsResetAfterLoadFailure"));
         if (report.StopReason == GameTestStopReason.Exited && report.ExitCode != 0) evidence.Add(new("UnexpectedExit"));
         if (report.ProbeStage == "helper-failed") evidence.Add(new("TestHelperFailure"));
         // Historical ErrorDetected reports predate end-of-attempt collection. ExitCode=0
@@ -102,7 +103,7 @@ internal static partial class StartupLogDiagnostics
                 .Concat(groups.OrderByDescending(g => g.Any(e => e.Source == "general")).SelectMany(g => g)).Take(96).ToArray())
             { BoundedErrorCaptureVerified = report.BoundedErrorCaptureVerified }.CopyValidated();
         // These paths come only from the trusted attempt directory, never from AI prose.
-        var paths = report.Logs.Select(l => l.Path).Concat(new[] { "launch.json", "launch-failure.log", "result.json", "diagnostic-sources.json", "diagnostic-context.json" }
+        var paths = report.Logs.Select(l => l.Path).Concat(new[] { "launch.json", "launch-failure.log", "result.json", "diagnostic-sources.json", "diagnostic-context.json", "intended-ModsConfig.xml", "observed-ModsConfig.xml" }
             .Select(name => Path.Combine(attemptDirectory, name)).Select(Diagnostics.StoredEvidence.Resolve).Where(File.Exists))
             .Select(Diagnostics.StoredEvidence.Resolve).Distinct().ToArray();
         var observations = report.Logs.SelectMany(log => log.Issues.OrderBy(issue =>

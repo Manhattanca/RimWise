@@ -30,6 +30,21 @@ internal static class MaintenanceProgressChecks
 
     internal static void Run(Action<string, Action> check)
     {
+        check("Game reset flows into diagnosis and a reversible trial, then a clean second test with removal consent", () =>
+        {
+            var text = GameModResetDetection.Marker + "\nThe exception was: System.NullReferenceException: failed load\n at Example.A()\n";
+            var log = new GameLogSnapshot(Path.Combine(Root, "reset-Player.log"), DateTimeOffset.UtcNow, text,
+                PlayerLogReader.Parse(text), false) { ModResetError = text };
+            var report = new OrdinaryGameReport(1, 0, GameTestStopReason.ModsReset, true, true, [log]) { ProbeStage = "mods-reset" };
+            var context = Failure(true).LogContext! with { BlockingError = text };
+            var feedback = OrdinaryGameTestSession.CreateFeedback(report, context, Root);
+            Assert(feedback.CanDiagnose && feedback.DiagnosticFacts.Any(f => f.Code == "GameTestBlockingFailure" && f.PackageId == Order[1]));
+            var client = new Client(); var session = new Session(n => n == 1 ? feedback : new(true, []));
+            var result = Run("reset", client, session);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && result.Attempts == 2 && client.Calls == 1
+                && result.TrialExclusions.Single().SelectedId == Order[1] && result.OriginalRestored
+                && !result.TrialRemovalsApproved && session.Orders[1].SequenceEqual([Order[0], Order[2]]), result.Message);
+        });
         check("Failure signature ignores changing reference IDs, addresses and unrelated startup errors", () =>
         {
             var first = Failure(true);

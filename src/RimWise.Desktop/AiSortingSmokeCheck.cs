@@ -440,16 +440,38 @@ internal static class AiSortingSmokeCheck
             string[] keptTrial = ["second.mod", "dependency.mod", "first.mod", "third.mod"];
             var reorderedTrial = trial with { TestedOrder = ["dependency.mod", "third.mod", "first.mod", "second.mod"] };
             foreach (var outcome in new[] { MaintenanceOutcome.Cancelled, MaintenanceOutcome.Failed, MaintenanceOutcome.Stopped })
+            foreach (var stoppedPhase in outcome == MaintenanceOutcome.Cancelled ? new[] { AiTaskPhase.Cancelled }
+                : new[] { AiTaskPhase.Paused, AiTaskPhase.ReplySaved, AiTaskPhase.Applying })
             foreach (var confirmRemoval in new[] { true, false })
             foreach (var approveRemoval in new[] { false, true })
             foreach (var insertion in new[] { false, true })
+            foreach (var keepOrder in new[] { true, false })
             {
                 ResetTrial();
                 var stoppedRequest = AiSortingSession.CreateRequest(vm, settings, null);
+                var baseline = insertion ? JsonSerializer.Serialize(new[] { "second.mod", "third.mod" }) : null;
+                string stoppedTaskId;
+                using (var task = session.Tasks.Create(new(AiTaskKind.Maintenance, stoppedPhase,
+                    AutomaticGameMaintenance.RecoveryContext(stoppedRequest, vm.CurrentCatalogue!, [], GameVersion.Parse("1.7")!),
+                    stoppedRequest.CurrentOrder.ToArray(), testedTrial, DateTimeOffset.UtcNow)
+                    { Limits = limits with { InsertionBaselineJson = baseline }, DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(15),
+                        Attempts = 2, Requests = 1, ReportedTokens = 150, TrialExclusions = [reorderedTrial] }))
+                {
+                    stoppedTaskId = task.Id;
+                    MustRejectCheckpoint(() => task.ValidateSave(task.Current with { TrialDecisionRecorded = true }));
+                    MustRejectCheckpoint(() => task.ValidateSave(task.Current with { TrialRemovalsApproved = true }));
+                    MustRejectCheckpoint(() => task.ValidateSave(task.Current with
+                        { StoppedOrderDecision = "restore", TrialDecisionRecorded = true }));
+                    MustRejectCheckpoint(() => task.ValidateSave(task.Current with
+                        { StoppedOrderDecision = "keep", TrialDecisionRecorded = true, MayApply = true }));
+                    MustRejectCheckpoint(() => task.ValidateSave(task.Current with
+                        { StoppedOrderDecision = "keep", TrialDecisionRecorded = true, Phase = AiTaskPhase.Testing }));
+                }
                 var stoppedTrial = new AutomaticMaintenanceResult(new(outcome, "合成停止", 2, 1, 150, false, testedTrial, true)
                 {
+                    TaskId = stoppedTaskId,
                     TrialExclusions = [reorderedTrial],
-                    InsertionBaselineJson = insertion ? JsonSerializer.Serialize(new[] { "second.mod", "third.mod" }) : null
+                    InsertionBaselineJson = baseline
                 }, null, []);
                 var stoppedTrialSaves = 0;
                 automatic.RememberStoppedOrder(stoppedTrial, stoppedRequest, settings, () => paths, paths, vm.ContentRevision,
@@ -458,16 +480,71 @@ internal static class AiSortingSmokeCheck
                     "Stopped removal confirmation ignored task setting.");
                 Assert(automatic.LastOrderChoice(stoppedTrial)!.After.SequenceEqual(confirmRemoval ? keptTrial : testedTrial),
                     "Default stopped preview silently authorized trial removal.");
-                var stoppedResult = automatic.ResolveLastOrder(stoppedTrial, true, approveRemoval);
+                var stoppedResult = automatic.ResolveLastOrder(stoppedTrial, keepOrder, approveRemoval);
+                using var savedStoppedTask = session.Tasks.Open(stoppedTaskId);
+                var savedStopped = savedStoppedTask.Current;
+                Assert(savedStopped.Phase == stoppedPhase && savedStopped.Finished && !savedStopped.CandidatePendingApply
+                    && savedStopped.StoppedOrderDecision == (keepOrder ? "keep" : "restore")
+                    && savedStopped.Attempts == 2 && savedStopped.Requests == 1 && savedStopped.ReportedTokens == 150,
+                    "Stopped choice was not persisted or changed test outcome/usage history.");
+                if (!keepOrder)
+                {
+                    Assert(stoppedTrialSaves == 0 && Order().SequenceEqual(stoppedRequest.CurrentOrder)
+                        && !savedStopped.TrialDecisionRecorded && !savedStopped.TrialRemovalsApproved,
+                        "Restoring original order saved or authorized trial removal.");
+                    continue;
+                }
                 var expectedRemoval = !confirmRemoval || approveRemoval;
                 Assert(stoppedTrialSaves == 1 && Order().SequenceEqual(expectedRemoval ? testedTrial : keptTrial)
                     && stoppedResult.Maintenance.TrialDecisionRecorded
+                    && savedStopped.TrialDecisionRecorded && savedStopped.TrialRemovalsApproved == expectedRemoval
                     && stoppedResult.Maintenance.TrialRemovalsApproved == expectedRemoval && !stoppedResult.CandidateApplied,
                     "Stopped save confused keeping order with approving removals, or claimed success.");
+                if (outcome == MaintenanceOutcome.Cancelled && confirmRemoval && !approveRemoval && !insertion)
+                {
+                    window.ShowAutomaticResult(stoppedResult);
+                    Assert(window.SummaryText.Text.Contains("尚未验证通过") && !window.SummaryText.Text.Contains("通过验证的是"),
+                        "Keeping mods after cancellation displayed a passing trial that never completed.");
+                }
                 vm.UndoCommand.Execute(null);
                 Assert(Order().SequenceEqual(stoppedRequest.CurrentOrder), "Stopped trial decision cannot be undone.");
             }
             checks.Add("stopped/cancelled/failed full and insertion tasks separately honor removal consent, default to keeping mods, preserve adjustments/dependencies and undo");
+            foreach (var invalidCheckpoint in new[] { true, false })
+            {
+                ResetTrial();
+                var stoppedRequest = AiSortingSession.CreateRequest(vm, settings, null);
+                string stoppedTaskId;
+                using (var task = session.Tasks.Create(new(AiTaskKind.Maintenance,
+                    invalidCheckpoint ? AiTaskPhase.Testing : AiTaskPhase.Cancelled,
+                    AutomaticGameMaintenance.RecoveryContext(stoppedRequest, vm.CurrentCatalogue!, [], GameVersion.Parse("1.7")!),
+                    stoppedRequest.CurrentOrder.ToArray(), testedTrial, DateTimeOffset.UtcNow)
+                    { Limits = limits, DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(15), Attempts = 2,
+                        TrialExclusions = [reorderedTrial] })) stoppedTaskId = task.Id;
+                var stoppedTrial = new AutomaticMaintenanceResult(new(MaintenanceOutcome.Cancelled,
+                    "合成取消", 2, 0, 0, false, testedTrial, true)
+                    { TaskId = stoppedTaskId, TrialExclusions = [reorderedTrial] }, null, []);
+                var failedSaves = 0;
+                automatic.RememberStoppedOrder(stoppedTrial, stoppedRequest, settings, () => paths, paths, vm.ContentRevision,
+                    vm.CurrentCatalogue!, () => { failedSaves++; throw new IOException("Synthetic stopped save failure"); });
+                if (invalidCheckpoint)
+                {
+                    MustRejectCheckpoint(() => automatic.ResolveLastOrder(stoppedTrial, true, true));
+                    Assert(failedSaves == 0 && Order().SequenceEqual(stoppedRequest.CurrentOrder),
+                        "Checkpoint preflight happened after editor/game writes.");
+                }
+                else
+                {
+                    try { automatic.ResolveLastOrder(stoppedTrial, true, true); throw new Exception("Save failure hidden"); }
+                    catch (IOException ex) when (ex.Message == "Synthetic stopped save failure") { }
+                    Assert(failedSaves == 1, "Game save was not attempted exactly once.");
+                    vm.UndoCommand.Execute(null);
+                }
+                using var reopened = session.Tasks.Open(stoppedTaskId);
+                Assert(reopened.Current.StoppedOrderDecision is null && !reopened.Current.TrialDecisionRecorded,
+                    "A failed save was recorded as a completed stopped-order choice.");
+            }
+            checks.Add("persisted stopped decisions survive reopening across 112 choices; preflight prevents invalid-state edits and failed saves remain uncommitted");
             foreach (var approve in new[] { false, true })
             {
                 ResetTrial();
@@ -1400,6 +1477,11 @@ internal static class AiSortingSmokeCheck
     {
         try { action(); } catch (InvalidOperationException) { return; }
         throw new InvalidOperationException("Stale result was accepted.");
+    }
+    private static void MustRejectCheckpoint(Action action)
+    {
+        try { action(); } catch (InvalidDataException) { return; }
+        throw new InvalidOperationException("Invalid checkpoint was accepted.");
     }
     private static DependencyObject? FindChild(DependencyObject parent, Type type)
     {

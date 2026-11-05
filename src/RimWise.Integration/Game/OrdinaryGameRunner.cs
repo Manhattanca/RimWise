@@ -6,7 +6,7 @@ using RimWise.Integration.Safety;
 namespace RimWise.Integration.Game;
 
 // Preserve LogLimit/ErrorDetected ordinals for old recovery records; new runs never emit them.
-public enum GameTestStopReason { Exited, TimedOut, LogLimit, Cancelled, ProbeCompleted, LaunchFailed, ErrorDetected }
+public enum GameTestStopReason { Exited, TimedOut, LogLimit, Cancelled, ProbeCompleted, LaunchFailed, ErrorDetected, ModsReset }
 public sealed record OrdinaryGameProgress(int ProcessId, int ElapsedSeconds, long LogBytes)
 {
     public bool StartupReady { get; init; }
@@ -21,7 +21,7 @@ public sealed record OrdinaryGameReport(int ProcessId, int ExitCode, GameTestSto
     public bool MapSuccessVerified => ProbeStage == "map-ready" && ProbeTicks >= 120 && ProbeColonists > 0
         && ProcessStopped && CaptureCompleted && StopReason == GameTestStopReason.ProbeCompleted
         && MenuPassed && FactionsPassed && PawnsTested > 0
-        && !Logs.Any(log => log.Truncated) && !LaunchEnvironmentFailure;
+        && !Logs.Any(log => log.Truncated || log.ModResetError is not null) && !LaunchEnvironmentFailure;
     public bool MenuPassed { get; init; }
     public bool FactionsPassed { get; init; }
     public int PawnsTested { get; init; }
@@ -34,6 +34,7 @@ public sealed record OrdinaryGameReport(int ProcessId, int ExitCode, GameTestSto
     public string? StartFailureCode { get; init; }
     public bool StoppedByTester { get; init; }
     public bool StartupObserved { get; init; }
+    public bool? ResetConfigurationCaptured { get; init; }
     public bool LaunchEnvironmentFailure => GameTestDiagnostics.HasLaunchEnvironmentFailure(Logs);
     // Historical resource stops can preserve positive error evidence, never proof of a clean run.
     public bool BoundedErrorCaptureVerified => StopReason == GameTestStopReason.LogLimit
@@ -76,6 +77,8 @@ internal sealed class OrdinaryGameRunner
         WriteNew(ScopedPaths.Child(data, "launch.json"), new GameTestLaunchIntent(1, executable, route,
             DateTime.UtcNow, timeout.TotalSeconds));
         var watch = Stopwatch.StartNew();
+        // Immutable evidence only; the next attempt is written from the session's candidate order.
+        SnapshotConfiguration("intended-ModsConfig.xml");
         var nonce = GameProbe.ReadNonce(data);
         var failureCapture = new GameFailureLogCapture(executable, data, runtimeLog);
         GameProbeSignal? signal = null;
@@ -107,6 +110,10 @@ internal sealed class OrdinaryGameRunner
         var startupReady = false;
         var stoppedByTester = false;
         string? lastPhase = null;
+        var resetDetectors = new[] { new GameModResetDetection(), new GameModResetDetection(), new GameModResetDetection(), new GameModResetDetection() };
+        TimeSpan? resetSince = null;
+        var lastLogChange = TimeSpan.Zero;
+        long previousBytes = -1;
         try
         {
             runtimeCapture = new GameTestLogCapture(executable, data, process.Id, process.StartTime.ToUniversalTime(), runtimeLog);
@@ -119,7 +126,12 @@ internal sealed class OrdinaryGameRunner
             while (!process.HasExited)
             {
                 if (token.IsCancellationRequested) { reason = GameTestStopReason.Cancelled; break; }
-                if (nonce is not null && (signal = GameProbe.Read(data, nonce, process.Id)) is not null)
+                resetDetectors[0].Poll(logPath);
+                runtimeCapture.PollReset(resetDetectors[1]);
+                resetDetectors[2].Poll(stdoutPath);
+                resetDetectors[3].Poll(stderrPath);
+                if (resetDetectors.Any(detector => detector.Detected)) resetSince ??= watch.Elapsed;
+                if (resetSince is null && nonce is not null && (signal = GameProbe.Read(data, nonce, process.Id)) is not null)
                 { reason = GameTestStopReason.ProbeCompleted; break; }
                 if (!startupReady && nonce is not null)
                     startupReady = GameProbe.StartupReady(data, nonce, process.Id);
@@ -128,6 +140,7 @@ internal sealed class OrdinaryGameRunner
                 var playerBytes = LogLength(logPath);
                 if (playerBytes == 0) playerBytes = runtimeCapture.CorrelatedLength();
                 var bytes = playerBytes + LogLength(stdoutPath) + LogLength(stderrPath);
+                if (bytes != previousBytes) { previousBytes = bytes; lastLogChange = watch.Elapsed; }
                 if (capture.IsFaulted) await capture;
                 // Logged errors are evidence, not proof that the test cannot proceed. Let the
                 // helper finish or report an actual blocked stage, then collect the final logs.
@@ -135,10 +148,17 @@ internal sealed class OrdinaryGameRunner
                 progress?.Report(new(process.Id, (int)watch.Elapsed.TotalSeconds, bytes)
                 {
                     StartupReady = startupReady,
-                    Phase = phase?.Stage,
+                    Phase = resetSince is null ? phase?.Stage : "mods-reset",
                     MapTicks = phase?.Ticks ?? 0,
-                    StartupDelayWarning = warnOnSlowStartup && !startupReady && watch.Elapsed >= timeout
+                    StartupDelayWarning = resetSince is null && warnOnSlowStartup && !startupReady && watch.Elapsed >= timeout
                 });
+                // The game has discarded this candidate, so the helper can no longer finish its
+                // journey. Allow the exception/recovery log to flush before ending this failed run.
+                if (resetSince is { } resetAt && watch.Elapsed - resetAt >= TimeSpan.FromSeconds(2)
+                    && (resetDetectors.Any(detector => detector.RecoveryFinished)
+                        || watch.Elapsed - lastLogChange >= TimeSpan.FromSeconds(2)
+                        || watch.Elapsed - resetAt >= TimeSpan.FromSeconds(10)))
+                { reason = GameTestStopReason.ModsReset; break; }
                 // Product testing has a startup reminder, never a total-duration kill timer.
                 // Keep this process and attempt alive; no AI diagnosis/restart can run while it loads.
                 if (!warnOnSlowStartup && watch.Elapsed >= timeout) { reason = GameTestStopReason.TimedOut; break; }
@@ -200,18 +220,37 @@ internal sealed class OrdinaryGameRunner
             }).ToArray();
         }
         captureCompleted &= redirect || logs.Any(log => log.Text.Length > 0);
+        // Fast exits and final probe messages can race polling. A reset can never prove this
+        // candidate passed, even if the reduced game subsequently reaches its main menu/map.
+        if (reason != GameTestStopReason.Cancelled && logs.Any(log => log.ModResetError is not null))
+            reason = GameTestStopReason.ModsReset;
+        bool? resetConfigurationCaptured = null;
+        if (reason == GameTestStopReason.ModsReset)
+        {
+            try { resetConfigurationCaptured = SnapshotConfiguration("observed-ModsConfig.xml"); }
+            catch (IOException) { resetConfigurationCaptured = false; }
+            catch (UnauthorizedAccessException) { resetConfigurationCaptured = false; }
+        }
         var report = new OrdinaryGameReport(process.Id, process.ExitCode, reason, process.HasExited, captureCompleted, logs)
-        { StoppedByTester = stoppedByTester, StartupObserved = startupReady,
-            ProbeStage = signal?.Stage ?? (File.Exists(ScopedPaths.Child(data, "workbench-helper-failure.txt"))
+        { StoppedByTester = stoppedByTester, StartupObserved = startupReady, ResetConfigurationCaptured = resetConfigurationCaptured,
+            ProbeStage = reason == GameTestStopReason.ModsReset ? "mods-reset" : signal?.Stage ?? (File.Exists(ScopedPaths.Child(data, "workbench-helper-failure.txt"))
                 ? "helper-failed" : null), ProbeTicks = signal?.Ticks ?? 0, ProbeColonists = signal?.Colonists ?? 0,
             ProbeErrors = signal?.Errors ?? 0, ProbeWarnings = signal?.Warnings ?? 0,
             MenuPassed = signal?.MenuPassed ?? false, FactionsPassed = signal?.FactionsPassed ?? false,
-            PawnsTested = signal?.PawnsTested ?? 0, FailedPhase = signal?.Phase ?? lastPhase };
+            PawnsTested = signal?.PawnsTested ?? 0, FailedPhase = reason == GameTestStopReason.ModsReset ? "loading-data" : signal?.Phase ?? lastPhase };
         WriteNew(ScopedPaths.Child(data, "result.json"), report);
         return report;
 
         static long LogLength(string path) => File.Exists(path)
             ? new FileInfo(ScopedPaths.Ordinary(path, true)).Length : 0;
+
+        bool SnapshotConfiguration(string name)
+        {
+            var source = ScopedPaths.Child(ScopedPaths.Child(data, "Config"), "ModsConfig.xml");
+            if (!File.Exists(source)) return false;
+            File.Copy(ScopedPaths.Ordinary(source, true), ScopedPaths.Child(data, name), overwrite: false);
+            return true;
+        }
 
         async Task CopyAsync(Stream input, string path)
         {

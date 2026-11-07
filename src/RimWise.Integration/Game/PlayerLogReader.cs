@@ -21,7 +21,7 @@ public static partial class PlayerLogReader
 {
     // Unlike display grouping, this preserves every distinct full block, including numeric IDs and stacks.
     // Any abbreviated block makes comparison unavailable; raw logs are still retained normally.
-    internal static Dictionary<string, int>? ExactErrorCounts(string path)
+    internal static Dictionary<string, int>? ExactErrorCounts(string path, Func<string, string>? normalize = null)
     {
         using var stream = new FileStream(ScopedPaths.Ordinary(path, true), FileMode.Open, FileAccess.Read, FileShare.Read);
         using var reader = new StreamReader(stream);
@@ -36,6 +36,7 @@ public static partial class PlayerLogReader
                 && KnownLogExclusions.Matches(entry.Groups["message"].Value, block)) continue;
             var text = entry.Success ? entry.Groups["level"].Value + ":" + entry.Groups["message"].Value
                 + (end < 0 ? "" : block[end..]) : block;
+            if (normalize is not null) text = normalize(text);
             var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
             counts[hash] = checked(counts.GetValueOrDefault(hash) + 1);
             if (counts.Count > 20000) return null;

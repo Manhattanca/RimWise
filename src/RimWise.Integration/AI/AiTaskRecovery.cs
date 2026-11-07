@@ -41,6 +41,7 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
     public RuntimeConflictEvidence? PendingConflict { get; init; }
     public TrialExclusion[] TrialExclusions { get; init; } = [];
     public string[] DiagnosedFailures { get; init; } = [];
+    public string[] DiagnosedErrors { get; init; } = [];
     public bool TrialRemovalsApproved { get; init; }
     public bool TrialDecisionRecorded { get; init; }
     public AiUsageRequest[] UsageRequests { get; init; } = [];
@@ -77,6 +78,8 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
             || StoppedOrderDecision is not null && (Kind != AiTaskKind.Maintenance || CandidatePendingApply))
             throw new InvalidDataException("Stopped order decision is invalid.");
         PendingConflict?.Validate();
+        if (!MaintenanceErrorMemory.Valid(DiagnosedErrors) || DiagnosedErrors.LongLength > (long)Requests * 100)
+            throw new InvalidDataException("已分析错误明细记录无效。");
         if (DiagnosedFailures is null || DiagnosedFailures.Length > Requests
             || DiagnosedFailures.Any(f => !MaintenanceFailureSignature.Valid(f))
             || DiagnosedFailures.Distinct(StringComparer.Ordinal).Count() != DiagnosedFailures.Length)
@@ -486,6 +489,7 @@ public sealed class AiTaskRecoveryStore
                 || next.SeenOrders.Length < old.SeenOrders.Length
                 || next.TrialExclusions.Length < old.TrialExclusions.Length
                 || !old.DiagnosedFailures.SequenceEqual(next.DiagnosedFailures.Take(old.DiagnosedFailures.Length), StringComparer.Ordinal)
+                || !old.DiagnosedErrors.SequenceEqual(next.DiagnosedErrors.Take(old.DiagnosedErrors.Length), StringComparer.Ordinal)
                 || old.TrialExclusions.Where((t, i) => JsonSerializer.Serialize(t, Json)
                     != JsonSerializer.Serialize(next.TrialExclusions[i], Json)).Any()
                 || old.TrialRemovalsApproved && !next.TrialRemovalsApproved
@@ -521,6 +525,7 @@ public sealed class AiTaskRecoveryStore
             PendingConflict = value.PendingConflict?.Copy(),
             TrialExclusions = value.TrialExclusions.Select(t => t.Copy()).ToArray(),
             DiagnosedFailures = value.DiagnosedFailures.ToArray(),
+            DiagnosedErrors = value.DiagnosedErrors.ToArray(),
             Feedback = value.Feedback?.Copy(),
             InsertionControl = value.InsertionControl?.Copy(),
             ConflictApprovals = value.ConflictApprovals.Select(a => a with { RemovedIds = a.RemovedIds.ToArray(),

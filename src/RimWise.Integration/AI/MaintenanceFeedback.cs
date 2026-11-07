@@ -11,6 +11,7 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
     public bool Passed => StartupVerified && (!HadErrors || ExistingErrorsOnly);
     public AiDiagnosticFact[] DiagnosticFacts { get; init; } = [];
     public string? FailureFingerprint { get; init; }
+    public string[] ErrorSignatures { get; init; } = [];
     public bool ReplyReceived { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public AiReplyFailure ReplyFailure { get; init; }
@@ -29,6 +30,7 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
         {
             ContextHash = contextHash,
             FailureFingerprint = MaintenanceFailureSignature.Create(report),
+            ErrorSignatures = report.ErrorSignatures.ToArray(),
             ExistingErrorsOnly = report.ExistingErrorsOnly,
             InsertionEvidence = report.InsertionEvidence?.Copy(),
             StartupFailure = report.StartupFailure?.CopyValidated(),
@@ -41,11 +43,13 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
         };
 
     internal MaintenanceGameReport Restore() => new(StartupVerified, HadErrors ? ["本轮游戏测试检测到报错。"] : [])
-        { FailureFingerprint = FailureFingerprint, ExistingErrorsOnly = ExistingErrorsOnly, InsertionEvidence = InsertionEvidence?.Copy(), CanDiagnose = CanDiagnose, DiagnosticFacts = DiagnosticFacts.ToArray(), StartupFailure = StartupFailure?.CopyValidated(),
+        { FailureFingerprint = FailureFingerprint, ErrorSignatures = ErrorSignatures.ToArray(), ExistingErrorsOnly = ExistingErrorsOnly, InsertionEvidence = InsertionEvidence?.Copy(), CanDiagnose = CanDiagnose, DiagnosticFacts = DiagnosticFacts.ToArray(), StartupFailure = StartupFailure?.CopyValidated(),
             RuntimeContext = RuntimeContext?.CopyValidated(), LogContext = LogContext?.CopyValidated(), LogPaths = LogPaths.ToArray() };
 
     internal void Validate(AiTaskCheckpoint task)
     {
+        if (!MaintenanceErrorMemory.Valid(ErrorSignatures) || ErrorSignatures.Length > 100)
+            throw new InvalidDataException("测试错误明细指纹无效。");
         if (FailureFingerprint is not null && !MaintenanceFailureSignature.Valid(FailureFingerprint))
             throw new InvalidDataException("测试错误指纹无效。");
         InsertionEvidence?.Validate();
@@ -79,7 +83,7 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
     }
 
     internal MaintenanceFeedback Copy() => this with
-        { TestedOrder = TestedOrder.ToArray(), InsertionEvidence = InsertionEvidence?.Copy(), DiagnosticFacts = DiagnosticFacts.ToArray(), StartupFailure = StartupFailure?.CopyValidated(),
+        { TestedOrder = TestedOrder.ToArray(), ErrorSignatures = ErrorSignatures.ToArray(), InsertionEvidence = InsertionEvidence?.Copy(), DiagnosticFacts = DiagnosticFacts.ToArray(), StartupFailure = StartupFailure?.CopyValidated(),
             RuntimeContext = RuntimeContext?.CopyValidated(), LogContext = LogContext?.CopyValidated(), LogPaths = LogPaths.ToArray() };
 
     private static bool SafeIdentifier(string? id, bool allowEmpty) =>

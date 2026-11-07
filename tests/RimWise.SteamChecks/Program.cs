@@ -1,6 +1,24 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (args.Length >= 1 && args[0] == "--maintenance-efficiency-checks")
+{
+    var results = new List<string>();
+    MaintenanceEfficiencyChecks.Run((name, test) => { test(); results.Add(name); });
+    if (args.Length == 2) MaintenanceEfficiencyChecks.Replay(args[1]);
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
+if (args.Length >= 1 && args[0] == "--cascading-type-load-checks")
+{
+    var results = new List<string>();
+    CascadingTypeLoadChecks.Run((name, test) => { test(); results.Add(name); });
+    if (args.Length == 2) CascadingTypeLoadChecks.Replay(args[1]);
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
 if (args.Length >= 1 && args[0] == "--mod-reset-checks")
 {
     var results = new List<string>();
@@ -164,7 +182,9 @@ AiContextRetentionChecks.Run(Check);
 AutomaticLogChecks.Run(Check);
 MaintenanceDiagnosisChecks.Run(Check);
 DiagnosticAttributionChecks.Run(Check);
+CascadingTypeLoadChecks.Run(Check);
 MaintenanceProgressChecks.Run(Check);
+MaintenanceEfficiencyChecks.Run(Check);
 LargeLogChecks.Run(Check);
 AiResponseFormatChecks.Run(Check);
 GameVersionCompatibilityChecks.Run(Check);

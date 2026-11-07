@@ -53,8 +53,15 @@ public static class GameTestDiagnostics
             .Select(owner => new AiDiagnosticFact("GameTestBlockingFailure", owner.PackageId));
         return blockingFacts.Concat(snapshots.Where(log => !IsHelperDiagnostic(log)).SelectMany(log => log.Issues).SelectMany(issue =>
         {
-            var associated = issue.RelatedMods.Concat(verifiedOwners.Where(owner =>
-                ContainsSymbol(issue.Detail, owner.Symbol)).Select(owner => owner.PackageId))
+            var fields = DiagnosticLogContext.FieldTypeSubjects(issue.Detail);
+            // Reflection may enumerate another assembly while a healthy Mod is initializing.
+            // Preserve the error and its whole chain, but do not promote the outer Mod or other
+            // scanning frames to removal candidates. Missing PE ownership remains unknown.
+            var associated = (fields.Length > 0
+                ? verifiedOwners.Where(owner => owner.Basis == "assembly-type"
+                    && fields.Contains(owner.Symbol, StringComparer.Ordinal)).Select(owner => owner.PackageId)
+                : issue.RelatedMods.Concat(verifiedOwners.Where(owner =>
+                    ContainsSymbol(issue.Detail, owner.Symbol)).Select(owner => owner.PackageId)))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             var ids = associated.Length == 0 ? [""] : associated;
             var codes = Classify(issue.Detail).Prepend("GameLogError");

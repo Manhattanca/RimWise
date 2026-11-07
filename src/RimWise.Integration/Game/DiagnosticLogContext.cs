@@ -30,11 +30,22 @@ internal static partial class DiagnosticLogContext
     [GeneratedRegex(@"(?:\bClass\s*=\s*[""']|(?:type(?: initializer for)?|Could not find type named)\s+[""'])([A-Za-z_][A-Za-z0-9_.+`-]{0,159})", RegexOptions.IgnoreCase)]
     private static partial Regex ConcreteTypes();
 
+    [GeneratedRegex(@"Could not (?:load|resolve) type of field\s+['""\x60]([A-Za-z_][A-Za-z0-9_.+`]{0,159}):[A-Za-z_][A-Za-z0-9_]*['""\x60]", RegexOptions.IgnoreCase)]
+    private static partial Regex FailedFieldTypes();
+
     [GeneratedRegex(@"[A-Za-z]:[\\/][^\r\n""<>]*?\.dll(?=\s|$|\))", RegexOptions.IgnoreCase)]
     private static partial Regex AssemblyPaths();
 
+    internal static string[] FieldTypeSubjects(string text) => FailedFieldTypes().Matches(text)
+        .Select(m => m.Groups[1].Value).Distinct(StringComparer.Ordinal).Take(64).ToArray();
+
     internal static string[] SubjectSymbols(IEnumerable<string> summaries) => summaries.SelectMany(text =>
-        ConcreteTypes().Matches(text).Select(m => m.Groups[1].Value)).Distinct(StringComparer.Ordinal).Take(64).ToArray();
+    {
+        // A reflection scan can fail while constructing an unrelated Mod. The CLR explicitly
+        // names the declaring type of the unloadable field; prefer that subject to the wrapper.
+        var fields = FieldTypeSubjects(text);
+        return fields.Length > 0 ? fields : ConcreteTypes().Matches(text).Select(m => m.Groups[1].Value);
+    }).Distinct(StringComparer.Ordinal).Take(64).ToArray();
 
     internal static AiLogContext Create(OrdinaryGameReport report, ModCatalogue catalogue,
         IReadOnlyList<string> order, CancellationToken token, GameVersion? version = null)
@@ -84,7 +95,7 @@ internal static partial class DiagnosticLogContext
             .Select(issue => HeadAndTail(Sanitize(issue.Summary), 1024)));
         // Error subjects take priority over common framework frames in very long stacks.
         var symbols = BlockingSymbols(report.Logs)
-            .Concat(SubjectSymbols(report.Logs.Take(48).SelectMany(log => log.Issues.Take(64)).Select(issue => issue.Summary)))
+            .Concat(SubjectSymbols(report.Logs.Take(48).SelectMany(log => log.Issues.Take(64)).Select(issue => issue.Detail)))
             .Concat(report.Logs.Take(48).SelectMany(log => log.Issues.Take(64))
                 .SelectMany(issue => CodeSymbols().Matches(Sanitize(issue.Detail)).Select(m => m.Groups[1].Value)
                     .Where(symbol => !IsFrameworkSymbol(symbol)).Distinct(StringComparer.Ordinal).Take(8)))
@@ -134,9 +145,17 @@ internal static partial class DiagnosticLogContext
     }
 
     internal static string[] BlockingSymbols(IEnumerable<GameLogSnapshot> logs) => BlockingTexts(logs)
-        // Only actual exception frames qualify. Harmony's appended patch inventory lists
-        // interceptors that may never have run, so it must not create blocking candidates.
-        .SelectMany(ExceptionSymbols).Distinct(StringComparer.Ordinal).Take(32).ToArray();
+        // Use explicit failing field types or actual exception frames. Harmony's appended
+        // patch inventory may list interceptors that never ran and cannot create blockers.
+        .SelectMany(text =>
+        {
+            // Reset evidence may also contain the recovery's later log entries. Only an
+            // explicit field failure in the exception header may replace its real frames.
+            var frame = StackMethods().Match(text);
+            var fields = FieldTypeSubjects(frame.Success ? text[..frame.Index] : text);
+            return fields.Length > 0 ? fields : ExceptionSymbols(text);
+        })
+        .Where(symbol => !IsFrameworkSymbol(symbol)).Distinct(StringComparer.Ordinal).Take(32).ToArray();
 
     internal static string[] ExceptionSymbols(string text) => StackMethods().Matches(Sanitize(text))
         .Select(m => m.Groups[1].Value).Where(symbol => !IsFrameworkSymbol(symbol))

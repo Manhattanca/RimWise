@@ -982,8 +982,9 @@ internal static class AiSortingSmokeCheck
                 var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
                 while (!clean.IsEnabled && DateTimeOffset.UtcNow < deadline) await Task.Delay(10);
                 Assert(clean.IsEnabled && client.Calls == beforeCalls, "Cleanup did not finish locally.");
+                var deletedUsage = tasks.InspectDeletedUsage().Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
                 Assert(tasks.Inspect().All(t => !finished.Contains(t.Id))
-                    && finished.All(id => tasks.InspectDeletedUsage().Any(t => t.Id == id)), "Cleanup lost billing or retained finished payloads.");
+                    && finished.All(deletedUsage.Contains), "Cleanup lost billing or retained finished payloads.");
                 Assert(recoveryPanel.Children.OfType<TextBlock>().Any(t => t.Text.StartsWith("已清理", StringComparison.Ordinal)),
                     "Refreshing the list erased the cleanup result.");
                 checks.Add("finished history cleanup runs locally and retains billing and its visible result");

@@ -214,6 +214,7 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         // It may justify a reversible experiment, but never a successful map verdict.
         return new(report.MapSuccessVerified, errors)
         {
+            ErrorSignatures = MaintenanceErrorMemory.Capture(report),
             StartupFailure = report.MapSuccessVerified ? null : StartupLogDiagnostics.Create(report, data),
             DiagnosticFacts = facts,
             RuntimeContext = GameTestDiagnostics.ProjectWarnings(report.Logs, report.ProbeWarnings > 0),

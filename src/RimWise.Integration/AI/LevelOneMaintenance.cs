@@ -64,6 +64,7 @@ public static class AutomaticMaintenanceAvailability
 
 internal sealed record MaintenanceGameReport(bool StartupVerified, IReadOnlyList<string> Errors)
 {
+    public string[] ErrorSignatures { get; init; } = [];
     public string? FailureFingerprint { get; init; }
     public bool ExistingErrorsOnly { get; init; }
     public InsertionEvidence? InsertionEvidence { get; init; }
@@ -328,6 +329,23 @@ public sealed class LevelOneMaintenance
                 if (startupFailure is null && ((!report.StartupVerified && !report.CanDiagnose) || report.Errors.Count == 0))
                 { Stop("游戏未完成启动验证，不能将空日志判定为通过。"); break; }
                 var failureFingerprint = MaintenanceFailureSignature.Create(report);
+                if (recoveryTask.Current.Feedback is not { ReplyReceived: true }
+                    && MaintenanceErrorMemory.Covered(report, recoveryTask.Current.DiagnosedErrors))
+                {
+                    // Reuse analysis only after a trial actually removed an observed error.
+                    // An unchanged set cannot justify walking through incidental stack owners.
+                    var previous = trials.LastOrDefault()?.ErrorSignatures ?? [];
+                    if (trials.Length == 0 || previous.Length > report.ErrorSignatures.Length
+                        && report.ErrorSignatures.All(s => previous.Contains(s, StringComparer.Ordinal)))
+                    {
+                        Report(trials.Length == 0
+                            ? "重排后仍有已分析的错误；复用诊断，核对一次本地试排除方案，不重复请求 AI。"
+                            : "本轮剩余错误已分析，且复测确认部分错误消失；复用诊断，继续核对本地试排除候选，不重复请求 AI。");
+                        if (await TryTrialAsync(report)) continue;
+                    }
+                    Stop("复测仍有已分析的错误，未找到进一步有效且满足保护规则的调整；已停止重复请求并保留日志。剩余红字尚未解决。");
+                    break;
+                }
                 if (recoveryTask.Current.Feedback is not { ReplyReceived: true } && failureFingerprint is not null
                     && recoveryTask.Current.DiagnosedFailures.Contains(failureFingerprint, StringComparer.Ordinal))
                 {
@@ -562,6 +580,9 @@ public sealed class LevelOneMaintenance
             return checkpoint with { Phase = AiTaskPhase.ReplySaved, ReportedTokens = nextSpent,
                 DiagnosedFailures = signature is null ? checkpoint.DiagnosedFailures
                     : checkpoint.DiagnosedFailures.Append(signature).Distinct(StringComparer.Ordinal).ToArray(),
+                DiagnosedErrors = reply.Succeeded && reply.Response is not null
+                    ? checkpoint.DiagnosedErrors.Concat(report.ErrorSignatures).Distinct(StringComparer.Ordinal).Take(20000).ToArray()
+                    : checkpoint.DiagnosedErrors,
                 OutputBudgetExhausted = reply.Failure == AiReplyFailure.OutputLimit,
                 UnknownUsage = unknown || usage is null, ReservedTokens = nextReserve, LastUsage = usage,
                 Feedback = checkpoint.Feedback! with { ReplyReceived = true,

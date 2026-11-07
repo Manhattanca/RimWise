@@ -1,6 +1,6 @@
 #requires -Version 7.0
 param(
-    [string]$Version = '0.5.5',
+    [string]$Version = '0.5.6',
     [Parameter(Mandatory)][string]$Compiler,
     [Parameter(Mandatory)][string]$RuntimeInstaller,
     [string]$PackageDirectory,

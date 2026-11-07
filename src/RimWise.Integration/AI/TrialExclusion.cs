@@ -7,8 +7,11 @@ public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, stri
     string[] DiagnosticCodes, int Attempt)
 {
     public string? FailureFingerprint { get; init; }
+    public string[] ErrorSignatures { get; init; } = [];
     internal void Validate()
     {
+        if (!MaintenanceErrorMemory.Valid(ErrorSignatures) || ErrorSignatures.Length > 100)
+            throw new InvalidDataException("试排除错误明细指纹无效。");
         if (FailureFingerprint is not null && !MaintenanceFailureSignature.Valid(FailureFingerprint))
             throw new InvalidDataException("试排除错误指纹无效。");
         static bool Invalid(string[]? ids) => ids is null || ids.Length is < 1 or > 20000
@@ -23,7 +26,7 @@ public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, stri
     }
 
     internal TrialExclusion Copy() => this with { RemovedIds = RemovedIds.ToArray(),
-        TestedOrder = TestedOrder.ToArray(), DiagnosticCodes = DiagnosticCodes.ToArray() };
+        TestedOrder = TestedOrder.ToArray(), ErrorSignatures = ErrorSignatures.ToArray(), DiagnosticCodes = DiagnosticCodes.ToArray() };
 }
 
 /// <summary>Trusted local hypotheses and dependency/protection checks, independent of model confidence.</summary>
@@ -48,6 +51,12 @@ internal static class TrialExclusionPlanning
             if (packages.Length == 1) independent.Add(packages[0]);
             else ambiguous.UnionWith(packages);
         }
+        var patches = TrialPatchSubjects.Find(report);
+        independent.UnionWith(patches.Keys);
+        foreach (var patch in patches)
+            if (patches.Any(other => !other.Key.Equals(patch.Key, StringComparison.OrdinalIgnoreCase)
+                && other.Value.Intersect(patch.Value, StringComparer.Ordinal).Any()))
+                ambiguous.Add(patch.Key);
         independent.ExceptWith(ambiguous);
         bool Supported(string id) => independent.Contains(catalogue.Resolve(id, version).UniqueInstallation?.PackageId ?? id);
         if (!Supported(first.SelectedId)) return result.ToArray();
@@ -110,7 +119,7 @@ internal static class TrialExclusionPlanning
             var codes = facts.Where(f => Active(f.PackageId) == selected.Identifier).Select(f => f.Code).Distinct().ToArray();
             return new TrialExclusion(selected.Identifier, selected.RemovedIds.ToArray(), order.ToArray(),
                 codes.Length == 0 ? ["GameLogError"] : codes, attempt)
-                { FailureFingerprint = MaintenanceFailureSignature.Create(report) };
+                { FailureFingerprint = MaintenanceFailureSignature.Create(report), ErrorSignatures = report.ErrorSignatures.ToArray() };
         }).ToArray();
     }
 

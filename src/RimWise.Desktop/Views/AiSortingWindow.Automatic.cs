@@ -280,16 +280,46 @@ public partial class AiSortingWindow
             AppendAutomaticReport("\n最后测试顺序未通过保存校验，原排序保持不变：" + string.Join("；", plan.Rejected));
             return result;
         }
+        var needsRemovalConfirmation = automatic.NeedsStoppedRemovalConfirmation(result);
+        if (!AutomaticSortingSession.HasOrderChanges(plan.Before, plan.After) && needsRemovalConfirmation)
+        {
+            var removalPlan = automatic.LastOrderChoice(result, approveTrialRemovals: true);
+            if (removalPlan is null || removalPlan.Rejected.Count > 0)
+            {
+                var reason = removalPlan is null ? "没有可确认的试排除方案。"
+                    : "试排除候选未通过保存校验：" + string.Join("；", removalPlan.Rejected);
+                AppendAutomaticReport("\nAI 未提出排序调整；" + reason + "原排序保持不变。");
+                return automatic.ResolveLastOrder(result, keep: false);
+            }
+
+            var removal = new OrderPreviewWindow(new(new(plan.After), new(removalPlan.After)), "确认试排除候选是否移出？",
+                "AI 未提出排序调整，保留全部模组时顺序不会变化。下方只显示未验证的临时试排除候选；移出不证明它们就是根因，且不会删除安装文件。\n\n"
+                + TrialDescription(result.Maintenance), "移出并保存", "保留模组，不更改排序") { Owner = this };
+            DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-dialog", "UnchangedOrderWithTrialRemovals");
+            var removeTrialMods = removal.ShowDialog() == true;
+            DiagnosticEventLog.Current?.Record("automatic-sorting", "stopped-removal-decision", $"remove={removeTrialMods}");
+            var unchangedResolved = automatic.ResolveLastOrder(result, removeTrialMods, removeTrialMods);
+            AppendAutomaticReport("\n" + unchangedResolved.Maintenance.Message + "\n");
+            DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-decision", $"keep={removeTrialMods}");
+            return unchangedResolved;
+        }
+        if (!AutomaticSortingSession.HasOrderChanges(plan.Before, plan.After))
+        {
+            var unchangedResolved = automatic.ResolveLastOrder(result, keep: false);
+            AppendAutomaticReport("\nAI 未提出有效排序调整；当前顺序与原排序相同，原排序保持不变。\n");
+            DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-decision", "keep=False; unchanged=true");
+            return unchangedResolved;
+        }
         var preview = new OrderPreviewWindow(new(new(plan.Before), new(plan.After)), "保留最后一次自动排序？",
             result.Maintenance.Message + "\n\n最后顺序尚未验证通过，仍可能出现红字。下方列出位置变化、新增前置和临时移出项。"
-            + (automatic.NeedsStoppedRemovalConfirmation(result)
+            + (needsRemovalConfirmation
                 ? "\n此预览保留试排除模组。选择保存后，会单独询问是否移出这些模组；不同意移出也会保存排序调整。"
                 : "\n保留将保存该顺序（不删除模组文件）；恢复原排序则放弃本次调整。"),
             "保留并保存最后顺序", "恢复原排序") { Owner = this };
         DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-dialog", result.Maintenance.Outcome.ToString());
         var keep = preview.ShowDialog() == true;
         var approveRemovals = false;
-        if (keep && automatic.NeedsStoppedRemovalConfirmation(result))
+        if (keep && needsRemovalConfirmation)
         {
             var removalPlan = automatic.LastOrderChoice(result, approveTrialRemovals: true);
             if (removalPlan is { Rejected.Count: 0 })

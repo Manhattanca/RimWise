@@ -151,9 +151,11 @@ public sealed class LevelOneMaintenance
         var passed = false;
         var existingErrorsOnly = false;
         var restored = false;
+        var nonOrderableBlockerDetected = false;
         var outcome = MaintenanceOutcome.Failed;
         var message = "自动维护尚未完成。";
         string? trialStopReason = null;
+        string? nonOrderableBlockerSummary = null;
         AiTaskRecoveryStore.AiTaskLease? recoveryTask = null;
         IDisposable? usagePeriod = null;
         var persistFinal = false;
@@ -326,6 +328,35 @@ public sealed class LevelOneMaintenance
                     passed = true;
                     break;
                 }
+                if (MaintenanceFailureSignature.KnownNonOrderableRuntimeFailure(report) is { } runtimeFailure)
+                {
+                    nonOrderableBlockerDetected = true;
+                    nonOrderableBlockerSummary = runtimeFailure;
+                    var fingerprint = MaintenanceFailureSignature.Create(report);
+                    var alreadyTried = fingerprint is not null
+                        && trials.Any(t => t.FailureFingerprint == fingerprint);
+                    var blockerTrialAlreadyAttempted = trials.Any(t => t.DiagnosticCodes
+                        .Contains("GameTestBlockingFailure", StringComparer.Ordinal));
+                    var blockerOwners = report.DiagnosticFacts.Where(f => f.Code == "GameTestBlockingFailure"
+                            && !string.IsNullOrWhiteSpace(f.PackageId))
+                        .Select(f => f.PackageId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    if (!alreadyTried && !blockerTrialAlreadyAttempted && blockerOwners.Length == 1
+                        && await TryTrialAsync(report))
+                    {
+                        Report("已确认运行时阻断关联项；仅对该关联模组执行一次临时排除复测，不请求 AI，也不会自动从最终排序移出。");
+                        continue;
+                    }
+                    Stop(alreadyTried
+                        ? runtimeFailure + " 同一阻断已经做过一次定向复测，仍未解决；不再重复测试。"
+                        : blockerTrialAlreadyAttempted
+                            ? runtimeFailure + " 本任务已经进行过一次阻断模组定向排除；不再排除其他模组。"
+                        : blockerOwners.Length != 1
+                            ? runtimeFailure + " 阻断模组未能唯一确认；不进行猜测性排除。"
+                        : runtimeFailure);
+                    break;
+                }
+                if (nonOrderableBlockerDetected)
+                { Stop("已针对明确的运行时阻断完成一次定向复测，但仍有其他未解决错误；按安全边界不再请求 AI 或排除其他模组。原排序已恢复，请先更新或处理阻断模组及剩余兼容问题。"); break; }
                 if (startupFailure is null && ((!report.StartupVerified && !report.CanDiagnose) || report.Errors.Count == 0))
                 { Stop("游戏未完成启动验证，不能将空日志判定为通过。"); break; }
                 var failureFingerprint = MaintenanceFailureSignature.Create(report);
@@ -512,6 +543,8 @@ public sealed class LevelOneMaintenance
                         message += passed
                             ? " 已恢复原排序；试排除后的组合通过测试，需由玩家确认是否移出这些模组。"
                             : " 已恢复原排序；临时排除项已汇总，剩余组合尚未通过验证。";
+                    if (passed && nonOrderableBlockerSummary is not null)
+                        message += "\n" + nonOrderableBlockerSummary;
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or OperationCanceledException

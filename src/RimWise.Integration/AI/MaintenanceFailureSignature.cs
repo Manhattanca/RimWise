@@ -22,6 +22,25 @@ internal static partial class MaintenanceFailureSignature
             && e.Text.Contains("RimWise.TestHelper.", StringComparison.Ordinal))?.Text;
     }
 
+    internal static string? KnownNonOrderableRuntimeFailure(MaintenanceGameReport report)
+    {
+        var blocker = Blocker(report);
+        if (blocker is null
+            || !blocker.Contains("System.PlatformNotSupportedException", StringComparison.OrdinalIgnoreCase)
+            || !blocker.Contains("Thread.Abort", StringComparison.OrdinalIgnoreCase)) return null;
+
+        var owners = report.DiagnosticFacts.Where(f => f.Code == "GameTestBlockingFailure"
+                && !string.IsNullOrWhiteSpace(f.PackageId))
+            .Select(f => f.PackageId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var ownerText = owners.Length switch
+        {
+            1 => $"关联模组：{owners[0]}。",
+            > 1 => $"本轮阻断关联到 {owners.Length} 个模组。",
+            _ => "本轮阻断模组尚未能本地确认。"
+        };
+        return $"检测到 Thread.Abort 在当前运行时抛出 PlatformNotSupportedException。{ownerText}这是运行时兼容问题，加载顺序无法修复该调用；只有阻断归属唯一且保护与依赖校验允许时，才对该模组做一次可恢复的临时排除复测。不会自动从最终排序移出，也不会再请求 AI。若阻断仍存在，请更新该模组或手动处理后复测。";
+    }
+
     internal static string? Create(MaintenanceGameReport report)
     {
         if (report.FailureFingerprint is not null) return report.FailureFingerprint;

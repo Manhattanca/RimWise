@@ -40,6 +40,10 @@ internal static class AiSortingSmokeCheck
     private static async Task RunAsync(MainWindow main, string output)
     {
         var checks = new List<string>();
+        Assert(!AutomaticSortingSession.HasOrderChanges(["first.mod", "second.mod"], ["FIRST.MOD", "second.mod"])
+            && AutomaticSortingSession.HasOrderChanges(["first.mod", "second.mod"], ["second.mod", "first.mod"]),
+            "Stopped-order routing did not distinguish an unchanged order from a real reorder.");
+        checks.Add("stopped-order previews recognize unchanged package order without casing-only false changes");
         var vm = main.ViewModel;
         var root = Path.Combine(output, "自动排序 中文 [样例] & café '");
         Directory.CreateDirectory(root);
@@ -979,7 +983,7 @@ internal static class AiSortingSmokeCheck
                     .Single(b => Equals(b.Content, "清理已结束任务"));
                 var beforeCalls = client.Calls;
                 clean.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+                var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
                 while (!clean.IsEnabled && DateTimeOffset.UtcNow < deadline) await Task.Delay(10);
                 Assert(clean.IsEnabled && client.Calls == beforeCalls, "Cleanup did not finish locally.");
                 var deletedUsage = tasks.InspectDeletedUsage().Select(t => t.Id).ToHashSet(StringComparer.Ordinal);

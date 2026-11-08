@@ -152,6 +152,9 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
     internal bool NeedsStoppedRemovalConfirmation(AutomaticMaintenanceResult result) =>
         stoppedOrder is { ConfirmModRemoval: true } && result.Maintenance.TrialExclusions.Count > 0;
 
+    internal static bool HasOrderChanges(IReadOnlyList<string> before, IReadOnlyList<string> after) =>
+        !before.SequenceEqual(after, StringComparer.OrdinalIgnoreCase);
+
     internal AiOrderPlan? LastOrderChoice(AutomaticMaintenanceResult result, bool approveTrialRemovals = false)
     {
         var state = stoppedOrder;

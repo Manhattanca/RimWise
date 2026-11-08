@@ -98,7 +98,7 @@ internal static class DiagnosticAttributionChecks
                 [Symbol, .. noise], CancellationToken.None, out _);
             Assert(owners.Length == 96 && owners[0].Symbol == Symbol && owners[0].PackageId == "priority.2");
         });
-        check("Controller tests blocker exclusion then returns restored order for player confirmation", () =>
+        check("Controller uses verified blocker attribution for one temporary exclusion", () =>
         {
             var feedback = OrdinaryGameTestSession.CreateFeedback(Report(), Context(), Root);
             var session = new Session(feedback);
@@ -106,9 +106,11 @@ internal static class DiagnosticAttributionChecks
             var controller = new LevelOneMaintenance(client, new AiTokenEstimator(Root), session);
             var result = controller.RunAsync(Request(), Catalogue(), [], new(4) { TokenLimitEnabled = false },
                 null, CancellationToken.None).GetAwaiter().GetResult();
-            Assert(result.Outcome == MaintenanceOutcome.Passed && result.Attempts == 2 && client.Calls == 1, result.Message);
-            Assert(result.TrialExclusions.Single().SelectedId == Order[2] && result.OriginalRestored
-                && !result.TrialRemovalsApproved && session.Finished);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && result.Attempts == 2
+                && result.Requests == 0 && client.Calls == 0 && result.TrialExclusions.Count == 1
+                && result.TrialExclusions[0].SelectedId == Order[2]
+                && result.OriginalRestored && session.Finished
+                && result.Message.Contains("Thread.Abort", StringComparison.Ordinal), result.Message);
             Assert(result.LastAttemptedOrder.SequenceEqual(Order[..2]));
         });
     }

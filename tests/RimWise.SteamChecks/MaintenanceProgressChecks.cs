@@ -67,6 +67,67 @@ internal static class MaintenanceProgressChecks
             Assert(result.Outcome == MaintenanceOutcome.Stopped && result.Attempts == 1 && client.Calls == 1
                 && result.TrialExclusions.Count == 0, result.Message);
         });
+        check("Unsupported Thread.Abort blocker gets one targeted reversible exclusion without AI", () =>
+        {
+            var report = Failure(true) with
+            {
+                DiagnosticFacts = [new("GameTestBlockingFailure", Order[1])],
+                LogContext = Failure(true).LogContext! with
+                {
+                    BlockingError = "System.PlatformNotSupportedException: Thread abort is not supported on this platform.\n"
+                        + " at System.Threading.Thread.Abort()\n at Example.Worldbuilder.Prefix()\n"
+                        + " at RimWise.TestHelper.NewGameJourney.Step()"
+                }
+            };
+            Assert(MaintenanceFailureSignature.KnownNonOrderableRuntimeFailure(report) is { } detail
+                && detail.Contains(Order[1], StringComparison.Ordinal) && detail.Contains("无法修复", StringComparison.Ordinal));
+            var client = new Client(); var session = new Session(n => n == 1 ? report : new(true, []));
+            var result = Run("unsupported-thread-abort", client, session);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && result.Attempts == 2 && result.Requests == 0
+                && client.Calls == 0 && result.TrialExclusions.Single().SelectedId == Order[1]
+                && result.TrialExclusions.Single().RemovedIds.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    .SetEquals([Order[1], Order[3]])
+                && result.OriginalRestored && !result.TrialRemovalsApproved, result.Message);
+            Assert(session.Orders.Count == 2 && session.Orders[0].SequenceEqual(Order)
+                && session.Orders[1].SequenceEqual([Order[0], Order[2]]));
+            Assert(MaintenanceFailureSignature.KnownNonOrderableRuntimeFailure(Failure(true)) is null,
+                "Generic platform blockers were classified as Thread.Abort incompatibilities.");
+        });
+        check("A targeted Thread.Abort exclusion that fails is not repeated or broadened", () =>
+        {
+            var report = Failure(true) with
+            {
+                DiagnosticFacts = [new("GameTestBlockingFailure", Order[1])],
+                LogContext = Failure(true).LogContext! with
+                { BlockingError = "System.PlatformNotSupportedException: Thread abort is not supported on this platform.\n"
+                    + " at System.Threading.Thread.Abort()\n at Example.Worldbuilder.Prefix()\n"
+                    + " at RimWise.TestHelper.NewGameJourney.Step()" }
+            };
+            var client = new Client(); var session = new Session(_ => report);
+            var result = Run("unsupported-thread-abort-still-fails", client, session);
+            Assert(result.Outcome == MaintenanceOutcome.Stopped && result.Attempts == 2 && result.Requests == 0
+                && client.Calls == 0 && result.TrialExclusions.Count == 1 && result.OriginalRestored
+                && result.Message.Contains("不再重复测试", StringComparison.Ordinal), result.Message);
+            Assert(session.Orders.Count == 2 && session.Orders[0].SequenceEqual(Order)
+                && session.Orders[1].SequenceEqual([Order[0], Order[2]]));
+        });
+        check("Ambiguous Thread.Abort ownership never picks a mod to exclude", () =>
+        {
+            var report = Failure(true) with
+            {
+                DiagnosticFacts = [new("GameTestBlockingFailure", Order[1]), new("GameTestBlockingFailure", Order[2])],
+                LogContext = Failure(true).LogContext! with
+                { BlockingError = "System.PlatformNotSupportedException: Thread abort is not supported on this platform.\n"
+                    + " at System.Threading.Thread.Abort()\n at Example.Worldbuilder.Prefix()\n"
+                    + " at RimWise.TestHelper.NewGameJourney.Step()" }
+            };
+            var client = new Client(); var session = new Session(_ => report);
+            var result = Run("unsupported-thread-abort-ambiguous", client, session);
+            Assert(result.Outcome == MaintenanceOutcome.Stopped && result.Attempts == 1 && result.Requests == 0
+                && client.Calls == 0 && result.TrialExclusions.Count == 0 && result.OriginalRestored
+                && result.Message.Contains("未能唯一确认", StringComparison.Ordinal), result.Message);
+            Assert(session.Orders.Count == 1 && session.Orders[0].SequenceEqual(Order));
+        });
         check("Identical blocker after an exclusion stops without a second paid request or unrelated removal", () =>
         {
             var client = new Client(); var session = new Session(_ => Failure(true));

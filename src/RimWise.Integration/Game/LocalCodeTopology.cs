@@ -1,3 +1,4 @@
+using System.Xml;
 using RimWise.Core;
 using RimWise.Integration.Safety;
 
@@ -27,7 +28,7 @@ internal static class LocalCodeTopology
             // Partial graphs should enrich diagnostics but must not influence sorting.
             return new(report, index.Limited ? order.ToArray() : PreferProviders(graphIndex, order, token));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or XmlException)
         { return new(new(0, 0, true, []), order.ToArray()); }
     }
 

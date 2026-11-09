@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml;
 using RimWise.Core;
 using RimWise.Integration.AI;
 using RimWise.Integration.Safety;
@@ -109,7 +110,7 @@ internal static partial class DiagnosticCodeEvidence
     }
 
     private static bool Valid(CodeReply? reply, string hash) => reply is { Code.Length: <= 4096 } && reply.AssemblyHash == hash;
-    private static bool Recoverable(Exception ex) => ex is IOException or UnauthorizedAccessException or JsonException
+    private static bool Recoverable(Exception ex) => ex is IOException or UnauthorizedAccessException or JsonException or XmlException
         or InvalidOperationException or System.ComponentModel.Win32Exception or KeyNotFoundException or ArgumentException;
     private sealed record CodeReply(string Code, bool Truncated, string AssemblyHash);
 }

@@ -4,6 +4,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Xml;
 using RimWise.Core;
 using RimWise.Integration.Safety;
 
@@ -108,7 +109,7 @@ internal static class LocalAssemblyIndex
                     }
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or XmlException)
             { limited = true; }
         }
         return new(result.ToArray(), limited, hits);

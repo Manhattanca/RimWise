@@ -23,15 +23,22 @@ public static class UpdateInstallation
         return info;
     }
 
-    // Only an installed copy follows its registered root. A ZIP copy installs to the
-    // normal managed location instead of mixing versioned files into the ZIP folder.
+    // Keep the update beside the running copy. For versioned installs, the installation
+    // root is the directory above "versions"; portable copies use their own directory.
     public static string? MatchInstalledDirectory(string applicationDirectory, string? registeredDirectory)
     {
-        if (string.IsNullOrWhiteSpace(registeredDirectory)) return null;
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(registeredDirectory));
-        var application = new DirectoryInfo(Path.GetFullPath(applicationDirectory));
-        return application.Parent?.Name.Equals("versions", StringComparison.OrdinalIgnoreCase) == true &&
-            string.Equals(application.Parent.Parent?.FullName, root, StringComparison.OrdinalIgnoreCase)
-            ? root : null;
+        var application = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(applicationDirectory)));
+        if (application.Parent?.Name.Equals("versions", StringComparison.OrdinalIgnoreCase) == true &&
+            application.Parent.Parent is { } versionedRoot)
+            return versionedRoot.FullName;
+
+        if (!string.IsNullOrWhiteSpace(registeredDirectory))
+        {
+            var registered = Path.TrimEndingDirectorySeparator(Path.GetFullPath(registeredDirectory));
+            if (string.Equals(application.FullName, registered, StringComparison.OrdinalIgnoreCase))
+                return registered;
+        }
+
+        return application.FullName;
     }
 }

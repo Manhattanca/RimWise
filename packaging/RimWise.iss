@@ -59,6 +59,7 @@ Source: "{#RuntimeInstaller}"; DestName: "windowsdesktop-runtime.exe"; Flags: do
 [Icons]
 Name: "{autoprograms}\{#AppNameValue} 独立诊断导出"; Filename: "{app}\versions\{#AppVersion}\Diagnostics\RimWise.Diagnostics.exe"; WorkingDir: "{app}\versions\{#AppVersion}\Diagnostics"
 Name: "{autoprograms}\{#AppNameValue}"; Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; WorkingDir: "{app}\versions\{#AppVersion}"
+Name: "{app}\卸载 RimWise"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppNameValue}"; Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; WorkingDir: "{app}\versions\{#AppVersion}"; Tasks: desktopicon
 
 [Run]
@@ -102,6 +103,30 @@ begin
         SuppressibleMsgBox('已安装更新的 RimWise 版本（' + Installed + '）。为避免版本混用，本安装包不会覆盖更新的版本。', mbError, MB_OK, IDOK);
         Result := False;
       end;
+end;
+
+function InitializeUninstall: Boolean;
+var
+  ExitCode: Integer;
+  Executable: String;
+begin
+  Result := True;
+  { Silent uninstall always preserves user data. Interactive uninstall defaults to No. }
+  if UninstallSilent then exit;
+  if SuppressibleMsgBox('是否同时清除 RimWise 的个人数据？选择“否”将保留设置、排序记录和其他用户数据。',
+      mbConfirmation, MB_YESNO, IDNO) <> IDYES then exit;
+  Executable := ExpandConstant('{app}\versions\{#AppVersion}\RimWise.exe');
+  if not FileExists(Executable) then
+  begin
+    SuppressibleMsgBox('找不到 RimWise 数据清理程序。为保护个人数据，卸载已取消。', mbError, MB_OK, IDOK);
+    Result := False;
+    exit;
+  end;
+  if not Exec(Executable, '--uninstall-clear-user-data', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) or (ExitCode <> 0) then
+  begin
+    SuppressibleMsgBox('个人数据未能安全清除（退出代码 ' + IntToStr(ExitCode) + '）。卸载已取消。', mbError, MB_OK, IDOK);
+    Result := False;
+  end;
 end;
 
 function HasRuntimeAt(Root: String): Boolean;

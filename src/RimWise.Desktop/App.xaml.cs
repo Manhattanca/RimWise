@@ -20,6 +20,22 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Length == 1 && e.Args[0] == "--uninstall-clear-user-data")
+        {
+            try
+            {
+                UserDataLocation.ClearOwnedData(Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RimWise"), AppContext.BaseDirectory);
+                Shutdown(0);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or JsonException)
+            {
+                MessageBox.Show("用户数据未能完整清除，卸载已取消。请关闭 RimWise 后重试。\n\n" + ex.Message,
+                    "RimWise", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Shutdown(1);
+            }
+            return;
+        }
         var isSmokeTest = false;
         string? migrationNotice = null;
 #if DEBUG

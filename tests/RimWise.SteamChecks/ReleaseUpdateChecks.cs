@@ -37,8 +37,13 @@ internal static class ReleaseUpdateChecks
                 throw new Exception("Unsupported update should not start.");
             }
             Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root, "versions", "0.5.1"), root + Path.DirectorySeparatorChar) == root);
-            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(directory, "portable"), root) is null);
-            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root + "-other", "versions", "0.5.1"), root) is null);
+            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root, "versions", "0.5.1"), "D:\\old-location") == root);
+            var portable = Path.Combine(directory, "portable");
+            Assert(UpdateInstallation.MatchInstalledDirectory(portable, root) == portable);
+            Assert(UpdateInstallation.MatchInstalledDirectory(portable, null) == portable);
+            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root + "-other", "versions", "0.5.1"), root) == root + "-other");
+            var nested = Path.Combine(root, "portable", "nested");
+            Assert(UpdateInstallation.MatchInstalledDirectory(nested, root) == nested);
         }));
         check("Updater compares numeric versions and ignores drafts, prereleases and older releases", () =>
         {

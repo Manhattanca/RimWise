@@ -1,5 +1,5 @@
 {
-  "Version": "0.5.8",
+  "Version": "0.5.9",
   "Purpose": "MIT source snapshot; third-party components retain their own licenses",
   "Excluded": [
     "Personal data and credentials",
@@ -134,15 +134,15 @@
     },
     {
       "Path": "packaging/README.preview.md",
-      "Sha256": "57caf496f2648fbc944dbf3a51adf8dc6a836ea79b3ef83ef4899036a7cdb483"
+      "Sha256": "dda4102466d88f700a8258ed7f8a83003cba3d4f707fd222922ded55ea631831"
     },
     {
       "Path": "packaging/RimWise.iss",
-      "Sha256": "c04d048af2b614be45737c4e8e1ce735bd1551ab4474a102be34fe1ce702730d"
+      "Sha256": "686bd56f3b7ef3d61d7e611a101f8c93856ce1536ea4ae65bffbb846c4802bff"
     },
     {
       "Path": "scripts/Build-Installer.ps1",
-      "Sha256": "4b665c3ea78552e07589eeab4272c2c7ef7fee8c3bbaa81620e7168797da56aa"
+      "Sha256": "299687558459f9ce5b9aaffbb80ed9ddb2c5b873a4a501756868f0c22ad5c7d7"
     },
     {
       "Path": "scripts/Build-Source.ps1",
@@ -162,7 +162,7 @@
     },
     {
       "Path": "scripts/Publish-Preview.ps1",
-      "Sha256": "b369c6e3bb223d52c186b372cc4cf756149e22c53f62a558fbe5e76823a837d1"
+      "Sha256": "4b35bc046486e49b421cee38fb2bb654992ec149f0f8bbd8a8004c64f5a2e602"
     },
     {
       "Path": "src/RimWise.Core/CatalogueAnalysis.cs",
@@ -262,7 +262,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/App.xaml.cs",
-      "Sha256": "4e18a404bf5c8ec2119e63d7556192dfcd5289da6b185f9bdb083f91d8093b5b"
+      "Sha256": "fd1b0fb904f0f995d7bff9368044e506924aecd5717827151f5bbc1c40f63dc2"
     },
     {
       "Path": "src/RimWise.Desktop/AutomaticLogSmokeCheck.cs",
@@ -586,7 +586,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/RimWise.Desktop.csproj",
-      "Sha256": "34d73bd2151f539032b54db179a762a2b695b9388924cf13c25317bd844b80d9"
+      "Sha256": "764f50f4b76408613e3634aca0f978435115d38b3cd20c7ca0ddbc4a5663819c"
     },
     {
       "Path": "src/RimWise.Desktop/RuntimeUiSmokeCheck.cs",
@@ -906,7 +906,7 @@
     },
     {
       "Path": "src/RimWise.Diagnostics/RimWise.Diagnostics.csproj",
-      "Sha256": "6566ca3db147150cc3494550b49f2fb4657e37d3ac7103421ae1936d9f6c99bf"
+      "Sha256": "eaa475e5f8c18f1227e42ac87542dbc6086803002b60803c1034832f3fb3d198"
     },
     {
       "Path": "src/RimWise.Formats/AssemblyInfo.cs",
@@ -1270,7 +1270,7 @@
     },
     {
       "Path": "src/RimWise.Integration/Configuration/UserDataLocation.cs",
-      "Sha256": "c2d842debead27e0a89e48f468469e56b11bbda4a8ab542054df92cf8bd3a3c1"
+      "Sha256": "d39ee84a9d7a67a31db4cc7d38480e5659113f60e6d3c7e7c45dc9058a0c3c64"
     },
     {
       "Path": "src/RimWise.Integration/Databases/DatabaseParser.cs",
@@ -1638,7 +1638,7 @@
     },
     {
       "Path": "src/RimWise.Integration/Updates/UpdateInstallation.cs",
-      "Sha256": "9d7788d44c2619e827aab6fc9a6a0dde1f3aaa5fb38c62c3a73e6417f2a1cca4"
+      "Sha256": "0079938319b4e5e27420eff2668c336b200b0a44486ab55facf2c728d43d97df"
     },
     {
       "Path": "src/RimWise.SteamBridge/Program.cs",
@@ -1766,7 +1766,7 @@
     },
     {
       "Path": "tests/RimWise.SteamChecks/ReleaseUpdateChecks.cs",
-      "Sha256": "886f07d273ec49105f41f05e18d59f86a7836d32c22861d819630bed635d32d3"
+      "Sha256": "2d0ce020c9cccdcd631d4ea92c8a17caf8441de68f4bfb557da6c39bca2c94dd"
     },
     {
       "Path": "tests/RimWise.SteamChecks/RimWise.SteamChecks.csproj",
@@ -1778,7 +1778,7 @@
     },
     {
       "Path": "tests/RimWise.SteamChecks/StorageMigrationChecks.cs",
-      "Sha256": "e0aca240ac489630ad0a1cdda53fb0c5290d346f1c17d2ed5f5bf5d780db45f9"
+      "Sha256": "1fad590e58100a52711064a091db8f0405865093e8ce498a4fc7ebd86e5e9c27"
     },
     {
       "Path": "tests/RimWise.SteamChecks/TestHelperCleanupChecks.cs",

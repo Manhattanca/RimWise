@@ -95,6 +95,38 @@ internal static class StorageMigrationChecks
             Assert(location.DirectoryPath == target && File.ReadAllText(Path.Combine(original, "Data", "keep.txt")) == "changed");
             Assert(location.StartupNotice!.Contains("清理未完成"));
         });
+        check("Uninstall data cleanup removes only owned Data trees and preserves custom-root neighbors", () =>
+        {
+            var area = Area(); var anchor = Path.Combine(area, "locator"); var install = Path.Combine(area, "app");
+            var current = Path.Combine(area, "custom profile"); var previous = Path.Combine(area, "previous profile");
+            using (var location = new UserDataLocation(anchor, install))
+            {
+                location.PrepareMove(current);
+            }
+            using (var moved = new UserDataLocation(anchor, install))
+            {
+                Write(Path.Combine(current, "Data", "settings.json"), "private settings");
+                Write(Path.Combine(current, "alongside.txt"), "keep custom neighbor");
+                Write(Path.Combine(previous, "Data", "old.json"), "old profile");
+                Write(Path.Combine(previous, "alongside.txt"), "keep old neighbor");
+                File.WriteAllText(Path.Combine(anchor, "user-data-location.json"),
+                    JsonSerializer.Serialize(new { Current = current, PreviousRoots = new[] { previous } }));
+            }
+            UserDataLocation.ClearOwnedData(anchor, install);
+            Assert(!Directory.Exists(Path.Combine(current, "Data")) && !Directory.Exists(Path.Combine(previous, "Data")));
+            Assert(File.ReadAllText(Path.Combine(current, "alongside.txt")) == "keep custom neighbor");
+            Assert(File.ReadAllText(Path.Combine(previous, "alongside.txt")) == "keep old neighbor");
+            Assert(!File.Exists(Path.Combine(anchor, "user-data-location.json")));
+        });
+        check("Uninstall cleanup refuses live app sessions and retains data", () =>
+        {
+            var area = Area(); var anchor = Path.Combine(area, "locator"); var install = Path.Combine(area, "app");
+            using var location = new UserDataLocation(anchor, install);
+            Write(Path.Combine(location.DirectoryPath, "Data", "keep.json"), "still here");
+            var refused = false;
+            try { UserDataLocation.ClearOwnedData(anchor, install); } catch (IOException) { refused = true; }
+            Assert(refused && File.Exists(Path.Combine(location.DirectoryPath, "Data", "keep.json")));
+        });
         check("Log move preserves name collisions, deduplicates exact copies and retains unrelated files", () =>
         {
             var area = Area(); var store = new AutomaticSortingLogStore(Path.Combine(area, "profile"));

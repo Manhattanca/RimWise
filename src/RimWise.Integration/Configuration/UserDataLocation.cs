@@ -97,6 +97,69 @@ public sealed class UserDataLocation : IDisposable
         catch { lease?.Dispose(); throw; }
     }
 
+    public static void ClearOwnedData(string anchorDirectory, string installationDirectory)
+    {
+        var anchor = ScopedPaths.Ordinary(anchorDirectory);
+        var installation = ScopedPaths.Ordinary(installationDirectory);
+        Directory.CreateDirectory(anchor);
+        var pointer = ScopedPaths.Child(anchor, "user-data-location.json");
+        using var control = AppDataFileLock.Acquire(ScopedPaths.Child(anchor, ".location.lock"));
+        FileStream session;
+        try
+        {
+            session = new FileStream(ScopedPaths.Child(anchor, ".session.lock"), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException ex) { throw new IOException("请先关闭所有 RimWise 窗口，再清除用户数据。", ex); }
+        using (session)
+        {
+            Location location;
+            if (File.Exists(pointer))
+            {
+                if (new FileInfo(pointer).Length > 16384) throw new InvalidDataException("用户数据位置记录过大，未清除任何数据。");
+                location = JsonSerializer.Deserialize<Location>(File.ReadAllBytes(pointer))
+                    ?? throw new InvalidDataException("用户数据位置记录无效，未清除任何数据。");
+                if (string.IsNullOrWhiteSpace(location.Current)) throw new InvalidDataException("用户数据位置记录无效，未清除任何数据。");
+            }
+            else location = new(Path.Combine(anchor, "UserData"));
+
+            var roots = new[] { location.Current }.Concat(location.PreviousRoots ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            foreach (var candidate in roots)
+            {
+                var root = ScopedPaths.Ordinary(candidate);
+                if (Same(root, Path.GetPathRoot(root)!) || Overlaps(root, installation)
+                    || Overlaps(root, anchor) && !Same(root, Path.Combine(anchor, "UserData")))
+                    throw new IOException("用户数据位置与安装或定位目录重叠，已停止清理以保护其他文件。");
+            }
+
+            // Delete only the application-owned Data subtree. A custom profile root may
+            // contain unrelated files alongside Data, so the root itself is never recursed.
+            foreach (var candidate in roots)
+            {
+                var root = ScopedPaths.Ordinary(candidate);
+                var data = ScopedPaths.Child(root, "Data");
+                if (Directory.Exists(data)) DeleteOwnedTree(data);
+                if (Directory.Exists(root) && !Directory.EnumerateFileSystemEntries(root).Any())
+                    Directory.Delete(root);
+            }
+
+            if (File.Exists(pointer)) File.Delete(ScopedPaths.Ordinary(pointer, true));
+        }
+    }
+
+    private static void DeleteOwnedTree(string directory)
+    {
+        ScopedPaths.Ordinary(directory, true);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            ScopedPaths.Ordinary(entry, true);
+            if (Directory.Exists(entry)) DeleteOwnedTree(entry);
+            else File.Delete(entry);
+        }
+        Directory.Delete(directory);
+    }
+
     public void PrepareMove(string destination, IEnumerable<string>? protectedDirectories = null)
     {
         using var control = AppDataFileLock.Acquire(ScopedPaths.Child(anchor, ".location.lock"));

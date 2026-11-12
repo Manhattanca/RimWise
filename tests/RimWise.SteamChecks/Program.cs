@@ -1,6 +1,12 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (args.Length == 2 && args[0] == "--completed-map-diagnostics-replay")
+{
+    MaintenanceDiagnosisChecks.ReplayCompletedMapReports(args[1]);
+    return;
+}
+
 if (args.Length >= 1 && args[0] == "--maintenance-efficiency-checks")
 {
     var results = new List<string>();

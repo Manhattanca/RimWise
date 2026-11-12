@@ -32,8 +32,9 @@ public static partial class PlayerLogReader
             if (block.Length >= 32767) return null;
             var end = block.IndexOf('\n');
             var entry = TimestampedEntry().Match(end < 0 ? block : block[..end]);
-            if (entry.Success && entry.Groups["level"].Value == "ERROR"
-                && KnownLogExclusions.Matches(entry.Groups["message"].Value, block)) continue;
+            if (entry.Success ? entry.Groups["level"].Value == "ERROR"
+                && KnownLogExclusions.Matches(entry.Groups["message"].Value, block)
+                : KnownLogExclusions.IsOverlayVulkanManifestError(end < 0 ? block : block[..end])) continue;
             var text = entry.Success ? entry.Groups["level"].Value + ":" + entry.Groups["message"].Value
                 + (end < 0 ? "" : block[end..]) : block;
             if (normalize is not null) text = normalize(text);
@@ -164,8 +165,9 @@ public static partial class PlayerLogReader
             {
                 // Filter each occurrence before grouping: an unrelated error with an identical
                 // header must remain visible even when a separate flavor message was approved.
-                var excluded = entry.Success && entry.Groups["level"].Value == "ERROR"
-                    && KnownLogExclusions.Matches(entry.Groups["message"].Value, block);
+                var excluded = entry.Success ? entry.Groups["level"].Value == "ERROR"
+                    && KnownLogExclusions.Matches(entry.Groups["message"].Value, block)
+                    : KnownLogExclusions.IsOverlayVulkanManifestError(header);
                 if (excluded != excludedOnly) continue;
             }
             var key = VolatileNumbers().Replace(entry.Success ? entry.Groups["message"].Value : header, "#");

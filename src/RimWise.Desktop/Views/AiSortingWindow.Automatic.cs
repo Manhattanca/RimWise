@@ -273,6 +273,9 @@ public partial class AiSortingWindow
 
     internal AutomaticMaintenanceResult ChooseLastOrder(AutomaticMaintenanceResult result)
     {
+        if (automatic.LastOrderProblem(result) is { } problem)
+            return result with { Maintenance = result.Maintenance with { Message = result.Maintenance.Message
+                + "\n最后测试顺序未保存：" + problem + "未覆盖当前清单，测试结果保留在任务记录中。" } };
         var plan = automatic.LastOrderChoice(result);
         if (plan is null) return result;
         if (plan.Rejected.Count > 0)
@@ -356,7 +359,9 @@ public partial class AiSortingWindow
         RejectedList.ItemsSource=result.Subscriptions.Select(d=>$"已记录缺失模组／前置订阅：{d.PackageId} · {d.WorkshopId}")
             .Concat(result.Maintenance.ConflictApprovals.Select(a=>"已记录移出排序："+string.Join("、",a.RemovedIds)+"（安装文件保留）"))
             .Concat(result.Maintenance.TrialExclusions.Select(t=>$"第 {t.Attempt} 轮临时试排除："+string.Join("、",t.RemovedIds))).ToArray();
-        SummaryText.Text=result.CandidateApplied && result.Maintenance.ExistingErrorsOnly ? "新增 Mod 已定位并保存；完整对照测试仅重现已有错误。原有红字仍然存在，并非全部无红。" : result.CandidateApplied ? "已排序完成。本轮地图生成与短时运行测试未检测到红字；未覆盖游戏内全部内容。"
+        SummaryText.Text=result.CandidateApplied && result.Maintenance.ExistingErrorsOnly ? "新增 Mod 已定位并保存；完整对照测试仅重现已有错误。原有红字仍然存在，并非全部无红。"
+            : result.CandidateApplied && result.Maintenance.HasVulkanConfigurationWarning ? "已排序完成并保存。除已忽略的 Vulkan 配置读取错误外，本轮地图生成与短时运行测试未发现其他错误；未覆盖游戏内全部内容。"
+            : result.CandidateApplied ? "已排序完成。本轮地图生成与短时运行测试未检测到红字；未覆盖游戏内全部内容。"
             : "任务记录已保存，可在恢复任务中查看。";
         if (result.LastOrderDecisionRecorded) SummaryText.Text = result.LastOrderKept
             ? "已保留最后测试顺序；该组合尚未验证通过，可在主界面撤销。" : "已恢复原排序，未保留本次调整。";
@@ -366,7 +371,8 @@ public partial class AiSortingWindow
         if (result.Maintenance.Analysis is { Length: > 0 } analysis)
             SummaryText.Text += "\n\nAI 分析：\n" + analysis;
         if (result.Maintenance.HasWarnings)
-            SummaryText.Text += (result.Maintenance.ExistingErrorsOnly ? "\n\n原排序的红字和黄字均保留在日志中。" : result.Maintenance.Outcome == MaintenanceOutcome.Passed
+            SummaryText.Text += (result.Maintenance.HasVulkanConfigurationWarning ? "\n\n" + AiRuntimeContext.VulkanWarningText
+                : result.Maintenance.ExistingErrorsOnly ? "\n\n原排序的红字和黄字均保留在日志中。" : result.Maintenance.Outcome == MaintenanceOutcome.Passed
                 ? "\n\n黄字警告已保留，不影响无红字的成功判定。" : "\n\n本轮黄字警告已保留；任务尚未通过验证。")
                 + "\n本轮日志：\n" + string.Join("\n", result.Maintenance.LogPaths.Select(RimWise.Integration.Diagnostics.StoredEvidence.Resolve));
         ShowStartupFailure(result.Maintenance.StartupFailure, result.Maintenance.ReplyFailure);
@@ -381,7 +387,8 @@ public partial class AiSortingWindow
     internal static string? CompletionNotice(AutomaticMaintenanceResult result) =>
         result.Maintenance.Outcome == MaintenanceOutcome.Passed && result.CandidateApplied
             && result.Maintenance.TrialExclusions.Count == 0
-            ? result.Maintenance.Message + (result.Maintenance.HasWarnings && !result.Maintenance.ExistingErrorsOnly
+            ? result.Maintenance.Message + (result.Maintenance.HasVulkanConfigurationWarning ? "\n\n" + AiRuntimeContext.VulkanWarningText
+                : result.Maintenance.HasWarnings && !result.Maintenance.ExistingErrorsOnly
                 ? "\n\n仅有黄字或白字不影响排序成功，无需继续调整。" : "") : null;
 
     internal void ShowTerminalNotice(AutomaticMaintenanceResult result)
@@ -390,7 +397,8 @@ public partial class AiSortingWindow
         if (notice is null) return;
         DiagnosticEventLog.Current?.Record("automatic-sorting", "result-dialog", notice.Value.Title);
         if (CompletionNotice(result) is not null && !result.Maintenance.ExistingErrorsOnly)
-            new TrialExclusionWindow([], result.Maintenance.HasWarnings, editor.ShowModBadgeIcons) { Owner = this }.ShowDialog();
+            new TrialExclusionWindow([], result.Maintenance.HasWarnings, editor.ShowModBadgeIcons,
+                vulkanConfigurationWarning: result.Maintenance.HasVulkanConfigurationWarning) { Owner = this }.ShowDialog();
         else
             MessageDialog.Show(this, notice.Value.Text, notice.Value.Title, MessageBoxButton.OK, notice.Value.Image);
     }
@@ -408,6 +416,7 @@ public partial class AiSortingWindow
             var kept = maintenance.TrialDecisionRecorded && !maintenance.TrialRemovalsApproved;
             return (kept ? "排序已保存" : "自动排序完成", maintenance.Message
                 + (kept ? "\n\n保留全部模组的组合未验证通过，仍可能出现原有报错。"
+                    : maintenance.HasVulkanConfigurationWarning ? "\n\n" + AiRuntimeContext.VulkanWarningText
                     : maintenance.HasWarnings && !maintenance.ExistingErrorsOnly ? "\n\n仅有黄字或白字不影响排序成功。" : ""), MessageBoxImage.Information);
         }
         var details = maintenance.StartupFailure?.DisplayText;
@@ -451,7 +460,8 @@ public partial class AiSortingWindow
         {
             return new TrialRemovalRow(ResolveConflictRow(id), selected.Contains(id) ? "试排除项" : "连带依赖项");
         }).OrderBy(r => r.Mod.Index == 0 ? int.MaxValue : r.Mod.Index).ToArray();
-        var dialog = new TrialExclusionWindow(rows, result.HasWarnings, editor.ShowModBadgeIcons, result.ExistingErrorsOnly) { Owner = this };
+        var dialog = new TrialExclusionWindow(rows, result.HasWarnings, editor.ShowModBadgeIcons, result.ExistingErrorsOnly,
+            result.HasVulkanConfigurationWarning) { Owner = this };
         using var registration = token.Register(() => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (dialog.IsVisible) dialog.Close();

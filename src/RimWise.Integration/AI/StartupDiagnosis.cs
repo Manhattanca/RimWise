@@ -7,7 +7,7 @@ public sealed record AiStartupContext(string Stage, bool HasLog, bool CompleteCa
     IReadOnlyList<AiStartupEvidence> Evidence)
 {
     private static readonly HashSet<string> Stages = ["Exited", "TimedOut", "LogLimit", "LaunchFailed", "ProbeCompleted", "ErrorDetected", "ModsReset"];
-    private static readonly HashSet<string> Codes = ["GraphicsDriverUnavailable", "GraphicsInitializationFailed",
+    private static readonly HashSet<string> Codes = ["GraphicsDriverUnavailable", "GraphicsInitializationFailed", "GraphicsManifestUnavailable",
         "OutOfMemory", "AccessDenied", "MissingNativeLibrary", "MissingManagedAssembly", "MissingType",
         "MissingMethod", "XmlParentMissing", "PatchFailure", "HarmonyFailure", "InitializationFailure",
         "UnhandledException", "SteamProcessNotObserved", "ProcessStartFailed", "NoMapSignal", "LogIncomplete",
@@ -17,7 +17,7 @@ public sealed record AiStartupContext(string Stage, bool HasLog, bool CompleteCa
         "TesterDetectedLogErrors", "TesterStoppedProcess", "StoppedBeforeHelperReady", "MainMenuObserved", "FactionsObserved", "ModsResetAfterLoadFailure"];
 
     public bool EnvironmentFailure => Evidence.Any(e => e.Code is "GraphicsDriverUnavailable"
-        or "GraphicsInitializationFailed" or "OutOfMemory" or "AccessDenied");
+        or "GraphicsInitializationFailed" or "GraphicsManifestUnavailable" or "OutOfMemory" or "AccessDenied");
     public bool BoundedErrorCaptureVerified { get; init; }
     public bool CanAdjustOrder => HasLog && (CompleteCapture && Stage != "LogLimit"
         || Stage == "LogLimit" && BoundedErrorCaptureVerified) && !EnvironmentFailure;
@@ -76,7 +76,9 @@ public sealed record StartupFailureDetails(AiStartupContext Context, IReadOnlyLi
         HelpReminder
     }.Where(s => s.Length > 0));
 
-    public string LocalReason() => Context.EnvironmentFailure
+    public string LocalReason() => Context.Evidence.Any(e => e.Code == "GraphicsManifestUnavailable")
+        ? "本轮剩余错误仅为 Vulkan 无法读取已登记的图形层或驱动 JSON 配置，调整模组顺序无法修复。请修复或重新安装日志中对应的覆盖层／驱动软件；原排序与完整日志已保留。"
+        : Context.EnvironmentFailure
         ? "本轮记录包含图形驱动、资源或访问权限相关错误，自动排序已停止。"
         : Context.Stage == "LaunchFailed" ? "未能确认本轮游戏进程启动；请检查 Steam 启动记录。"
         : Context.Stage == "ModsReset" ? "游戏加载异常后自行重置了模组排序，导致本轮测试失效；已保留原候选排序与异常链，继续根据失败证据排障。"

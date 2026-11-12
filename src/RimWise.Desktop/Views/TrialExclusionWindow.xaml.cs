@@ -1,11 +1,13 @@
 using System.Windows;
 using RimWise.Desktop.Presentation;
+using RimWise.Integration.AI;
 
 namespace RimWise.Desktop.Views;
 
 public partial class TrialExclusionWindow : Window
 {
-    internal TrialExclusionWindow(IReadOnlyList<TrialRemovalRow> rows, bool warnings, bool badgeIcons = true, bool existingErrorsOnly = false)
+    internal TrialExclusionWindow(IReadOnlyList<TrialRemovalRow> rows, bool warnings, bool badgeIcons = true,
+        bool existingErrorsOnly = false, bool vulkanConfigurationWarning = false)
     {
         InitializeComponent();
         DataContext = new { ShowModBadgeIcons = badgeIcons, ShowModBadgeText = !badgeIcons };
@@ -28,6 +30,13 @@ public partial class TrialExclusionWindow : Window
             HeadingText.Text = "新增 Mod 定位完成";
             StatusText.Text = "完整对照测试仅重现原排序已有错误，未观察到新增红字。原有红字仍然存在。";
             if (rows.Count > 0) StatusText.Text += "此结果针对移出下列新增项后的组合；保留它们可能重现新增错误。";
+        }
+        if (vulkanConfigurationWarning)
+        {
+            if (!existingErrorsOnly)
+                StatusText.Text = "分阶段测试已通过，除已忽略的 Vulkan 配置读取错误外，未发现其他错误。"
+                    + (rows.Count > 0 ? "此结果针对整组移除方案，不能证明其中每个模组单独有错。" : "");
+            StatusText.Text += "\n" + AiRuntimeContext.VulkanWarningText;
         }
     }
 

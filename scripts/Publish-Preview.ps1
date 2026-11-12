@@ -1,7 +1,7 @@
 #requires -Version 5.1
-param([string]$Version = '0.5.9')
+param([string]$Version = '0.5.10', [string]$PackageCacheRoot = (Join-Path $PSScriptRoot '..\work\nuget'))
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Initialize-Environment.ps1')
+. (Join-Path $PSScriptRoot 'Initialize-Environment.ps1') -PackageCacheRoot $PackageCacheRoot
 
 if ($Version -notmatch '^\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9]+)*)?$') {
     throw 'Invalid version name.'

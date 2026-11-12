@@ -1,4 +1,6 @@
 using System.IO;
+using System.Security.Cryptography;
+using System.Text.Json;
 using RimWise.Core;
 using RimWise.Desktop.Presentation;
 using RimWise.Integration.AI;
@@ -6,6 +8,7 @@ using RimWise.Integration.Databases;
 using RimWise.Integration.Configuration;
 using RimWise.Integration.Game;
 using RimWise.Integration.Safety;
+using RimWise.Integration.Diagnostics;
 
 namespace RimWise.Desktop.Services;
 
@@ -102,6 +105,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
                             TrialRemovalsApproved=task.Current.TrialRemovalsApproved,
                             TrialDecisionRecorded=task.Current.TrialDecisionRecorded,
                             HasWarnings=task.Current.Feedback?.RuntimeContext is not null,
+                            HasVulkanConfigurationWarning=task.Current.Feedback?.RuntimeContext?.HasVulkanConfigurationWarning == true,
                             ExistingErrorsOnly=task.Current.Feedback?.ExistingErrorsOnly == true,
                             LogPaths=task.Current.Feedback?.LogPaths ?? [] },null,task.Current.RequiredDownloads)
                         { DatabaseSnapshotId = database?.Id ?? "" };
@@ -115,8 +119,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         {
             // Tests have ended and the adapter restored the original before asking the player.
             // Merely obtaining a green test result never grants permission to remove from their order.
-            if (token.IsCancellationRequested || revision != editor.ContentRevision || getPaths() != paths
-                || sorting.SettingsStore.Load() != settings || !ReferenceEquals(catalogue, editor.CurrentCatalogue))
+            if (token.IsCancellationRequested || ContextProblem(request, settings, getPaths, paths, revision, catalogue) is not null)
                 return result with { Maintenance = result.Maintenance with { Message = "试排除结果已保留；当前清单或设置已变化，原排序保持不变。" } };
             if (limits.ConfirmModRemoval && confirmTrials is null) return result;
             var approved = !limits.ConfirmModRemoval || await confirmTrials!(result.Maintenance, token);
@@ -155,17 +158,49 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
     internal static bool HasOrderChanges(IReadOnlyList<string> before, IReadOnlyList<string> after) =>
         !before.SequenceEqual(after, StringComparer.OrdinalIgnoreCase);
 
+    // A refreshed catalogue can have new object identities without new installation data.
+    // Keep timestamps, metadata, diagnostics and paths in this comparison; only display
+    // classifications and enumeration order are irrelevant to the captured sorting context.
+    private static bool SameCatalogue(ModCatalogue expected, ModCatalogue? current)
+    {
+        if (ReferenceEquals(expected, current)) return true;
+        if (current is null) return false;
+        static byte[] Snapshot(ModCatalogue catalogue) => SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
+            catalogue.Installations.OrderBy(mod => mod.Directory, StringComparer.Ordinal).Select(mod => mod with
+            { CodeKind = ModCodeKind.Unknown, ContentKinds = ModContentKinds.None }).ToArray()));
+        return Snapshot(expected).AsSpan().SequenceEqual(Snapshot(current));
+    }
+
+    private string? ContextProblem(AiRequest request, AiSettings settings, Func<GamePaths> getPaths,
+        GamePaths paths, long revision, ModCatalogue catalogue)
+    {
+        var reason = sorting.ReadinessProblem is { } readiness ? readiness
+            : revision != editor.ContentRevision ? "当前排序、规则或保留清单已变化。"
+            : GameVersion.Parse(request.GameVersion) != editor.EffectiveGameVersion ? "目标游戏版本已变化。"
+            : !SameCatalogue(catalogue, editor.CurrentCatalogue) ? "模组安装资料已变化。"
+            : sorting.SettingsStore.Load() != settings ? "AI 设置已变化。"
+            : getPaths() != paths ? "游戏或模组路径已变化。" : null;
+        if (reason is not null)
+            DiagnosticEventLog.Current?.Record("automatic-sorting", "publication-blocked", reason);
+        return reason;
+    }
+
+    private StoppedOrderContext? StoppedContext(AutomaticMaintenanceResult result) =>
+        stoppedOrder is { } state && NeedsLastOrderChoice(result.Maintenance)
+            && result.Maintenance.TaskId == state.Result.TaskId
+            && result.Maintenance.LastAttemptedOrder.SequenceEqual(state.Result.LastAttemptedOrder, StringComparer.Ordinal)
+            ? state : null;
+
+    internal string? LastOrderProblem(AutomaticMaintenanceResult result) => StoppedContext(result) is { } state
+        ? ContextProblem(state.Request, state.Settings, state.GetPaths, state.Paths, state.Revision, state.Catalogue) : null;
+
     internal AiOrderPlan? LastOrderChoice(AutomaticMaintenanceResult result, bool approveTrialRemovals = false)
     {
-        var state = stoppedOrder;
-        if (state is null || !NeedsLastOrderChoice(result.Maintenance)
-            || result.Maintenance.TaskId != state.Result.TaskId
-            || !result.Maintenance.LastAttemptedOrder.SequenceEqual(state.Result.LastAttemptedOrder, StringComparer.Ordinal)) return null;
-        if (sorting.ReadinessProblem is not null || state.Revision != editor.ContentRevision
-            || !ReferenceEquals(state.Catalogue, editor.CurrentCatalogue) || sorting.SettingsStore.Load() != state.Settings
-            || state.GetPaths() != state.Paths)
-            throw new InvalidOperationException("当前排序、安装资料或设置已变化，未覆盖人工修改；最后测试顺序保留在任务记录中。");
-        var active = result.Scan?.Catalogue ?? state.Catalogue;
+        var state = StoppedContext(result);
+        if (state is null) return null;
+        if (LastOrderProblem(result) is { } problem)
+            throw new InvalidOperationException(problem + "未覆盖当前清单；最后测试顺序保留在任务记录中。");
+        var active = result.Scan?.Catalogue ?? editor.CurrentCatalogue!;
         var version = GameVersion.Parse(state.Request.GameVersion) ?? throw new InvalidOperationException("游戏版本未知。");
         var constraints = state.Database?.WithRequiredDependencies(active, state.Request.CurrentOrder, version) ?? active;
         var target = result.Maintenance.LastAttemptedOrder;
@@ -206,7 +241,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         if (plan.Rejected.Count > 0) throw new InvalidOperationException("最后顺序未通过保留项及前置校验：" + string.Join("；", plan.Rejected));
         InsertionScope.ValidateOrder(result.Maintenance.InsertionBaselineJson, plan.After,
             result.Maintenance.ConflictApprovals.SelectMany(a => a.RemovedIds));
-        var active = result.Scan?.Catalogue ?? state.Catalogue;
+        var active = result.Scan?.Catalogue ?? editor.CurrentCatalogue!;
         var version = GameVersion.Parse(state.Request.GameVersion)!;
         var constraints = state.Database?.WithRequiredDependencies(active, state.Request.CurrentOrder, version) ?? active;
         var rules = state.Database?.Rules(constraints, plan.After, version, state.Request.OrderRules) ?? state.Request.OrderRules;
@@ -316,9 +351,10 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         if (result.Maintenance.Outcome!=MaintenanceOutcome.Passed) return result;
         if (result.Maintenance.TrialExclusions.Count > 0 && !result.Maintenance.TrialRemovalsApproved
             && !result.Maintenance.TrialDecisionRecorded) return result;
-        if (token.IsCancellationRequested || sorting.ReadinessProblem is not null || revision!=editor.ContentRevision
-            || !ReferenceEquals(catalogue,editor.CurrentCatalogue) || sorting.SettingsStore.Load()!=settings || getPaths()!=paths)
-            return result with { Maintenance=result.Maintenance with { Message="测试通过；期间编辑或设置已变化，结果已保留，请从恢复任务中处理。" } };
+        if (token.IsCancellationRequested)
+            return result with { Maintenance=result.Maintenance with { Message="测试通过；保存前已取消，结果已保留，请从恢复任务中处理。" } };
+        if (ContextProblem(request, settings, getPaths, paths, revision, catalogue) is { } problem)
+            return result with { Maintenance=result.Maintenance with { Message="测试通过；" + problem + "未覆盖当前清单，结果已保留，请从恢复任务中处理。" } };
         if (result.DatabaseSnapshotId != (database?.Id ?? "") || request.DatabaseSnapshotId != (database?.Id ?? ""))
             throw new InvalidDataException("应用结果缺少原数据库快照。");
         var keepTrialMods = result.Maintenance.TrialExclusions.Count > 0 && !result.Maintenance.TrialRemovalsApproved;
@@ -385,6 +421,11 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         if (result.Maintenance.ExistingErrorsOnly) return result with { Maintenance=result.Maintenance with { Message=
             "新增 Mod 已定位；完整测试仅重现原排序中的错误，未观察到新增红字。原有模组保留，仅按需求调整相关位置。"
             + (saveOrder is null ? "排序已应用，点击保存排序写入游戏。" : "排序已保存，原配置已备份。") } };
+        if (result.Maintenance.HasVulkanConfigurationWarning)
+            return result with { Maintenance = result.Maintenance with { Message =
+                "已排序完成：除已忽略的 Vulkan 配置读取错误外，分阶段测试未发现其他错误。"
+                + (saveOrder is null ? "排序已应用，可撤销。点击保存排序写入游戏。" : "已自动保存；原配置已备份，可撤销。")
+                + "\n" + AiRuntimeContext.VulkanWarningText } };
         return result with { Maintenance=result.Maintenance with { Message=saveOrder is null
             ? "已排序完成：本轮测试无红字，排序已应用，可撤销。点击保存排序写入游戏。"
             : "已排序完成：本轮测试无红字，已自动保存；原配置已备份，可撤销。" } };

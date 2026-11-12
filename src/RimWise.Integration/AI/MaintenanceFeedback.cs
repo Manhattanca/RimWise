@@ -65,7 +65,13 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
             || Analysis is { Length: > 10000 } || LogPaths is null || LogPaths.Length > 10
             || LogPaths.Any(p => string.IsNullOrWhiteSpace(p) || p.Length > 32768 || p.Any(char.IsControl) || !Path.IsPathFullyQualified(p)))
             throw new InvalidDataException("运行诊断记录无效。");
-        if (StartupVerified && StartupFailure is not null) throw new InvalidDataException("已通过地图验证的反馈不能含启动失败。");
+        // A completed map can still have a proven external graphics configuration
+        // error. Retain both observations, without authorizing AI actions on recovery.
+        var completedEnvironmentReport = HadErrors && !CanDiagnose
+            && StartupFailure?.Context is { Stage: "ProbeCompleted", CompleteCapture: true, EnvironmentFailure: true } context
+            && context.Evidence.Any(e => e.Code == "GraphicsManifestUnavailable");
+        if (StartupVerified && StartupFailure is not null && !completedEnvironmentReport)
+            throw new InvalidDataException("已通过地图验证的反馈不能含启动失败。");
         if (StartupFailure is { } startup && task.MayApply
             && (!CanDiagnose || !startup.Context.CanAdjustOrder || startup.Diagnosis?.Category != "mod"
                 || task.Limits!.AttemptLimitReached(Attempt + task.InsertionControlAttempts)))

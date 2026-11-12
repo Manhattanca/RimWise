@@ -269,9 +269,12 @@ internal static class AiSortingSmokeCheck
             using (var task = session.Tasks.Create(new(AiTaskKind.Maintenance, AiTaskPhase.Completed,
                 AutomaticGameMaintenance.RecoveryContext(request, originalCatalogue, [], GameVersion.Parse("1.7")!),
                 request.CurrentOrder.ToArray(), ["second.mod", "first.mod"], DateTimeOffset.UtcNow)
-                { Limits = limits, DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(15), CandidatePendingApply = true }))
+                { Limits = limits, DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(15), CandidatePendingApply = true,
+                    Attempts = 1, Feedback = new(1, ["second.mod", "first.mod"], true, false, false)
+                    { ContextHash = new string('a', 64), RuntimeContext = new([new(AiRuntimeContext.VulkanWarningCode, "", 3)]) } }))
                 pendingId = task.Id;
-            candidate = candidate with { Scan = refreshedScan, Maintenance = candidate.Maintenance with { TaskId = pendingId } };
+            candidate = candidate with { Scan = refreshedScan, Maintenance = candidate.Maintenance with
+                { TaskId = pendingId, HasWarnings = true, HasVulkanConfigurationWarning = true } };
             callsBeforePublish = client.Calls;
             try
             {
@@ -290,10 +293,12 @@ internal static class AiSortingSmokeCheck
                 prepareSave: () => () => saves++);
             Assert(resumed.Maintenance.Outcome == MaintenanceOutcome.Passed && saves == 1
                 && vm.ContentRevision == appliedRevision && client.Calls == callsBeforePublish
+                && resumed.Maintenance.HasVulkanConfigurationWarning && resumed.Maintenance.Message.Contains("已自动保存")
+                && resumed.Maintenance.Message.Contains("Vulkan 配置读取错误")
                 && !session.Tasks.Inspect().Single(t => t.Id == pendingId).Checkpoint!.CandidatePendingApply,
                 "Pending save recovery duplicated the edit/request or failed to complete.");
             vm.UndoCommand.Execute(null); Unchanged();
-            checks.Add("downloaded catalogue applies, save failure retains candidate, exact-target recovery saves without duplicate editing or requests");
+            checks.Add("Vulkan warning candidate saves normally; failed save recovery preserves warning and undo without duplicate editing or requests");
 
             Reset();
             var originalPreparation = new[] { "first.mod", "second.mod", "third.mod", "ludeon.rimworld" };
@@ -389,6 +394,61 @@ internal static class AiSortingSmokeCheck
                     "An unsafe or absent last order offered publication.");
             }
             checks.Add("cancelled, failed, token/attempt stopped tasks offer keep/save or restore; one-step undo, stale edits and unsafe recovery protected");
+            Reset();
+            var rereadRequest = AiSortingSession.CreateRequest(vm, settings, null);
+            var rereadStopped = new AutomaticMaintenanceResult(new(MaintenanceOutcome.Stopped, "原始游戏测试原因",
+                2, 0, 0, false, ["second.mod", "first.mod"], true), null, []);
+            var rereadSaves = 0;
+            callsBeforePublish = client.Calls;
+            automatic.RememberStoppedOrder(rereadStopped, rereadRequest, settings, () => paths, paths,
+                vm.ContentRevision, catalogue, () => rereadSaves++);
+            // Deep re-reading and display enrichment change identities, not sorting inputs.
+            var rereadMods = JsonSerializer.Deserialize<ModInstallation[]>(JsonSerializer.Serialize(catalogue.Installations))!;
+            var rereadCatalogue = new ModCatalogue(rereadMods.Reverse().Select(mod => mod with
+                { CodeKind = ModCodeKind.CSharp, ContentKinds = ModContentKinds.ManagedCode }).ToArray());
+            vm.ApplyScan(scan with { Catalogue = rereadCatalogue }, observeActivity: false);
+            Assert(automatic.LastOrderProblem(rereadStopped) is null
+                && automatic.LastOrderChoice(rereadStopped)?.CanApply == true,
+                "Equivalent catalogue re-reading was mistaken for an external edit.");
+            Assert(automatic.ResolveLastOrder(rereadStopped, true).LastOrderKept && rereadSaves == 1
+                && Order().SequenceEqual(rereadStopped.Maintenance.LastAttemptedOrder) && client.Calls == callsBeforePublish,
+                "Equivalent re-reading lost the stopped candidate or repeated a paid request.");
+            foreach (var changedCatalogue in new[]
+            {
+                new ModCatalogue([Mod("first.mod") with { LastUpdatedUtc = DateTimeOffset.UtcNow }, Mod("second.mod")]),
+                new ModCatalogue([Mod("first.mod") with { Metadata = Mod("first.mod").Metadata! with
+                    { Requirements = new([new("second.mod", "dependency")], [], [], []) } }, Mod("second.mod")]),
+                new ModCatalogue([Mod("first.mod") with { Directory = Path.Combine(root, "replacement") }, Mod("second.mod")]),
+                new ModCatalogue([Mod("first.mod"), Mod("second.mod"), Mod("additional.mod")])
+            })
+            {
+                Reset();
+                automatic.RememberStoppedOrder(rereadStopped, rereadRequest, settings, () => paths, paths,
+                    vm.ContentRevision, catalogue, () => rereadSaves++);
+                vm.ApplyScan(scan with { Catalogue = changedCatalogue }, observeActivity: false);
+                Assert(automatic.LastOrderProblem(rereadStopped) == "模组安装资料已变化。", "Actual installation changes were accepted.");
+                MustReject(() => automatic.ResolveLastOrder(rereadStopped, true));
+                Unchanged();
+            }
+            Reset();
+            automatic.RememberStoppedOrder(rereadStopped, rereadRequest, settings, () => paths, paths,
+                vm.ContentRevision, catalogue, () => rereadSaves++);
+            vm.ApplyScan(scan with { TargetVersion = new(1, 6) }, observeActivity: false);
+            Assert(automatic.LastOrderProblem(rereadStopped) == "目标游戏版本已变化。", "Version changes bypassed the stopped-order guard.");
+            MustReject(() => automatic.ResolveLastOrder(rereadStopped, true));
+            Reset();
+            automatic.RememberStoppedOrder(rereadStopped, rereadRequest, settings, () => paths with
+                { GameDirectory = Path.Combine(root, "other-game") }, paths, vm.ContentRevision, catalogue);
+            Assert(automatic.LastOrderProblem(rereadStopped) == "游戏或模组路径已变化。", "Path guard lost its specific reason.");
+            MustReject(() => automatic.ResolveLastOrder(rereadStopped, true));
+            Reset();
+            automatic.RememberStoppedOrder(rereadStopped, rereadRequest, settings, () => paths, paths, vm.ContentRevision, catalogue);
+            store.Save(settings with { Model = "changed-model" });
+            Assert(automatic.LastOrderProblem(rereadStopped) == "AI 设置已变化。", "Settings guard lost its specific reason.");
+            MustReject(() => automatic.ResolveLastOrder(rereadStopped, true));
+            Assert(rereadSaves == 1 && client.Calls == callsBeforePublish, "Rejected contexts saved or billed a request.");
+            Reset();
+            checks.Add("equivalent catalogue re-reading keeps stopped candidates; real timestamps, dependencies, directories, installations, versions, paths and settings still block publication with specific reasons and no AI calls");
             window.ResponseText.Clear();
             window.ApplyMaintenanceProgress(new(2, "服务格式不兼容，改用本地试排除", 0)
                 { ReportText = "本轮未收到 AI 最终方案", PreparedOrder = ["second.mod", "first.mod"] });
@@ -589,6 +649,15 @@ internal static class AiSortingSmokeCheck
                 && AiSortingWindow.CompletionNotice(warningSuccess with { Maintenance = warningSuccess.Maintenance with
                     { Outcome = MaintenanceOutcome.Stopped } }) is null, "Unapplied or failed results cannot show success.");
             checks.Add("warning-only completion dialog and trial-choice routing never report unsaved or failed results as success");
+            var vulkanSuccess = warningSuccess with { Maintenance = warningSuccess.Maintenance with
+                { HasVulkanConfigurationWarning = true } };
+            Assert(AiSortingWindow.CompletionNotice(vulkanSuccess)?.Contains("Vulkan 配置读取错误") == true
+                && AiSortingWindow.TerminalNotice(vulkanSuccess, false)?.Text.Contains("Vulkan 配置读取错误") == true,
+                "Completion notice lost the explicit Vulkan warning.");
+            window.ShowAutomaticResult(vulkanSuccess);
+            Assert(window.SummaryText.Text.Contains("Vulkan 配置读取错误") && window.SummaryText.Text.Contains("保存")
+                && !window.SummaryText.Text.Contains("未检测到红字"), "Vulkan result incorrectly claims the raw log has no errors.");
+            checks.Add("Vulkan completion report and terminal notice identify the ignored external configuration error and saved result");
 
             foreach (var approve in new[] { false, true })
             {
@@ -843,6 +912,15 @@ internal static class AiSortingSmokeCheck
                     "Unified completion dialog did not close on confirmation.");
             }
             checks.Add("unified result window shows either saved success or tested mod choices; unknown billing preserves successful publication");
+            foreach (var rows in new IReadOnlyList<TrialRemovalRow>[] { [], trialRows })
+            {
+                var overlayDialog = new TrialExclusionWindow(rows, true, vulkanConfigurationWarning: true) { Owner = main };
+                Assert(overlayDialog.StatusText.Text.Contains("Vulkan 配置读取错误")
+                    && overlayDialog.StatusText.Text.Contains("未发现其他错误")
+                    && !overlayDialog.StatusText.Text.Contains("无红字"), "Result dialog hid the approved Vulkan exception.");
+                Assert(ClickDialog(overlayDialog, overlayDialog.ConfirmButton) == true, "Vulkan result dialog did not close.");
+            }
+            checks.Add("both saved-completion and trial-removal dialogs explicitly show the Vulkan warning without a false no-errors claim");
 
             Reset();
             Assert(window.WaitNoticeDelay == TimeSpan.FromSeconds(30), "Sorting reminder default is not 30 seconds.");

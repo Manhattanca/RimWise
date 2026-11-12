@@ -26,6 +26,108 @@ internal static class MaintenanceDiagnosisChecks
     internal static void Run(Action<string, Action> check)
     {
         Directory.CreateDirectory(Root);
+        GameLogSnapshot OverlayLog(string extra = "")
+        {
+            const string prefix = "[Vulkan] [General] [Loader Message] loader_get_json: Failed to open JSON file ";
+            var text = string.Join('\n', new[] {
+                @"C:\Program Files (x86)\Overwolf\0.283.0.11\ow-vulkan-overlay64.json",
+                @"E:\Program Files\Overwolf\0.283.0.11\ow-graphics-vulkan64.json",
+                @"C:\Program Files (x86)\Epic Games\Epic Online Services\managedArtifacts\abc\EOSOverlayVkLayer-Win64.json"
+            }.Select(p => "2026-11-12 12:00:00.000 ERROR " + prefix + p)) + "\n" + extra;
+            var path = Path.Combine(Root, Guid.NewGuid().ToString("N") + ".log");
+            File.WriteAllText(path, text);
+            return PlayerLogReader.Read(path) with { Kind = "game-errors" };
+        }
+        OrdinaryGameReport Completed(GameLogSnapshot log) =>
+            new(123, 0, GameTestStopReason.ProbeCompleted, true, true, [log])
+            {
+                ProbeStage = "map-ready", ProbeTicks = 250, ProbeColonists = 2, ProbeErrors = 3,
+                MenuPassed = true, FactionsPassed = true, PawnsTested = 1
+            };
+        check("Approved Overwolf and Epic Vulkan errors pass with a warning, no AI or trial removals, and recover without retesting", () =>
+        {
+            var log = OverlayLog();
+            var report = Completed(log);
+            var feedback = Feedback(report);
+            Assert(log.Issues.Count == 0 && log.ExcludedErrors.Count == 3 && log.Text.Contains("Failed to open JSON")
+                && PlayerLogReader.ExactErrorCounts(log.Path)!.Count == 0);
+            var manyWarnings = log with { Warnings = Enumerable.Range(0, 150).Select(i =>
+                new GameLogIssue("Warning", 1, [$"test.mod{i}"], "Optional warning")).ToArray() };
+            var runtime = GameTestDiagnostics.ProjectWarnings([manyWarnings])!;
+            Assert(runtime.Observations.Count == 100 && runtime.HasVulkanConfigurationWarning
+                && runtime.CopyValidated().HasVulkanConfigurationWarning);
+            Assert(report.MapSuccessVerified && feedback.StartupVerified && feedback.Errors.Count == 0
+                && !feedback.CanDiagnose && feedback.StartupFailure is null
+                && feedback.RuntimeContext?.HasVulkanConfigurationWarning == true && feedback.ErrorSignatures.Length == 0);
+            var session = new OverlaySession(feedback, feedback);
+            var client = new FailingClient();
+            var root = Path.Combine(Root, "approved-overlay-only");
+            var result = new LevelOneMaintenance(client, new AiTokenEstimator(root), session)
+                .RunAsync(Request(), Catalogue(), [], new(5) { TokenLimitEnabled = false }, null, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Assert(result.Outcome == MaintenanceOutcome.Passed && result.Attempts == 1 && result.Requests == 0
+                && client.Calls == 0 && result.TrialExclusions.Count == 0 && session.Accepted
+                && result.Message.Contains("Vulkan") && result.HasVulkanConfigurationWarning, result.Message);
+            var saved = new AiTaskRecoveryStore(root).Inspect().Single().Checkpoint!;
+            Assert(saved.Feedback is { StartupVerified: true, HadErrors: false, Passed: true }
+                && saved.Feedback.RuntimeContext?.HasVulkanConfigurationWarning == true);
+            // Simulate interruption after the durable test result, before completion.
+            // The desktop suite separately exercises pending publication and failed saves.
+            var resumeRoot = Path.Combine(Root, "approved-overlay-recovery");
+            string resumeId;
+            using (var interrupted = new AiTaskRecoveryStore(resumeRoot).Create(saved with { Phase = AiTaskPhase.TestSaved }))
+                resumeId = interrupted.Id;
+            var resumedSession = new OverlaySession(feedback, feedback);
+            var resumed = new LevelOneMaintenance(client, new AiTokenEstimator(resumeRoot), resumedSession, resumeId)
+                .RunAsync(Request(), Catalogue(), [], new(5) { TokenLimitEnabled = false }, null, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Assert(resumed.Outcome == MaintenanceOutcome.Passed && resumedSession.Tests == 0
+                && client.Calls == 0 && resumed.HasVulkanConfigurationWarning, "Recovery lost the warning or repeated work.");
+        });
+        check("Mixed overlay and mod errors continue sorting until only the approved Vulkan warning remains", () =>
+        {
+            var mixed = Completed(OverlayLog("2026-11-12 12:00:01.000 ERROR PatchOperationReplace failed\n")) with { ProbeErrors = 4 };
+            var feedback = Feedback(mixed);
+            Assert(feedback.Errors.Count == 1 && feedback.CanDiagnose && feedback.StartupFailure is null
+                && feedback.RuntimeContext?.HasVulkanConfigurationWarning == true);
+            var session = new OverlaySession(feedback, Feedback(Completed(OverlayLog())));
+            var client = new OverlayClient();
+            var result = new LevelOneMaintenance(client, new AiTokenEstimator(Path.Combine(Root, "mixed-overlay")), session)
+                .RunAsync(Request(), Catalogue(), [], new(5) { TokenLimitEnabled = false }, null, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Assert(result.Outcome == MaintenanceOutcome.Passed && session.Tests == 2 && session.Applies == 1
+                && session.Accepted && client.Calls == 1 && result.Requests == 1 && result.TrialExclusions.Count == 0
+                && result.HasVulkanConfigurationWarning && !result.LastAttemptedOrder.SequenceEqual(Order), result.Message);
+        });
+        check("Vulkan exception cannot bypass missing map, incomplete capture, unknown helper errors or genuine driver failure", () =>
+        {
+            var log = OverlayLog();
+            var report = Completed(log);
+            foreach (var incomplete in new[] { report with { CaptureCompleted = false }, report with { ProcessStopped = false },
+                report with { Logs = [log with { Truncated = true }] }, report with { ProbeStage = "waiting-map" },
+                report with { Logs = [log with { ModResetError = "Mods reset" }] },
+                report with { StopReason = GameTestStopReason.Exited, ExitCode = 1 } })
+                Assert(!Feedback(incomplete).StartupVerified);
+            Assert(Feedback(report with { ProbeErrors = 4 }).Errors.Count > 0);
+            Assert(Feedback(report with { Logs = [log with { Kind = "startup" }] }).Errors.Count > 0);
+            var driver = Completed(OverlayLog("2026-11-12 12:00:01.000 ERROR vkCreateInstance: Found no drivers\n"));
+            Assert(!Feedback(driver).StartupVerified && Feedback(driver).Errors.Count > 0 && !Feedback(driver).CanDiagnose);
+        });
+        check("Only exact overlay vendor and filename pairs are excluded; FATAL and unrelated JSON errors remain", () =>
+        {
+            const string prefix = "[Vulkan] [General] [Loader Message] loader_get_json: Failed to open JSON file ";
+            foreach (var path in new[] { @"C:\Overwolf\ow-vulkan-overlay64.json", @"E:\Overwolf\ow-graphics-vulkan64.json",
+                @"E:\Epic Online Services\EOSOverlayVkLayer-Win64.json" })
+            {
+                var message = prefix + "\"" + path.ToUpperInvariant() + "\"";
+                Assert(PlayerLogReader.Parse(message).Count == 0 && PlayerLogReader.ParseExcludedErrors(message).Count == 1);
+                Assert(PlayerLogReader.Parse("2026-11-12 12:00:00.000 FATAL " + message).Count == 1);
+            }
+            foreach (var message in new[] { prefix + @"C:\Mods\ow-vulkan-overlay64.json",
+                prefix + @"C:\Overwolf\other.json", prefix + @"C:\Epic Online Services\config.json",
+                prefix + @"C:\Overwolf\..\Mods\ow-vulkan-overlay64.json", "Vulkan mod failed to load JSON file C:\\Mods\\config.json" })
+                Assert(PlayerLogReader.Parse("2026-11-12 12:00:00.000 ERROR " + message).Count == 1);
+        });
         check("Missing model stops before game preparation, AI calls and usage records", () =>
         {
             var root = Path.Combine(Root, "missing-model");
@@ -163,6 +265,35 @@ internal static class MaintenanceDiagnosisChecks
         public void Report(MaintenanceProgress value) => updates.Add(value);
     }
 
+    internal static void ReplayCompletedMapReports(string directory)
+    {
+        var files = Directory.EnumerateFiles(directory, "result.json.gz", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal).ToArray();
+        Assert(files.Length > 0, "No archived game reports found.");
+        foreach (var file in files)
+        {
+            using var input = File.OpenRead(file);
+            using var gzip = new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
+            var report = JsonSerializer.Deserialize<OrdinaryGameReport>(gzip)!;
+            // Reparse the preserved evidence using today's exact exclusions; the archived
+            // report's precomputed issue groups reflect the historical policy.
+            var logs = report.Logs.Select(log => log with { Issues = PlayerLogReader.Parse(log.Text),
+                Warnings = PlayerLogReader.ParseWarnings(log.Text), ExcludedErrors = PlayerLogReader.ParseExcludedErrors(log.Text) }).ToArray();
+            var feedback = Feedback(report with { Logs = logs });
+            Assert(report.MapSuccessVerified, "Replay expected a completed map.");
+            var originalErrors = report.Logs.SelectMany(log => log.Issues).Count();
+            Assert(feedback.RuntimeContext?.HasVulkanConfigurationWarning == true && feedback.StartupFailure is null);
+            Assert(originalErrors == 5 ? feedback.Errors.Count == 2 && feedback.CanDiagnose
+                : originalErrors == 3 && feedback.Errors.Count == 0 && !feedback.CanDiagnose,
+                "Archived mixed errors must continue; the overlay-only result must pass.");
+            Console.WriteLine(JsonSerializer.Serialize(new { Replay = "Completed map error classification",
+                Attempt = Path.GetFileName(Path.GetDirectoryName(file)), report.MapSuccessVerified,
+                OriginalErrors = originalErrors, Errors = feedback.Errors.Count,
+                VulkanWarning = feedback.RuntimeContext?.HasVulkanConfigurationWarning == true, feedback.CanDiagnose,
+                WouldPass = feedback.StartupVerified && feedback.Errors.Count == 0 }));
+        }
+    }
+
     internal static void Replay(string directory)
     {
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -190,6 +321,31 @@ internal static class MaintenanceDiagnosisChecks
         { Calls++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.RequestEntityTooLarge)
             { Content = new StringContent("{\"error\":\"private-provider-content\"}") }); }
     }
+    private sealed class OverlayClient : IAiClient
+    {
+        public int Calls;
+        public Task<AiConnectionResult> TestConnectionAsync(AiSettings settings, string? key, CancellationToken token) => throw new NotSupportedException();
+        public Task<AiClientResult> GetSuggestionAsync(AiRequest request, CancellationToken token)
+        {
+            Calls++;
+            Assert(request.RuntimeContext?.HasVulkanConfigurationWarning == true);
+            Assert(AiPrompt.Messages(request).Any(m => m.Content.Contains("不为此重排或试排除模组")));
+            return Task.FromResult(new AiClientResult(true, "synthetic reorder", new(1, "Move the unrelated mod", [
+                new("reorder", Order[3], 2, false, null, "synthetic reorder")], []), null) { Usage = new(100, 20, 120) });
+        }
+    }
+    private sealed class OverlaySession(MaintenanceGameReport first, MaintenanceGameReport last) : ILevelOneGameSession
+    {
+        public int Tests;
+        public int Applies;
+        public bool Accepted;
+        public Task<bool> VerifySafetyAsync(CancellationToken token) => Task.FromResult(true);
+        public Task BeginAsync(CancellationToken token) => Task.CompletedTask;
+        public Task<MaintenanceGameReport> TestAsync(IReadOnlyList<string> order, CancellationToken token) =>
+            Task.FromResult(++Tests == 1 ? first : last);
+        public Task ApplyAsync(AiOrderPlan plan, CancellationToken token) { Assert(plan.CanApply); Applies++; return Task.CompletedTask; }
+        public Task FinishAsync(bool acceptTestedOrder, CancellationToken token) { Accepted = acceptTestedOrder; return Task.CompletedTask; }
+    }
     private sealed class FailingClient : IAiClient
     {
         public int Calls;
@@ -201,6 +357,7 @@ internal static class MaintenanceDiagnosisChecks
     private sealed class FakeSession(MaintenanceGameReport first) : ILevelOneGameSession, IMaintenanceTrialSession
     {
         private int attempts;
+        public int TestCalls => attempts;
         private bool authorized;
         public bool Finished;
         public bool Began;

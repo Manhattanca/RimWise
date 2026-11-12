@@ -13,7 +13,14 @@ public static class GameTestDiagnostics
 
     public static AiRuntimeContext? ProjectWarnings(IEnumerable<GameLogSnapshot> logs, bool helperWarning = false)
     {
-        var facts = logs.SelectMany(l => l.Warnings).SelectMany(w =>
+        var snapshots = logs.ToArray();
+        var overlayErrors = snapshots.SelectMany(l => l.ExcludedErrors)
+            .Where(e => KnownLogExclusions.IsOverlayVulkanManifestError(e.Summary)).ToArray();
+        // Keep this explicit notice ahead of the bounded ordinary warning context.
+        var overlayFacts = overlayErrors.Length == 0 ? Array.Empty<AiRuntimeObservation>()
+            : [new AiRuntimeObservation(AiRuntimeContext.VulkanWarningCode, "",
+                (int)Math.Min(100000, overlayErrors.Sum(e => (long)e.Count)))];
+        var facts = overlayFacts.Concat(snapshots.SelectMany(l => l.Warnings).SelectMany(w =>
         {
             var text = w.Detail;
             bool Has(string value) => text.Contains(value, StringComparison.OrdinalIgnoreCase);
@@ -27,7 +34,7 @@ public static class GameTestDiagnostics
             return (w.RelatedMods.Length == 0 ? [""] : w.RelatedMods)
                 .Select(id => (Code: code, Id: id, Count: w.Count));
         }).GroupBy(o => (o.Code, o.Id)).Select(g => new AiRuntimeObservation(g.Key.Code, g.Key.Id,
-            (int)Math.Min(100000, g.Sum(o => (long)o.Count))))
+            (int)Math.Min(100000, g.Sum(o => (long)o.Count)))))
             .Take(100).ToArray();
         return facts.Length > 0 ? new(facts) : helperWarning ? new([new("UnknownWarning", "", 1)]) : null;
     }

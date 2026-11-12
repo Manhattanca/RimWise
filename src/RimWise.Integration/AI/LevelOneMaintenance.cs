@@ -52,6 +52,7 @@ public sealed record MaintenanceResult(MaintenanceOutcome Outcome, string Messag
     public AiReplyFailure ReplyFailure { get; init; }
     public string? Analysis { get; init; }
     public bool HasWarnings { get; init; }
+    public bool HasVulkanConfigurationWarning { get; init; }
     public IReadOnlyList<string> LogPaths { get; init; } = [];
 }
 
@@ -168,6 +169,7 @@ public sealed class LevelOneMaintenance
         var replyFailure = AiReplyFailure.None;
         string? analysis = null;
         bool hasWarnings = false;
+        bool hasVulkanConfigurationWarning = false;
         IReadOnlyList<string> logPaths = [];
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         // Legacy time fields remain readable in recovery records. Only user cancellation,
@@ -200,6 +202,8 @@ public sealed class LevelOneMaintenance
                 approvals = saved.ConflictApprovals;
                 trials = saved.TrialExclusions;
                 startupFailure = saved.Feedback?.StartupFailure?.CopyValidated();
+                hasWarnings = saved.Feedback?.RuntimeContext is not null;
+                hasVulkanConfigurationWarning = saved.Feedback?.RuntimeContext?.HasVulkanConfigurationWarning == true;
                 replyFailure = saved.Feedback?.ReplyFailure ?? AiReplyFailure.None;
                 if (saved.Kind != AiTaskKind.Maintenance || saved.Finished || saved.ContextHash != contextHash || saved.Limits != limits)
                     return Result(MaintenanceOutcome.RecoveryRequired, "任务、安装资料、规则或预算已变化，不能继续旧维护任务。");
@@ -312,9 +316,14 @@ public sealed class LevelOneMaintenance
                 deadline.Token.ThrowIfCancellationRequested();
                 startupFailure = report.StartupFailure?.CopyValidated();
                 hasWarnings = report.RuntimeContext is not null;
+                hasVulkanConfigurationWarning = report.RuntimeContext?.HasVulkanConfigurationWarning == true;
                 logPaths = report.LogPaths;
                 analysis = recoveryTask.Current.Feedback?.Analysis ?? analysis;
                 replyFailure = recoveryTask.Current.Feedback?.ReplyFailure ?? AiReplyFailure.None;
+                if (startupFailure?.Context.Evidence.Any(e => e.Code == "GraphicsManifestUnavailable") == true)
+                // Legacy checkpoints used a broader match. Do not turn unverified historical
+                // failures into passes; fresh logs use the exact approved parser exclusions.
+                { Stop(startupFailure.LocalReason()); break; }
                 // A verified run without red errors is terminal, including on the last attempt.
                 // Warnings remain in the evidence but cannot trigger paid requests or further edits.
                 if (report.StartupVerified && (report.Errors.Count == 0 || report.ExistingErrorsOnly
@@ -323,7 +332,9 @@ public sealed class LevelOneMaintenance
                 {
                     existingErrorsOnly = report.ExistingErrorsOnly;
                     outcome = MaintenanceOutcome.Passed;
-                    message = existingErrorsOnly ? "新增 Mod 定位成功：完整测试仅重现原排序已有错误，未观察到新增红字；原有红字仍需处理。" : hasWarnings ? "排序成功：本轮测试无红字；黄字警告已保留，不影响成功判定。"
+                    message = existingErrorsOnly ? "新增 Mod 定位成功：完整测试仅重现原排序已有错误，未观察到新增红字；原有红字仍需处理。"
+                        : hasVulkanConfigurationWarning ? "排序成功：除已忽略的 Vulkan 配置读取错误外，分阶段测试未发现其他错误。" + AiRuntimeContext.VulkanWarningText
+                        : hasWarnings ? "排序成功：本轮测试无红字；黄字警告已保留，不影响成功判定。"
                         : "排序成功：本轮分阶段测试无红字；未覆盖游戏内全部内容。";
                     passed = true;
                     break;
@@ -718,7 +729,8 @@ public sealed class LevelOneMaintenance
                     InsertionBaselineJson = limits.InsertionBaselineJson, ConflictApprovals = Array.AsReadOnly(approvals),
                     TrialExclusions = Array.AsReadOnly(trials), StartupFailure = startupFailure,
                     ReplyFailure = replyFailure,
-                    ExistingErrorsOnly = existingErrorsOnly, Analysis = analysis, HasWarnings = hasWarnings, LogPaths = logPaths };
+                    ExistingErrorsOnly = existingErrorsOnly, Analysis = analysis, HasWarnings = hasWarnings,
+                    HasVulkanConfigurationWarning = hasVulkanConfigurationWarning, LogPaths = logPaths };
     }
 
     private static bool AllowsStartupActions(MaintenanceGameReport report, StructuredAiResponse response) =>

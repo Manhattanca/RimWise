@@ -6,7 +6,8 @@ using RimWise.Integration.Diagnostics;
 
 namespace RimWise.Integration.Steam;
 
-public sealed record WorkshopItemState(string Id, bool Subscribed, bool Installed, string Directory);
+public sealed record WorkshopItemState(string Id, bool Subscribed, bool Installed, string Directory,
+    bool Downloading = false, bool DownloadPending = false, ulong BytesDownloaded = 0, ulong BytesTotal = 0);
 public sealed record WorkshopSearchItem(string Id, string Title, uint ConsumerAppId);
 
 /// <summary>Async owner of the bundled Steam client bridge. No game or user DLL is loaded.</summary>
@@ -15,6 +16,20 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, MaxDepth = 8 };
 
     public Task<IReadOnlyList<WorkshopItemState>> InventoryAsync(CancellationToken token) => RunAsync("inventory", [], null, token);
+    public async Task<IReadOnlyList<WorkshopItemState>> StatesAsync(string[] ids, CancellationToken token)
+    {
+        var items = new List<WorkshopItemState>();
+        foreach (var batch in ids.Chunk(1000)) items.AddRange(await RunAsync("states", batch, null, token));
+        return items;
+    }
+    public async Task<IReadOnlyList<WorkshopItemState>> EnqueueMissingAsync(string[] ids, IProgress<string>? progress, CancellationToken token)
+    {
+        var items = new List<WorkshopItemState>();
+        foreach (var batch in ids.Chunk(1000)) items.AddRange(await RunAsync("enqueue-many", batch, progress, token));
+        return items;
+    }
+    public Task<IReadOnlyList<WorkshopItemState>> EnqueueCollectionAsync(string id, IProgress<string>? progress, CancellationToken token)
+        => RunAsync("enqueue-collection", [id], progress, token);
     public Task<IReadOnlyList<WorkshopItemState>> QueryAsync(string id, CancellationToken token) => RunAsync("query", [id], null, token);
     public Task<IReadOnlyList<WorkshopItemState>> SubscribeAndDownloadAsync(string id, IProgress<string>? progress, CancellationToken token)
         => RunAsync("subscribe", [id], progress, token);
@@ -54,7 +69,8 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
             StandardErrorEncoding = Encoding.UTF8
         };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(operation is "subscribe" or "wait-download" ? TimeSpan.FromMinutes(17) : TimeSpan.FromSeconds(150));
+        timeout.CancelAfter(operation is "subscribe" or "wait-download" ? TimeSpan.FromMinutes(17)
+            : operation is "enqueue-many" or "enqueue-collection" ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(150));
         using var process = Process.Start(start) ?? throw new IOException("无法启动 Steam 组件。");
         try
         {
@@ -77,7 +93,7 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
                     if (result is not null) throw new IOException("Steam 组件返回了重复结果。");
                     result = line;
                 }
-                else if (kind == "progress" && operation is "subscribe" or "enqueue" or "wait-download")
+                else if (kind == "progress" && operation is "subscribe" or "enqueue" or "wait-download" or "enqueue-many" or "enqueue-collection")
                 {
                     var id = json.RootElement.GetProperty("Id").GetString();
                     if (!ids.Contains(id, StringComparer.Ordinal)) throw new IOException("Steam 组件返回了无关项目。");
@@ -127,18 +143,21 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
         if (!root.GetProperty("Success").GetBoolean())
             throw new IOException(root.TryGetProperty("Error", out var error) ? error.GetString() : "Steam 操作失败。");
         if (exitCode != 0 || root.GetProperty("Operation").GetString() != operation) throw new IOException("Steam 结果与操作不一致。");
+        var collection = operation == "enqueue-collection";
+        if (collection && (ids.Length != 1 || !root.TryGetProperty("CollectionId", out var collectionId)
+            || collectionId.GetString() != ids[0])) throw new IOException("Steam 返回了不匹配的合集。");
         var items = root.GetProperty("Items").Deserialize<WorkshopItemState[]>(Json) ?? throw new IOException("Steam 缺少状态。");
-        if (items.Length > 100000 || items.Any(i => i is null) || items.Select(i => i.Id).Distinct(StringComparer.Ordinal).Count() != items.Length)
+        if (items.Length > (collection ? 10000 : 100000) || items.Any(i => i is null) || items.Select(i => i.Id).Distinct(StringComparer.Ordinal).Count() != items.Length)
             throw new IOException("Steam 返回了重复或无效项目。");
         foreach (var item in items)
         {
             ValidateId(item.Id);
-            if (operation != "inventory" && !ids.Contains(item.Id, StringComparer.Ordinal)) throw new IOException("Steam 返回了无关项目。");
-            if (operation == "enqueue" && !item.Subscribed) throw new IOException("Steam 未确认订阅。");
+            if (operation != "inventory" && !collection && !ids.Contains(item.Id, StringComparer.Ordinal)) throw new IOException("Steam 返回了无关项目。");
+            if (operation is "enqueue" or "enqueue-many" or "enqueue-collection" && !item.Subscribed) throw new IOException("Steam 未确认订阅。");
             if (operation is "subscribe" or "wait-download" && (!item.Subscribed || !item.Installed)) throw new IOException("Steam 未完成订阅或下载。");
             if (operation == "unsubscribe" && item.Subscribed) throw new IOException("Steam 尚未取消订阅。");
         }
-        if (operation != "inventory" && items.Length != ids.Length) throw new IOException("Steam 结果缺少请求项目。");
+        if (operation != "inventory" && !collection && items.Length != ids.Length) throw new IOException("Steam 结果缺少请求项目。");
         return items;
     }
 

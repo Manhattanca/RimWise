@@ -29,7 +29,7 @@ public partial class MainWindow
     private void Window_FileDragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop, false)) return;
-        if (LogsPageTab.IsChecked == true) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
+        if (ModsPageTab.IsChecked != true) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
         ClearDropIndicator();
         e.Effects = IsOrderDrop(e.Data, out _) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
@@ -40,29 +40,61 @@ public partial class MainWindow
         if (!e.Data.GetDataPresent(DataFormats.FileDrop, false)) return;
         e.Handled = true;
         e.Effects = DragDropEffects.None;
-        if (LogsPageTab.IsChecked == true) return;
+        if (ModsPageTab.IsChecked != true) return;
         if (!IsOrderDrop(e.Data, out var file))
         { ViewModel.Status = "请一次拖入一个排序文件（XML／JSON／RML）或环世界存档（RWS）"; return; }
         e.Effects = DragDropEffects.Copy;
         await ImportOrderAsync(file!);
     }
 
-    internal Task ImportOrderAsync(string file,
-        Func<ImportDownloadPlan, IProgress<string>, CancellationToken, Task<IReadOnlyList<WorkshopItemState>>>? download = null,
-        Func<CancellationToken, Task<ModScanResult>>? rescan = null)
+    // Import is a file operation. Metadata scanning, source lookup, Steam downloads and
+    // sorting/testing belong to their explicit commands, never to this path.
+    internal async Task ImportOrderAsync(string file,
+        Func<string, CancellationToken, Task<OrderFileDocument>>? read = null)
     {
-        var revision = ViewModel.OrderRevision;
-        return RunMissingModDownloadsAsync(async token =>
+        var generation = ++importGeneration;
+        importCancellation?.Cancel();
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        importCancellation = cancellation;
+        var revision = (ViewModel.DocumentRevision, ViewModel.OrderRevision, ViewModel.ContentRevision);
+        try
         {
-            var loaded = await Task.Run(() => orderFiles.Read(file), token);
-            token.ThrowIfCancellationRequested();
-            if (revision != ViewModel.OrderRevision) return null;
+            var loaded = await (read?.Invoke(file, cancellation.Token)
+                ?? Task.Run(() => orderFiles.Read(file), cancellation.Token));
+            cancellation.Token.ThrowIfCancellationRequested();
+            if (generation != importGeneration
+                || revision != (ViewModel.DocumentRevision, ViewModel.OrderRevision, ViewModel.ContentRevision)) return;
+            var target = ViewModel.EffectiveGameVersion;
+            var declared = GameVersion.Parse(loaded.Configuration.GameVersion);
+            var notice = target is not null && declared is not null && target.Series != declared.Series
+                ? $" 文件声明游戏版本 {declared.Series}，当前游戏版本 {target.Series}；版本不同仍按原排序导入。" : "";
             ViewModel.ReplaceFileUndoable(loaded, file, "导入排序");
             RememberOrderDirectory(file, exported: false);
             ViewModel.SelectedRow = ViewModel.Rows.FirstOrDefault();
-            ViewModel.Status = $"已导入 {ViewModel.Rows.Count} 项，正在核对已安装模组…";
-            return loaded;
-        }, null, download, rescan);
+            ViewModel.Status = $"已导入排序（{ViewModel.Rows.Count} 项），保留原有顺序。" + notice + ImportedMissingModsNotice();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException
+            or System.Xml.XmlException or System.Text.Json.JsonException)
+        {
+            if (generation != importGeneration || cancellation.IsCancellationRequested) return;
+            ViewModel.Status = "排序文件未能读取：" + ex.Message;
+            MessageDialog.Show(this, ViewModel.Status, "导入提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            if (ReferenceEquals(importCancellation, cancellation))
+            { importCancellation = null; CancelImportDownloadButton.Visibility = Visibility.Collapsed; }
+        }
+    }
+
+    // Only uses the already loaded display matches; no scan, dependency lookup or automatic repair.
+    private string ImportedMissingModsNotice()
+    {
+        if (!ViewModel.HasCatalogue) return "";
+        var missing = ViewModel.Rows.Where(row => row.Match is { Candidates.Count: 0 }).Select(row => row.PackageId).ToArray();
+        return missing.Length == 0 ? "" : $" 缺少 {missing.Length} 个模组／DLC：" + string.Join("、", missing.Take(8))
+            + (missing.Length > 8 ? "等；完整条目见当前清单。" : "。") + "已保留全部排序条目，可右键订阅下载缺失模组。";
     }
 
     internal Task DownloadMissingModsAsync(IEnumerable<string> identifiers,

@@ -1,0 +1,44 @@
+﻿<Window x:Class="RimWise.Desktop.Views.MarketplaceMyOrdersWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource {x:Type Window}}" Title="我的排序与草稿" Width="760" Height="660"
+        MinWidth="560" MinHeight="480" WindowStartupLocation="CenterOwner">
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,16">
+            <TextBlock Text="我的排序与草稿" FontSize="24" FontWeight="SemiBold"/>
+            <TextBlock Text="本地草稿可随时继续编辑；登录后显示你在当前市场目录中已上架的排序。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,0"/>
+        </StackPanel>
+        <Grid Grid.Row="1">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <TextBlock Text="已发布的排序" FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <ListBox x:Name="OrdersList" Style="{StaticResource {x:Type ListBox}}" Grid.Row="1" SelectionChanged="Order_Selected" PreviewMouseRightButtonDown="List_RightClick" MouseDoubleClick="List_DoubleClick" ContextMenuOpening="List_MenuOpening" PreviewKeyDown="List_KeyDown" Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" HorizontalContentAlignment="Stretch">
+            <ListBox.ContextMenu><ContextMenu>
+                <MenuItem Header="修改排序" Click="Edit_Click"/>
+                <MenuItem Header="删除" Click="Delete_Click"/>
+            </ContextMenu></ListBox.ContextMenu>
+            <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="8">
+                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding Id}" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0"/>
+                <TextBlock Text="{Binding Version, StringFormat=排序版本 {0}}" Foreground="{DynamicResource MutedBrush}"/>
+            </StackPanel></DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock Text="本地草稿" Grid.Row="2" FontWeight="SemiBold" Margin="0,16,0,8"/>
+        <ListBox x:Name="DraftsList" Style="{StaticResource {x:Type ListBox}}" Grid.Row="3" SelectionChanged="Draft_Selected" PreviewMouseRightButtonDown="List_RightClick" MouseDoubleClick="List_DoubleClick" ContextMenuOpening="List_MenuOpening" PreviewKeyDown="List_KeyDown" HorizontalContentAlignment="Stretch">
+            <ListBox.ContextMenu><ContextMenu>
+                <MenuItem Header="修改排序" Click="Edit_Click"/>
+                <MenuItem Header="删除" Click="Delete_Click"/>
+            </ContextMenu></ListBox.ContextMenu>
+            <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="8">
+                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0"/>
+            </StackPanel></DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        </Grid>
+        <TextBlock x:Name="EmptyText" Grid.Row="2" Text="当前目录中没有你已上架的排序，可先刷新市场目录。" TextWrapping="Wrap" Margin="0,12,0,0" Foreground="{DynamicResource MutedBrush}"/>
+        <StackPanel Grid.Row="3" Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="EditButton" Content="修改排序" Click="Edit_Click" IsEnabled="False"/>
+            <Button Content="关闭" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

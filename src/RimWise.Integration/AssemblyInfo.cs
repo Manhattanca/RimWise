@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("RimWise.Checks")]
+[assembly: InternalsVisibleTo("RimWise.WorkshopProtocolChecks")]
 [assembly: InternalsVisibleTo("RimWise.DecompilerChecks")]
 [assembly: InternalsVisibleTo("RimWise.GamePathChecks")]
 [assembly: InternalsVisibleTo("RimWise.SteamChecks")]

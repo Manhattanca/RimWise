@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>RimWise.MarketplaceReview</AssemblyName>
+    <Version>0.1.1</Version>
+    <ApplicationIcon>..\..\src\RimWise.Desktop\Resources\Branding\RimWise.ico</ApplicationIcon>
+    <RimWiseGitHubOAuthClientId>Ov23lihyUCUL4swTmdJp</RimWiseGitHubOAuthClientId>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RimWise.Integration\RimWise.Integration.csproj" />
+    <AssemblyMetadata Include="GitHubOAuthClientId" Value="$(RimWiseGitHubOAuthClientId)" />
+    <AssemblyMetadata Include="GitHubOAuthClientSecret" Value="$(RimWiseGitHubOAuthClientSecret)" />
+  </ItemGroup>
+</Project>

@@ -70,7 +70,7 @@ internal static class InterfaceMotion
         if (sender is not Window window || e.OriginalSource != window) return;
         WindowFrameTheme.Apply(window);
         if (window is not MainWindow && window.GetType().Assembly == typeof(App).Assembly
-            && window.Content is FrameworkElement content) Reveal(content);
+            && window.Content is FrameworkElement content) SlidePage(content, fromRight: true);
     }
 
     internal static void Reveal(FrameworkElement element)
@@ -92,8 +92,9 @@ internal static class InterfaceMotion
         offset.BeginAnimation(TranslateTransform.XProperty, null);
         offset.X = 0;
         if (!Enabled) return;
-        offset.BeginAnimation(TranslateTransform.XProperty,
-            new DoubleAnimation(fromRight ? 24 : -24, 0, TimeSpan.FromMilliseconds(160))
-            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
+        var animation = new DoubleAnimation(fromRight ? 24 : -24, 0, TimeSpan.FromMilliseconds(160))
+            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop };
+        animation.Completed += (_, _) => offset.BeginAnimation(TranslateTransform.XProperty, null);
+        offset.BeginAnimation(TranslateTransform.XProperty, animation);
     }
 }

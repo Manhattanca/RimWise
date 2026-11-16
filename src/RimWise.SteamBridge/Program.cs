@@ -11,7 +11,8 @@ internal static class Program
     private const uint RimWorld = 294100;
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private sealed record Request(string Operation, string[] Ids, string? SearchText = null);
-    private sealed record Item(string Id, bool Subscribed, bool Installed, string Directory);
+    private sealed record Item(string Id, bool Subscribed, bool Installed, string Directory,
+        bool Downloading, bool DownloadPending, ulong BytesDownloaded, ulong BytesTotal);
 
     private static int Main()
     {
@@ -27,11 +28,13 @@ internal static class Program
                 input.Append((char)ch);
             }
             var request = JsonSerializer.Deserialize<Request>(input.ToString(), Json) ?? throw new InvalidDataException("Steam 请求为空。");
-            if (request.Operation is not ("inventory" or "search" or "query" or "subscribe" or "enqueue" or "wait-download" or "unsubscribe")
+            if (request.Operation is not ("inventory" or "search" or "query" or "subscribe" or "enqueue" or "wait-download" or "unsubscribe"
+                    or "states" or "enqueue-many" or "enqueue-collection")
                 || request.Ids is null || request.Ids.Length > 1000
                 || request.Ids.Distinct(StringComparer.Ordinal).Count() != request.Ids.Length
                 || request.Ids.Any(id => id.Length == 0 || !id.All(char.IsAsciiDigit) || !ulong.TryParse(id, out var n) || n == 0 || n.ToString() != id)
                 || (request.Operation is "inventory" or "search" ? request.Ids.Length != 0 : request.Ids.Length == 0)
+                || request.Operation == "enqueue-collection" && request.Ids.Length != 1
                 || request.Operation == "search" && (string.IsNullOrWhiteSpace(request.SearchText)
                     || request.SearchText.Length > 200 || request.SearchText.Any(char.IsControl)))
                 throw new InvalidDataException("Steam 操作或工坊编号无效。");
@@ -52,6 +55,15 @@ internal static class Program
                 if (actual > count || SteamUGC.GetNumSubscribedItems() != actual) throw new IOException("Steam 订阅清单正在变化，请稍后重试。");
                 Write(new { Kind = "result", Success = true, Operation = request.Operation,
                     Items = ids.Take((int)actual).Select(State).ToArray() });
+            }
+            else if (request.Operation is "states" or "enqueue-many" or "enqueue-collection")
+            {
+                var requested = request.Ids.Select(text => new PublishedFileId_t(ulong.Parse(text))).ToArray();
+                var items = request.Operation == "enqueue-collection" ? CollectionItems(requested[0]) : requested;
+                if (request.Operation != "states") EnqueueMissing(items, requested[0], verified: request.Operation == "enqueue-collection");
+                Write(new { Kind = "result", Success = true, Operation = request.Operation,
+                    CollectionId = request.Operation == "enqueue-collection" ? request.Ids[0] : null,
+                    Items = items.Select(State).ToArray() });
             }
             else
             {
@@ -76,6 +88,113 @@ internal static class Program
             return 1;
         }
         finally { if (initialized) SteamAPI.Shutdown(); }
+    }
+
+    // Steam exposes subscriptions for leaf items, not a recursive SubscribeCollection call.
+    // Resolve the bound collection once, then batch only missing subscriptions in this process.
+    private static PublishedFileId_t[] CollectionItems(PublishedFileId_t collection)
+    {
+        var seen = new HashSet<PublishedFileId_t>();
+        var leaves = new List<PublishedFileId_t>();
+        var pending = new Queue<(PublishedFileId_t Id, int Depth)>();
+        pending.Enqueue((collection, 0));
+        while (pending.Count > 0)
+        {
+            var batch = new Dictionary<PublishedFileId_t, int>();
+            while (batch.Count < 100 && pending.TryDequeue(out var entry))
+            {
+                if (!seen.Add(entry.Id)) continue;
+                if (seen.Count > 11000 || entry.Depth > 8) throw new IOException("工坊合集过大或嵌套过深，未提交订阅。");
+                batch.Add(entry.Id, entry.Depth);
+            }
+            if (batch.Count == 0) continue;
+            var query = SteamUGC.CreateQueryUGCDetailsRequest(batch.Keys.ToArray(), (uint)batch.Count);
+            if (query == UGCQueryHandle_t.Invalid) throw new IOException("无法读取工坊合集。");
+            try
+            {
+                if (!SteamUGC.SetReturnChildren(query, true)) throw new IOException("Steam 未接受合集内容查询。");
+                var reply = Wait<SteamUGCQueryCompleted_t>(SteamUGC.SendQueryUGCRequest(query), TimeSpan.FromSeconds(60));
+                if (reply.m_eResult != EResult.k_EResultOK || reply.m_handle != query || reply.m_unNumResultsReturned != batch.Count)
+                    throw new IOException("无法核对环世界工坊合集，未提交订阅。");
+                for (uint index = 0; index < reply.m_unNumResultsReturned; index++)
+                {
+                    if (!SteamUGC.GetQueryUGCResult(query, index, out var details) || details.m_eResult != EResult.k_EResultOK
+                        || details.m_nConsumerAppID.m_AppId != RimWorld || !batch.Remove(details.m_nPublishedFileId, out var depth))
+                        throw new IOException("无法核对环世界工坊合集，未提交订阅。");
+                    if ((int)details.m_eFileType == 2)
+                    {
+                        if (details.m_unNumChildren > 10000) throw new IOException("工坊合集超过 10000 项，未提交订阅。");
+                        var children = new PublishedFileId_t[details.m_unNumChildren];
+                        if (children.Length > 0 && !SteamUGC.GetQueryUGCChildren(query, index, children, (uint)children.Length))
+                            throw new IOException("Steam 未返回完整合集内容，未提交订阅。");
+                        foreach (var child in children)
+                        {
+                            if (child.m_PublishedFileId == 0) throw new IOException("合集包含无效编号，未提交订阅。");
+                            pending.Enqueue((child, depth + 1));
+                        }
+                    }
+                    else
+                    {
+                        if (depth == 0 || (int)details.m_eFileType != 0)
+                            throw new IOException("绑定项目不是模组合集或包含不支持的项目，未提交订阅。");
+                        leaves.Add(details.m_nPublishedFileId);
+                        if (leaves.Count > 10000) throw new IOException("工坊合集超过 10000 个模组，未提交订阅。");
+                    }
+                }
+            }
+            finally { SteamUGC.ReleaseQueryUGCRequest(query); }
+        }
+        return leaves.ToArray();
+    }
+
+    private static void EnqueueMissing(PublishedFileId_t[] ids, PublishedFileId_t progressId, bool verified = false)
+    {
+        var missing = ids.Where(id => !State(id).Subscribed).ToArray();
+        // Validate in one SDK query, before any subscription is changed.
+        if (missing.Length > 0 && !verified)
+        {
+            var query = SteamUGC.CreateQueryUGCDetailsRequest(missing, (uint)missing.Length);
+            if (query == UGCQueryHandle_t.Invalid) throw new IOException("无法核对工坊项目。");
+            try
+            {
+                var reply = Wait<SteamUGCQueryCompleted_t>(SteamUGC.SendQueryUGCRequest(query), TimeSpan.FromSeconds(60));
+                if (reply.m_eResult != EResult.k_EResultOK || reply.m_handle != query || reply.m_unNumResultsReturned != missing.Length)
+                    throw new IOException("Steam 未返回完整工坊资料，未提交订阅。");
+                var expected = missing.ToHashSet();
+                for (uint i = 0; i < reply.m_unNumResultsReturned; i++)
+                    if (!SteamUGC.GetQueryUGCResult(query, i, out var details) || details.m_eResult != EResult.k_EResultOK
+                        || details.m_nConsumerAppID.m_AppId != RimWorld || (int)details.m_eFileType != 0
+                        || !expected.Remove(details.m_nPublishedFileId))
+                        throw new IOException("工坊资料无效或不属于环世界，未提交订阅。");
+            }
+            finally { SteamUGC.ReleaseQueryUGCRequest(query); }
+        }
+        var count = 0;
+        foreach (var batch in missing.Chunk(32))
+        {
+            var calls = new List<CallResult<RemoteStorageSubscribePublishedFileResult_t>>();
+            var completed = 0;
+            var failed = false;
+            try
+            {
+                foreach (var id in batch)
+                {
+                    var call = SteamUGC.SubscribeItem(id);
+                    if (call == SteamAPICall_t.Invalid) throw new IOException("Steam 未接受批量订阅；已接收的订阅仍保留。");
+                    var callback = CallResult<RemoteStorageSubscribePublishedFileResult_t>.Create((reply, failure) =>
+                    { failed |= failure || reply.m_eResult != EResult.k_EResultOK || reply.m_nPublishedFileId != id; completed++; });
+                    calls.Add(callback);
+                    callback.Set(call);
+                }
+                PumpUntil(() => completed == batch.Length, TimeSpan.FromSeconds(60));
+                if (failed) throw new IOException("Steam 未确认全部新增订阅；已接收的订阅仍保留。");
+                count += batch.Length;
+                Progress(progressId, $"正在补全未订阅模组（{count}/{missing.Length}），已订阅项自动跳过");
+            }
+            finally { foreach (var call in calls) call.Dispose(); }
+        }
+        PumpUntil(() => ids.All(id => State(id).Subscribed), TimeSpan.FromSeconds(15));
+        Progress(progressId, $"订阅已核对：新增 {missing.Length} 项，已有 {ids.Length - missing.Length} 项；请等待 Steam 下载完成");
     }
 
     private static void Search(string text)
@@ -185,7 +304,9 @@ internal static class Program
         var directory = "";
         if (installed) installed = SteamUGC.GetItemInstallInfo(id, out _, out directory, 32768, out _)
             && !string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory);
-        return new(id.ToString(), state.HasFlag(EItemState.k_EItemStateSubscribed), installed, directory);
+        SteamUGC.GetItemDownloadInfo(id, out var bytes, out var total);
+        return new(id.ToString(), state.HasFlag(EItemState.k_EItemStateSubscribed), installed, directory,
+            state.HasFlag(EItemState.k_EItemStateDownloading), state.HasFlag(EItemState.k_EItemStateDownloadPending), bytes, total);
     }
 
     private static T Wait<T>(SteamAPICall_t call, TimeSpan timeout) where T : struct

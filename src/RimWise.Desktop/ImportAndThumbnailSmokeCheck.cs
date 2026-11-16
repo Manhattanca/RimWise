@@ -38,11 +38,38 @@ internal static class ImportAndThumbnailSmokeCheck
         File.WriteAllText(imported, "<savegame><meta><gameVersion>1.7</gameVersion><modIds><li>a.mod</li><li>b.mod</li></modIds>"
             + "<modSteamIds><li>123</li><li>456</li></modSteamIds></meta><game/></savegame>");
         var sourceBytes = File.ReadAllBytes(imported);
+        vm.ApplyScan(Scan(a, c), observeActivity: false);
+        vm.IsShowingCache = true;
+        var initialCatalogue = vm.CurrentCatalogue;
+        var openWindows = Application.Current.Windows.Count;
+        await window.ImportOrderAsync(imported);
+        Assert(ReferenceEquals(vm.CurrentCatalogue, initialCatalogue) && Application.Current.Windows.Count == openWindows
+            && !window.CancelImportDownloadButton.IsVisible && vm.Status.StartsWith("已导入排序")
+            && vm.Rows.Select(row => row.PackageId).SequenceEqual(["a.mod", "b.mod"])
+            && vm.HasOrderStatus && vm.ErrorCount > 0 && vm.Status.Contains("缺少 1"),
+            "Import scanned, downloaded, opened a verification dialog, changed order or suppressed main warnings");
+        Assert(sourceBytes.SequenceEqual(File.ReadAllBytes(imported)), "Import changed source save");
+        checks.Add("Save import only loads authored IDs; missing mods stay visible in ordinary diagnostics without scan/download/popup");
+
+        foreach (var format in new[] { OrderFileFormat.ModsConfigXml, OrderFileFormat.RimSortJson, OrderFileFormat.RmlXml })
+        {
+            var doc = vm.CreateOrderFile();
+            var file = Path.Combine(root, format + ".xml");
+            File.WriteAllBytes(file, new OrderFileCodec().Write(doc, format));
+            var bytes = File.ReadAllBytes(file);
+            await window.ImportOrderAsync(file);
+            Assert(vm.Rows.Select(row => row.PackageId).SequenceEqual(["a.mod", "b.mod"])
+                && ReferenceEquals(vm.CurrentCatalogue, initialCatalogue) && Application.Current.Windows.Count == openWindows
+                && bytes.SequenceEqual(File.ReadAllBytes(file)) && vm.HasOrderStatus && vm.ErrorCount > 0,
+                "Supported file import scanned, modified source/order, opened a dialog or hid diagnostics: " + format);
+            checks.Add("File import retains order and normal main warnings without extra checks: " + format);
+        }
+        // XML intentionally omits Workshop hints; restore the original RWS before explicit download checks.
+        await window.ImportOrderAsync(imported);
         var entered = new TaskCompletionSource();
         var finish = new TaskCompletionSource<IReadOnlyList<WorkshopItemState>>();
         var scans = 0;
-        vm.IsShowingCache = true;
-        var task = window.ImportOrderAsync(imported, async (plan, progress, token) =>
+        var task = window.DownloadMissingModsAsync(["b.mod"], async (plan, progress, token) =>
         {
             Assert(plan.Downloads.SequenceEqual([new ImportedModDownload("b.mod", "456")]), "Installed mod was downloaded again");
             entered.SetResult(); return await finish.Task.WaitAsync(token);
@@ -61,7 +88,7 @@ internal static class ImportAndThumbnailSmokeCheck
         Assert(vm.Rows.Select(row => row.PackageId).SequenceEqual(["a.mod", "b.mod"]), "Download refresh consumed undo history");
         Assert(sourceBytes.SequenceEqual(File.ReadAllBytes(imported)), "Import changed source save");
         Assert(scans == 2, "Download performed another full scan after merging the completed items");
-        checks.Add("Imported save missing-only download merges once and preserves intervening edits and undo");
+        checks.Add("Explicit missing-only download after import merges once and preserves intervening edits and undo");
 
         var availableRow = vm.AvailableMods.Single(row => row.PackageId == "c.mod");
         var untouchedInstallation = vm.Rows.Single(row => row.PackageId == "a.mod").Installation;
@@ -126,7 +153,8 @@ internal static class ImportAndThumbnailSmokeCheck
 
         // Superseding the imported document must cancel its wait and must never restore its old order.
         entered = new(); finish = new(); scans = 0;
-        task = window.ImportOrderAsync(imported, async (_, _, token) => { entered.SetResult(); return await finish.Task.WaitAsync(token); },
+        await window.ImportOrderAsync(imported);
+        task = window.DownloadMissingModsAsync(["b.mod"], async (_, _, token) => { entered.SetResult(); return await finish.Task.WaitAsync(token); },
             _ => Task.FromResult(Scan(a, c)));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         window.LoadSample(); var replacement = vm.Rows.Select(row => row.PackageId).ToArray();
@@ -137,13 +165,38 @@ internal static class ImportAndThumbnailSmokeCheck
 
         // Explicit cancellation is independent from the editor and does not clear the imported order.
         entered = new();
-        task = window.ImportOrderAsync(imported, async (_, _, token) =>
+        await window.ImportOrderAsync(imported);
+        task = window.DownloadMissingModsAsync(["b.mod"], async (_, _, token) =>
         { entered.SetResult(); await Task.Delay(Timeout.Infinite, token); return []; }, _ => Task.FromResult(Scan(a)));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         window.CancelImportDownloadButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
         await task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert(vm.Rows.Select(row => row.PackageId).SequenceEqual(["a.mod", "b.mod"]) && vm.Status.Contains("已停止等待"), "Cancellation erased order");
         checks.Add("Cancel Steam wait leaves imported entries and communicates pending Steam work");
+        // Read completions may arrive after another import or a user edit; neither can be overwritten.
+        foreach (var later in new[] { "another import", "manual edit" })
+        {
+            var readEntered = new TaskCompletionSource();
+            var releaseRead = new TaskCompletionSource<OrderFileDocument>();
+            var old = new OrderFileCodec().Read(new MemoryStream(sourceBytes));
+            var pending = window.ImportOrderAsync(imported, (_, _) => { readEntered.SetResult(); return releaseRead.Task; });
+            await readEntered.Task;
+            if (later == "another import") await window.ImportOrderAsync(imported);
+            else vm.MoveRowsTo([vm.Rows[^1]], 0);
+            var latest = vm.Rows.Select(row => row.PackageId).ToArray();
+            var latestRevision = vm.DocumentRevision;
+            releaseRead.SetResult(old);
+            await pending;
+            Assert(vm.DocumentRevision == latestRevision && vm.Rows.Select(row => row.PackageId).SequenceEqual(latest), "Late import overwrote " + later);
+            checks.Add("Late file import preserves " + later);
+        }
+        var differentVersion = Path.Combine(root, "旧版本 声明.rws");
+        File.WriteAllText(differentVersion, File.ReadAllText(imported).Replace("1.7", "1.6"));
+        await window.ImportOrderAsync(differentVersion);
+        Assert(vm.Rows.Select(row => row.PackageId).SequenceEqual(["a.mod", "b.mod"])
+            && vm.Status.Contains("版本不同仍按原排序导入") && vm.HasOrderStatus,
+            "Different declared file version blocked import or hid normal warnings");
+        checks.Add("File version differences are advisory and do not block import");
         vm.MarkExported();
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

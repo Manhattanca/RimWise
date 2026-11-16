@@ -73,6 +73,89 @@ public sealed partial class MainViewModel
         UpdateDirtyState();
     }
 
+    /// <summary>Import the author's order and save it as one undoable action. Display diagnostics never gate this operation.</summary>
+    internal void ApplyMarketplaceOrder(OrderFileDocument replacement, string title,
+        Func<GameOrderCommit> save, Action ensureGameClosed)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (!HasDocument) throw new InvalidOperationException("请先读取当前游戏排序。");
+        var before = CaptureEditor();
+        var previousDocument = document;
+        var previousSource = sourceDocument;
+        var previousRows = Rows.ToArray();
+        var previousClean = cleanState;
+        var previousSaved = savedOrderIds;
+        var previousUndo = undoHistory.ToArray();
+        var previousRedo = redoHistory.ToArray();
+        var previousAction = lastAction;
+        var previousSearch = SearchText;
+        var previousRevision = (DocumentRevision, OrderRevision, ContentRevision);
+        var previousNextState = nextState;
+        var previousStatus = Status;
+        // Marketplace data never imports player colors or rules.
+        ensureGameClosed();
+        var committed = save();
+        try
+        {
+            // Keep the player's retention scope. A marketplace title must not switch or reset it.
+            Load(replacement.Configuration, before.Label, resetHistory: false);
+            sourceDocument = replacement;
+            retainedIdentifiers = before.RetainedIdentifiers.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            ApplyRetainedState();
+            editorState = ++nextState;
+            cleanState = editorState;
+            savedOrderIds = Rows.Select(row => row.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            SelectedRow = Rows.FirstOrDefault();
+            AppendHistory(new(before, CaptureEditor(), $"应用市场排序：{title}（{Rows.Count} 项）",
+                "撤销市场排序，游戏配置已回滚",
+                () => { ensureGameClosed(); committed.Undo(); },
+                () => { ensureGameClosed(); committed.Redo(); },
+                previousClean, cleanState, previousSaved.ToArray(), savedOrderIds.ToArray()));
+            UpdateDirtyState();
+        }
+        catch (Exception publicationFailure)
+        {
+            // Restore memory and both history stacks even if notification failed after AppendHistory.
+            undoHistory.Clear(); undoHistory.AddRange(previousUndo);
+            redoHistory.Clear(); redoHistory.AddRange(previousRedo);
+            document = previousDocument;
+            sourceDocument = previousSource;
+            sourceLabel = before.Label;
+            retainedIdentifiers = before.RetainedIdentifiers.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            editorState = before.State; cleanState = previousClean; nextState = previousNextState;
+            savedOrderIds = previousSaved;
+            lastAction = previousAction;
+            DocumentRevision = previousRevision.DocumentRevision;
+            OrderRevision = previousRevision.OrderRevision;
+            contentRevision = previousRevision.ContentRevision;
+            searchText = previousSearch;
+            hasChanges = editorState != cleanState;
+            status = previousStatus;
+            try
+            {
+                Rows.ReplaceWith(previousRows);
+                RefreshCatalogueMatches();
+                SelectOrderRows(before.SelectedIndices.Where(index => index >= 0 && index < Rows.Count).Select(index => Rows[index]),
+                    before.SelectedIndex >= 0 && before.SelectedIndex < Rows.Count ? Rows[before.SelectedIndex] : null);
+                SelectAvailableRows(AvailableMods.Where(row => before.AvailableDirectories.Contains(row.Installation.Directory, StringComparer.OrdinalIgnoreCase)));
+                foreach (var property in new[] { nameof(HasDocument), nameof(SourceLabel), nameof(SourceFileName), nameof(VersionLabel),
+                    nameof(SearchText), nameof(ContentRevision), nameof(HasChanges), nameof(ChangeLabel), nameof(LastAction), nameof(HasLastAction) })
+                    OnPropertyChanged(property);
+                RefreshCommands();
+            }
+            finally
+            {
+                try { ensureGameClosed(); committed.Undo(); }
+                catch (Exception rollbackFailure) when (rollbackFailure is IOException or UnauthorizedAccessException or InvalidOperationException)
+                {
+                    throw new IOException("市场排序显示失败；配置回滚被外部改动或文件占用阻止。请检查原配置备份："
+                        + committed.BackupPath, new AggregateException(publicationFailure, rollbackFailure));
+                }
+            }
+            throw;
+        }
+    }
+
     private void ReplayHistory(bool undo)
     {
         var source = undo ? undoHistory : redoHistory;

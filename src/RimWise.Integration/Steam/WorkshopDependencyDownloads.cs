@@ -10,6 +10,58 @@ namespace RimWise.Integration.Steam;
 /// <summary>Metadata is the authority for required IDs; neither URLs nor IDs supplied by AI are used.</summary>
 public static class WorkshopDependencyDownloads
 {
+    public static async Task<string> GetCollectionDescriptionAsync(string input, CancellationToken token = default)
+    {
+        var id = ImportedOrderDownloads.WorkshopIdFromInput(input);
+        if (id is null) throw new InvalidDataException("请输入有效的 Steam 创意工坊合集编号或链接。");
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+        return await GetCollectionDescriptionAsync(client, id, token).ConfigureAwait(false);
+    }
+
+    internal static async Task<string> GetCollectionDescriptionAsync(HttpClient client, string id, CancellationToken token)
+    {
+        if (ImportedOrderDownloads.WorkshopIdFromInput(id) != id)
+            throw new InvalidDataException("Steam 创意工坊编号无效。");
+        using var body = new FormUrlEncodedContent(new Dictionary<string, string> { ["itemcount"] = "1", ["publishedfileids[0]"] = id });
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/") { Content = body };
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+        if (response.StatusCode != HttpStatusCode.OK) throw new IOException("Steam 未能返回该合集的简介。");
+        await using var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+        var bytes = await ReadBoundedAsync(stream, 256 * 1024, token).ConfigureAwait(false);
+        using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
+        if (!json.RootElement.TryGetProperty("response", out var root)
+            || !root.TryGetProperty("publishedfiledetails", out var details)
+            || details.ValueKind != JsonValueKind.Array || details.GetArrayLength() != 1)
+            throw new InvalidDataException("Steam 返回的合集资料格式无效。");
+        var item = details[0];
+        if (!item.TryGetProperty("result", out var result) || !result.TryGetInt32(out var resultCode) || resultCode != 1
+            || !item.TryGetProperty("consumer_app_id", out var app) || !app.TryGetInt32(out var appId) || appId != 294100
+            || !item.TryGetProperty("publishedfileid", out var publishedId) || publishedId.GetString() != id
+            || !item.TryGetProperty("file_type", out var type) || !type.TryGetInt32(out var fileType) || fileType != 2
+            || !item.TryGetProperty("description", out var description) || description.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("该链接不是可读取的 RimWorld 创意工坊合集。");
+        var text = description.GetString() ?? "";
+        if (text.Length > 8000) throw new InvalidDataException("Steam 合集简介超过 8000 字，未自动填入。");
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+    }
+
+    private static async Task<byte[]> ReadBoundedAsync(Stream stream, int maximumBytes, CancellationToken token)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[8192];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk.AsMemory(0, Math.Min(chunk.Length, maximumBytes + 1 - (int)buffer.Length)), token).ConfigureAwait(false);
+            if (read == 0) break;
+            if (buffer.Length + read > maximumBytes) throw new InvalidDataException("Steam 返回的合集资料过大。");
+            buffer.Write(chunk, 0, read);
+        }
+        token.ThrowIfCancellationRequested();
+        return buffer.ToArray();
+    }
+
     // Historical download intents are an audit trail, not authority to re-enable dependencies.
     internal static IEnumerable<RequiredModDownload> ActiveInstalledDownloads(ModCatalogue catalogue,
         IReadOnlyList<string> order, GameVersion version, IEnumerable<RequiredModDownload> downloads)

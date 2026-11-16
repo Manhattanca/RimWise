@@ -41,18 +41,15 @@ public partial class App : Application
 #if DEBUG
         isSmokeTest = e.Args.Length == 2 && e.Args[0] is "--smoke-test" or "--interaction-smoke" or "--marker-smoke" or "--ai-ui-smoke" or "--performance-smoke" or "--runtime-ui-smoke" or "--game-log-ui-smoke" or "--ai-sorting-smoke" or "--message-dialog-smoke" or "--diagnostic-export-smoke" or "--diagnostics-smoke" or "--steam-ui-smoke";
 #endif
-        // Storage migration can include hashing/copying. Keep the dispatcher responsive and
-        // show a small opening window instead of appearing to do nothing before MainWindow.
+        // The first-frame check uses the normal window creation path with an isolated profile.
+#if DEBUG
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--startup-presentation-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--marketplace-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--order-import-smoke";
+#endif
+        // Storage migration can include hashing/copying. Keep the dispatcher responsive,
+        // but show only the fully sized, themed main window once its profile is ready.
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        Window? opening = null;
-        if (!isSmokeTest)
-        {
-            opening = new Window { Title = "RimWise", Width = 340, Height = 120,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen, ResizeMode = ResizeMode.NoResize,
-                Content = new System.Windows.Controls.TextBlock { Text = "正在打开用户数据…",
-                    Margin = new Thickness(24), VerticalAlignment = VerticalAlignment.Center } };
-            opening.Show();
-        }
         try
         {
             await Task.Run(() => WaitForPreviousInstance(e.Args));
@@ -75,7 +72,6 @@ public partial class App : Application
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or JsonException)
         {
             UiDiagnosticEvents.Failure("profile-startup-failure", ex);
-            opening?.Close();
             MessageBox.Show("无法打开用户数据。请检查数据目录是否可用。\n\n" + ex.Message,
                 "RimWise", MessageBoxButton.OK, MessageBoxImage.Warning);
             Shutdown(1);
@@ -119,6 +115,12 @@ public partial class App : Application
         };
         MainWindow = window;
 #if DEBUG
+        if (e.Args.Length == 2 && e.Args[0] == "--marketplace-smoke")
+            MarketplaceSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--order-import-smoke")
+            OrderImportSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--startup-presentation-smoke")
+            StartupPresentationSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--interaction-smoke")
             InteractionMotionSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--steam-ui-smoke")
@@ -145,8 +147,14 @@ public partial class App : Application
             MessageDialogSmokeCheck.Attach(window, e.Args[1]);
 #endif
         window.Show();
-        opening?.Close();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
+        if (!await window.StartupPresentation.Ready)
+        {
+            // A failed native reveal must not leave an invisible process running.
+            if (window.IsVisible) window.Close();
+            return;
+        }
+        if (!window.IsVisible || Dispatcher.HasShutdownStarted) return;
         if (!isSmokeTest) _ = MaintainTestStorageAsync(UserStorage.DirectoryPath);
         if (maintenance is not null)
         {

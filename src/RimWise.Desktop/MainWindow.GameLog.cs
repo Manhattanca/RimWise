@@ -9,16 +9,22 @@ namespace RimWise.Desktop;
 public partial class MainWindow
 {
     private GameLogPage? gameLogPage;
+    private int mainPageIndex;
 
     private void MainPage_Changed(object sender, RoutedEventArgs e)
     {
-        if (GameLogHost is null || ModEditorFooter is null) return;
-        var logs = LogsPageTab.IsChecked == true;
+        if (GameLogHost is null || MarketplaceHost is null || ModEditorFooter is null) return;
+        var page = MarketPageTab.IsChecked == true ? 2 : LogsPageTab.IsChecked == true ? 1 : 0;
+        var logs = page == 1;
         if (logs && gameLogPage is null)
             GameLogHost.Content = gameLogPage = new GameLogPage(LocateGameLogs, () => ViewModel.CurrentCatalogue);
-        ModEditorBody.Visibility = ModEditorFooter.Visibility = logs ? Visibility.Collapsed : Visibility.Visible;
+        if (page == 2) EnsureMarketplacePage();
+        ModEditorBody.Visibility = ModEditorFooter.Visibility = page == 0 ? Visibility.Visible : Visibility.Collapsed;
         GameLogHost.Visibility = logs ? Visibility.Visible : Visibility.Collapsed;
-        if (IsLoaded) InterfaceMotion.SlidePage(logs ? GameLogHost : ModEditorBody, fromRight: logs);
+        MarketplaceHost.Visibility = page == 2 ? Visibility.Visible : Visibility.Collapsed;
+        var target = page == 2 ? MarketplaceHost : logs ? (FrameworkElement)GameLogHost : ModEditorBody;
+        if (IsLoaded && page != mainPageIndex) InterfaceMotion.SlidePage(target, fromRight: page > mainPageIndex);
+        mainPageIndex = page;
     }
 
     private (string Startup, string Runtime) LocateGameLogs()

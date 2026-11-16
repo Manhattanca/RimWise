@@ -87,13 +87,8 @@ public static class ImportedOrderDownloads
     public static async Task EnqueueAsync(ImportDownloadPlan plan, string applicationDirectory, IProgress<string>? progress, CancellationToken token)
     {
         var client = new SteamWorkshopClient(applicationDirectory);
-        foreach (var id in plan.Downloads.Select(d => d.WorkshopId).Distinct(StringComparer.Ordinal))
-        {
-            token.ThrowIfCancellationRequested();
-            if (!ValidId(id)) throw new InvalidDataException("工坊编号无效。");
-            // The bridge verifies AppID through SteamUGC before subscribing; no alternate HTTP download path is used.
-            await client.EnqueueSubscriptionAsync(id, progress, token);
-        }
+        var ids = plan.Downloads.Select(d => d.WorkshopId).Distinct(StringComparer.Ordinal).ToArray();
+        if (ids.Length > 0) await client.EnqueueMissingAsync(ids, progress, token);
     }
 
     public static Task<IReadOnlyList<WorkshopItemState>> WaitAsync(ImportDownloadPlan plan, string applicationDirectory,
@@ -150,10 +145,13 @@ public static class ImportedOrderDownloads
         var text = input?.Trim() ?? "";
         if (ValidId(text)) return text;
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme != "https"
+            || !uri.IsDefaultPort || uri.UserInfo.Length != 0
             || !uri.Host.Equals("steamcommunity.com", StringComparison.OrdinalIgnoreCase)
                 && !uri.Host.Equals("www.steamcommunity.com", StringComparison.OrdinalIgnoreCase)
             || uri.AbsolutePath.TrimEnd('/') is not ("/sharedfiles/filedetails" or "/workshop/filedetails")) return null;
-        var ids = uri.Query.TrimStart('?').Split('&').Where(p => p.StartsWith("id=", StringComparison.Ordinal)).Select(p => p[3..]).ToArray();
+        var ids = uri.Query.TrimStart('?').Split('&').Select(part => part.Split('=', 2))
+            .Where(parts => parts.Length == 2 && Uri.UnescapeDataString(parts[0]).Equals("id", StringComparison.OrdinalIgnoreCase))
+            .Select(parts => Uri.UnescapeDataString(parts[1])).ToArray();
         return ids.Length == 1 && ValidId(ids[0]) ? ids[0] : null;
     }
 }

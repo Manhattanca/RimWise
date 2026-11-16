@@ -28,10 +28,15 @@ public partial class MainWindow : Window
     private CancellationTokenSource? scanCancellation;
     private int scanGeneration;
     public MainViewModel ViewModel { get; } = new();
+    internal StartupWindowPresentation StartupPresentation { get; }
 
     public MainWindow(bool initializePaths = true)
     {
         InitializeComponent();
+        // SourceInitialized precedes the native window becoming visible. Loaded is too
+        // late to choose the first clear color and caption theme on a cold launch.
+        SourceInitialized += (_, _) => WindowFrameTheme.Apply(this);
+        StartupPresentation = new StartupWindowPresentation(this);
         Title = ProductTitle;
         DataContext = ViewModel;
         InitializeListDisplay();
@@ -45,13 +50,16 @@ public partial class MainWindow : Window
         {
             if (pathInitialization is not null) return;
             pathInitialization = InitializeStartupAsync();
-            _ = StartBackgroundUpdateAsync();
             await pathInitialization;
         };
     }
 
     private async Task InitializeStartupAsync()
     {
+        // Do not let recovery dialogs, metadata I/O or update checks compete with
+        // the first visible frame or open a modal child of a still-cloaked window.
+        if (!await StartupPresentation.Ready || lifetime.IsCancellationRequested) return;
+        _ = StartBackgroundUpdateAsync();
         await InitializePathsAsync();
         await LoadCustomRulesAsync();
         if (lifetime.IsCancellationRequested) return;
@@ -130,6 +138,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         gameLogPage?.Dispose();
+        marketplacePage?.Cancel();
         recoveryEnabled = false;
         recoveryTimer.Stop();
         if (ViewModel is not null)
@@ -204,6 +213,8 @@ public partial class MainWindow : Window
     private string? UserDataMoveBlocker()
     {
         if (ViewModel.HasChanges) return "请先保存当前排序，再更换用户数据目录。";
+        if (marketplacePage?.IsBusy == true)
+            return "请等待市场下载或提交结束后再更换用户数据目录。";
         if (aiSortingWindow?.IsWorking == true || importCancellation is not null || scanTask is { IsCompleted: false })
             return "请等待刷新、下载或 AI 任务结束后再更换用户数据目录。";
         if (OwnedWindows.Cast<Window>().Any(window => window is not PathSettingsWindow))

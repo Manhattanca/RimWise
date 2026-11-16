@@ -7,13 +7,14 @@
 ## 功能
 
 - 模组搜索、批量启用和移出、拖动排序、颜色标记、撤销与恢复。
-- 导入排序与存档；结合元数据、社区规则和依赖关系补齐前置、调整顺序。
+- 导入排序与存档，保留导入顺序；缺少模组与版本差异会提示。仅在自动排序时结合元数据、社区规则和依赖关系调整顺序。
 - 为新增 Mod 寻找位置，或重新调整完整排序；遇到移出候选按用户的确认设置处理。
 - 经 Steam 启动 Steam 版游戏，通过临时辅助 Mod 检查新游戏流程和日志。
 - 本地静态分析与受限反编译，为 AI 提供相关证据；不执行被分析的程序集。
 - 离线自动排序结合本地元数据、缓存规则和程序集关系，单次排序，不调用 AI 或启动游戏。
 - 记录实际回报的 token 用量；未回报用量单独标记。支持导出脱敏诊断日志。
 - 后台检查 GitHub Releases 更新，校验下载后在右上角通知；点击“更新并重启”完成安装并打开新版。
+- 排序市场（测试）：匿名浏览和下载，作者通过 GitHub 登录投稿、管理草稿与提交更新，支持 Steam 合集和最多三张图片。
 
 日常模组管理和规则排序无需 AI。AI 自动排障需要用户自行配置服务，服务费用由对应提供商收取。AI 接收筛选、脱敏后的技术信息，不能任意读取电脑文件或执行命令。
 
@@ -41,7 +42,9 @@
 
 ### 构建分发包
 
-运行 `scripts/Publish-Preview.ps1 -Version 0.5.1` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.5.1 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
+运行 `scripts/Publish-Preview.ps1 -Version 0.6.0` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.6.0 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
+
+独立审核助手源码位于 `tools/RimWise.MarketplaceReview`，仅连接 GitHub，每 30 分钟检查待审投稿，人工核对图片和文字后合并。使用 `dotnet publish tools/RimWise.MarketplaceReview -c Release -o work/review` 构建；登录所需 OAuth 共享配置通过构建时的 `RimWiseGitHubOAuthClientSecret` 环境变量提供，不随源码分发。运行助手加 `--self-test <输出目录>` 可进行隔离测试，不接触真实投稿。
 
 启动后核对游戏、模组和配置路径，再导入或调整排序。AI 功能在“自动排序”窗口配置。用户数据独立于程序目录，密钥在本机加密保存；迁移数据请使用软件的路径设置。
 

@@ -66,6 +66,7 @@ public partial class MainWindow
         if (preview.ShowDialog() != true) return false;
         ViewModel.ReplaceFileUndoable(loaded, path, title);
         ViewModel.SelectedRow = ViewModel.Rows.FirstOrDefault();
+        ViewModel.Status = $"已导入排序（{ViewModel.Rows.Count} 项），保留原有顺序。" + ImportedMissingModsNotice();
         return true;
     }
 

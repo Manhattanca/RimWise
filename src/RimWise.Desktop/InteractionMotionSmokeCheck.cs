@@ -158,12 +158,20 @@ internal static class InteractionMotionSmokeCheck
                     Check(dialogContent.Opacity == 1 && !dialogContent.HasAnimatedProperties,
                         "Animation releases property clock " + theme);
                     var dialog = new MotionTestWindow { Owner = window, Content = dialogContent,
-                        Width = 260, Height = 140, ShowInTaskbar = false };
+                        Width = 260, Height = 140, ShowInTaskbar = false,
+                        Style = (Style)window.FindResource(typeof(Window)) };
+                    var opaqueSlideObserved = false;
+                    dialog.Loaded += (_, _) => opaqueSlideObserved = dialogContent.Opacity == 1
+                        && dialogContent.RenderTransform is TranslateTransform slide
+                        && (!InterfaceMotion.Enabled || slide.HasAnimatedProperties);
                     dialog.Show();
                     await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
-                    Check(!InterfaceMotion.Enabled || dialogContent.HasAnimatedProperties, "Dialog opens with animation " + theme);
+                    Check(opaqueSlideObserved, "Dialog opens with fully opaque slide animation " + theme);
+                    Check(await SecondaryWindowPresentation.GetPresentation(dialog)!.Ready,
+                        "Dialog waits for its themed first frame " + theme);
                     await Task.Delay(240);
-                    Check(!dialogContent.HasAnimatedProperties && dialogContent.Opacity == 1, "Dialog animation completes " + theme);
+                    Check(!dialogContent.HasAnimatedProperties && dialogContent.Opacity == 1
+                        && dialogContent.RenderTransform is TranslateTransform { X: 0, HasAnimatedProperties: false }, "Dialog animation completes " + theme);
                     dialog.Close();
                     var popupContent = new Border { Width = 150, Height = 80, Background = Brushes.Teal };
                     var popup = new Popup { PlacementTarget = window.FileMenu, Child = popupContent,

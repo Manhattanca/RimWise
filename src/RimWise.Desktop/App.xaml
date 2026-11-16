@@ -10,6 +10,27 @@
                 <ResourceDictionary Source="Resources/ModPresentation.xaml" />
             </ResourceDictionary.MergedDictionaries>
             <sys:Double x:Key="ModRowHeight">38</sys:Double>
+            <!-- Remove the system focus frame around containers and options. Interactive
+                 controls keep their own themed focus state and keyboard navigation. -->
+            <Style x:Key="DefaultControlFocusVisualStyle" TargetType="Control">
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Control"/></Setter.Value></Setter>
+            </Style>
+            <Style x:Key="{x:Static SystemParameters.FocusVisualStyleKey}" TargetType="Control"
+                   BasedOn="{StaticResource DefaultControlFocusVisualStyle}"/>
+            <Style TargetType="ScrollViewer">
+                <Setter Property="Focusable" Value="False"/>
+                <Setter Property="IsTabStop" Value="False"/>
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            <Style x:Key="NotificationCard" TargetType="Border">
+                <Setter Property="Width" Value="370"/>
+                <Setter Property="HorizontalAlignment" Value="Right"/>
+                <Setter Property="Padding" Value="16"/>
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            </Style>
             <Style x:Key="NavigationTab" TargetType="RadioButton">
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                 <Setter Property="Padding" Value="16,7"/><Setter Property="Margin" Value="0,0,6,0"/>
@@ -38,6 +59,7 @@
                 <Setter Property="Padding" Value="10" />
             </Style>
             <Style TargetType="Window">
+                <Setter Property="motion:SecondaryWindowPresentation.IsEnabled" Value="True" />
                 <Setter Property="Icon" Value="/RimWise;component/Resources/Branding/RimWise.ico" />
                 <Setter Property="Background" Value="{DynamicResource PageBrush}" />
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
@@ -45,6 +67,7 @@
                 <Setter Property="FontSize" Value="14" />
             </Style>
             <Style TargetType="Button">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                 <Setter Property="Padding" Value="18,8" /><Setter Property="MinWidth" Value="86" />
                 <Setter Property="Margin" Value="8,0,0,0" />
                 <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
@@ -72,8 +95,23 @@
                 <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
                 <Setter Property="Padding" Value="4" />
                 <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                <Setter Property="Template"><Setter.Value>
+                    <ControlTemplate TargetType="ListBox">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ScrollViewer" Focusable="False" CanContentScroll="True">
+                                <ItemsPresenter/>
+                            </ScrollViewer>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.7"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value></Setter>
             </Style>
             <Style TargetType="ListBoxItem">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                 <Setter Property="Padding" Value="8,6" />
                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -96,6 +134,19 @@
                 <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
                 <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBrush}" />
                 <Setter Property="Padding" Value="9,7" /><Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                <Setter Property="Template"><Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.5"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value></Setter>
             </Style>
             <Style TargetType="Menu">
                 <Setter Property="Background" Value="{DynamicResource PanelBrush}" />

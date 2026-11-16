@@ -12,6 +12,11 @@ internal static class WindowFrameTheme
     {
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == IntPtr.Zero) return;
+        // Until WPF submits its first frame (and during resize), the native surface
+        // must clear to the same opaque color as the already-selected window theme.
+        if (window.Background is SolidColorBrush { Color.A: 255 } background
+            && HwndSource.FromHwnd(handle)?.CompositionTarget is { } target)
+            target.BackgroundColor = background.Color;
         var dark = Application.Current is App app && app.Themes is { IsDark: true } ? 1 : 0;
         Set(handle, 20, dark);
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;

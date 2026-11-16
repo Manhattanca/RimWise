@@ -139,7 +139,7 @@ internal static class MaintenanceDiagnosisChecks
             Assert(result.Outcome == MaintenanceOutcome.Stopped && result.Attempts == 0 && client.Calls == 0
                 && !session.Began && !result.HasUnknownUsage && new AiTaskRecoveryStore(root).Inspect().Count == 0);
         });
-        check("Output allowance grows only for a new tested order and stops paid requests at the ceiling", () =>
+        check("Truncated output stops immediately without increasing the allowance or testing another order", () =>
         {
             var root = Path.Combine(Root, "output-ceiling");
             var client = new TruncatedClient();
@@ -148,14 +148,14 @@ internal static class MaintenanceDiagnosisChecks
             var limits = new MaintenanceLimits(5, OutputTokensPerRequest: 16384)
                 { TokenLimitEnabled = false, ExpandOutputBudget = true };
             var result = controller.RunAsync(Request(), Catalogue(), [], limits, null, CancellationToken.None).GetAwaiter().GetResult();
-            Assert(client.Limits.SequenceEqual([16384, 32768]), result.Message);
-            Assert(session.Attempts == 3 && result.Requests == 2 && result.ReportedTokens == 49172
+            Assert(client.Limits.SequenceEqual([16384]), result.Message);
+            Assert(session.Attempts == 1 && result.Requests == 1 && result.ReportedTokens == 16394
                 && result.Outcome == MaintenanceOutcome.Stopped && result.Message.Contains("输出额度"), result.Message);
             var saved = new AiTaskRecoveryStore(root).Inspect().Single().Checkpoint!;
-            Assert(saved.OutputBudgetExhausted && saved.LastRequestOutputLimit == 32768 && saved.ReportedTokens == 49172);
-            Assert(AiOutputBudget.Next(saved.Limits!, saved.LastRequestOutputLimit, saved.OutputBudgetExhausted) is null);
+            Assert(saved.OutputBudgetExhausted && saved.LastRequestOutputLimit == 16384 && saved.ReportedTokens == 16394
+                && !saved.MayApply);
         });
-        check("Adaptive output still respects total token budget and legacy opt-out", () =>
+        check("Remaining token budget never permits continuing after truncated output", () =>
         {
             var limits = new MaintenanceLimits(5, OutputTokensPerRequest: 16384) { ExpandOutputBudget = true };
             var root = Path.Combine(Root, "output-budget");
@@ -164,7 +164,8 @@ internal static class MaintenanceDiagnosisChecks
             var controller = new LevelOneMaintenance(client, new AiTokenEstimator(root), session);
             var result = controller.RunAsync(Request(), Catalogue(), [], limits with { TokenBudget = 40000 },
                 null, CancellationToken.None).GetAwaiter().GetResult();
-            Assert(client.Limits.SequenceEqual([16384]) && result.Requests == 1 && result.Message.Contains("预算"), result.Message);
+            Assert(client.Limits.SequenceEqual([16384]) && result.Requests == 1 && session.Attempts == 1
+                && result.Outcome == MaintenanceOutcome.Stopped && result.Message.Contains("已停止自动排序"), result.Message);
             Assert(AiOutputBudget.Next(new(5), 4096, true) is null
                 && AiOutputBudget.Next(limits, 32768, false) == 32768);
         });
@@ -226,7 +227,7 @@ internal static class MaintenanceDiagnosisChecks
             Assert(reply.Failure == AiReplyFailure.ServiceFailure && reply.ServiceError is { Kind: "http", HttpStatus: 413 });
             Assert(!JsonSerializer.Serialize(reply).Contains("private-provider-content") && handler.Calls == 1);
         });
-        check("Service failure and unknown usage continue to reversible trial and clean retest", () =>
+        check("Service failure preserves unknown usage and stops without any trial or second game test", () =>
         {
             var session = new FakeSession(Feedback(FailedReport()));
             var client = new FailingClient();
@@ -235,12 +236,12 @@ internal static class MaintenanceDiagnosisChecks
             var result = controller.RunAsync(Request(), Catalogue(), [],
                 new(3) { TokenLimitEnabled = false }, new CaptureProgress(visible), CancellationToken.None).GetAwaiter().GetResult();
             Assert(visible.Any(p => p.ReportText?.Contains("HTTP 413") == true)
-                && visible.Any(p => p.Attempt == 2 && p.PreparedOrder?.SequenceEqual([Order[0], Order[3]]) == true),
-                "Round report or current test order missing");
-            Assert(result.Outcome == MaintenanceOutcome.Passed, result.Message);
-            Assert(client.Calls == 1 && result.Attempts == 2 && result.HasUnknownUsage && result.OriginalRestored);
-            Assert(result.TrialExclusions.Count == 1 && !result.TrialRemovalsApproved && session.Finished);
-            Assert(result.LastAttemptedOrder.SequenceEqual([Order[0], Order[3]]));
+                && !visible.Any(p => p.Attempt > 1), "Failure report missing or later test started");
+            Assert(result.Outcome == MaintenanceOutcome.Stopped, result.Message);
+            Assert(client.Calls == 1 && result.Attempts == 1 && session.TestCalls == 1
+                && result.HasUnknownUsage && result.OriginalRestored);
+            Assert(result.TrialExclusions.Count == 0 && !result.TrialRemovalsApproved && session.Finished);
+            Assert(result.LastAttemptedOrder.SequenceEqual(Order));
         });
         check("Protected failure stops with safe status instead of removing required mods", () =>
         {

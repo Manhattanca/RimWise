@@ -42,7 +42,7 @@
 
 ### 构建分发包
 
-运行 `scripts/Publish-Preview.ps1 -Version 0.6.1` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.6.1 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
+运行 `scripts/Publish-Preview.ps1 -Version 0.6.2` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.6.2 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
 
 独立审核助手源码位于 `tools/RimWise.MarketplaceReview`，仅连接 GitHub，每 30 分钟检查待审投稿，人工核对图片和文字后合并。使用 `dotnet publish tools/RimWise.MarketplaceReview -c Release -o work/review` 构建；登录所需 OAuth 共享配置通过构建时的 `RimWiseGitHubOAuthClientSecret` 环境变量提供，不随源码分发。运行助手加 `--self-test <输出目录>` 可进行隔离测试，不接触真实投稿。
 

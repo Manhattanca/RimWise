@@ -48,8 +48,8 @@ try
         if (deletions.Length > 0)
         {
             var id = deletions[0].Value.Manifest.Id;
-            if (deletions.Any(pair => pair.Value.Manifest.Id != id) || after.Values.Any(record => record.Manifest.Id == id))
-                throw new InvalidDataException("Removal must cover all versions of exactly one order.");
+            if (deletions.Any(pair => pair.Value.Manifest.Id != id))
+                throw new InvalidDataException("Removal must cover versions of exactly one order.");
         }
         // A trusted list of every changed repository path prevents disguised source,
         // workflow or catalogue edits. Both author identity and exact scope are required.

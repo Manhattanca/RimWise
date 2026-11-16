@@ -169,7 +169,7 @@ public sealed class AiClient : IAiClient, IDisposable
             new(body, error, usage, streaming) { ProviderIds = headerIds.Concat(streamed.ProviderIds)
                 .Concat(BodyId(body) is { } id ? [id] : []).Distinct().Take(8).ToArray(),
                 FinishReason = streamed.FinishReason ?? ReadFinishReason(body),
-                ServiceError = error is null ? null : new(kind, status) };
+                ServiceError = error is null ? null : new(kind, status) { Provider = AiChatCompatibility.Provider(settings) } };
         try
         {
             using var response = await SendWithRedirectsAsync(endpoint ?? new Uri(settings.Endpoint), apiKey,
@@ -204,7 +204,7 @@ public sealed class AiClient : IAiClient, IDisposable
                 buffer.Position = 0;
                 return Reply(await streamed.ReadAsync(buffer, token).ConfigureAwait(false), null, streamed.Usage, true);
             }
-            return Reply(text, response.IsSuccessStatusCode ? null : HttpProblem((int)response.StatusCode, method == HttpMethod.Get),
+            return Reply(text, response.IsSuccessStatusCode ? null : HttpProblem((int)response.StatusCode, method == HttpMethod.Get, settings),
                 AiTokenUsage.Read(text), kind: "http");
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested && streamed.Usage is not null)
@@ -225,7 +225,9 @@ public sealed class AiClient : IAiClient, IDisposable
         catch (DecoderFallbackException) { return Reply(null, "AI 流式响应编码无效。", streamed.Usage); }
     }
 
-    private static string HttpProblem(int status, bool listingModels) => $"HTTP {status}：" + (status switch
+    private static string HttpProblem(int status, bool listingModels, AiSettings settings) => status is 401 or 403
+        ? (new AiServiceError("http", status) { Provider = AiChatCompatibility.Provider(settings) }).DisplayText
+        : $"HTTP {status}：" + (status switch
     {
         401 => "密钥未通过认证，请检查密钥是否正确或已失效。",
         403 => "服务拒绝访问，请检查密钥权限、服务地区或账户限制。",

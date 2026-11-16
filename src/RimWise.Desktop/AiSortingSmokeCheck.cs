@@ -100,6 +100,20 @@ internal static class AiSortingSmokeCheck
             window.EstimateButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert(client.Calls == 0 && secrets.Reads == 0 && window.TokenText.Text.Length > 0, "Local estimate used network or key.");
             checks.Add("opening and estimating incur no request and no secret access");
+            var failedClient = new FakeClient { Connection = new(false, "无法连接合成 AI 服务。"),
+                Response = (_, _) => throw new InvalidOperationException("Preflight failure sent generation") };
+            var preflightRoot = Path.Combine(root, "failed-preflight");
+            var failedSession = new AiSortingSession(vm, preflightRoot, failedClient, new SecretCounter());
+            try
+            {
+                await failedSession.RequestAsync(settings, failedSession.Estimate(settings), default);
+                throw new InvalidOperationException("Preflight failure did not stop sorting");
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("排序前 AI 连接校验未通过")) { }
+            Unchanged();
+            Assert(failedClient.ConnectionCalls == 1 && failedClient.Calls == 0 && failedSession.Tasks.Inspect().Count == 0
+                && !File.Exists(Path.Combine(root, "ModsConfig.xml")), "Failed preflight changed order or created a billed task.");
+            checks.Add("one-shot preflight failure stops before generation or billing task and preserves original order");
             var historical = Path.Combine(root, "Data", "GameTests", "game-" + Guid.NewGuid().ToString("N"));
             var historicalAttempt = Path.Combine(historical, "attempt-01 测试数据");
             Directory.CreateDirectory(historicalAttempt);
@@ -165,6 +179,45 @@ internal static class AiSortingSmokeCheck
             await window.StartSortingAsync(); Unchanged();
             Assert(!window.ApplyButton.IsEnabled, "Unsuccessful service response can apply.");
             checks.Add("unsuccessful response cannot apply even with attached actions");
+
+            foreach (var failure in Enum.GetValues<AiReplyFailure>().Where(value => value != AiReplyFailure.None))
+            {
+                Reset();
+                var failedReply = new AiSortingSession(vm, root, new FakeClient
+                    { Response = (_, _) => Task.FromResult(GoodReply() with { Failure = failure }) }, secrets);
+                var rejected = await failedReply.RequestAsync(settings, failedReply.Estimate(settings), default);
+                Assert(!failedReply.CanApply(rejected)
+                    && !failedReply.Tasks.Inspect().Single(task => task.Id == rejected.TaskId).Checkpoint!.MayApply,
+                    "AI failure with attached actions became applicable or recoverable.");
+                Unchanged();
+            }
+            checks.Add("one-shot AI failures cannot apply or recover attached actions");
+
+            if (Environment.GetEnvironmentVariable("RIMWISE_AI_SORTING_SMOKE_SCOPE") == "preflight")
+            {
+                Reset();
+                var focusedAutomatic = new AutomaticSortingSession(vm, root, new(vm, root, client, secrets), client);
+                var focusedRequest = AiSortingSession.CreateRequest(vm, settings, null);
+                var focusedPaths = new GamePaths();
+                foreach (var failure in Enum.GetValues<AiReplyFailure>().Where(value => value != AiReplyFailure.None))
+                {
+                    var stopped = new AutomaticMaintenanceResult(new(MaintenanceOutcome.Stopped, "合成 AI 错误", 1, 1,
+                        150, false, ["second.mod", "first.mod"], true) { ReplyFailure = failure }, null, [])
+                        { PreparedOrder = ["second.mod", "first.mod"] };
+                    Assert(!AutomaticSortingSession.NeedsLastOrderChoice(stopped.Maintenance)
+                        && AiSortingWindow.TerminalNotice(stopped, false) is { Title: "AI 错误，自动排序已停止", Image: MessageBoxImage.Warning },
+                        "AI error offered a failed candidate or lost its Chinese warning.");
+                    var publication = focusedAutomatic.PublishPreparation(stopped, focusedRequest, settings,
+                        () => focusedPaths, focusedPaths, vm.ContentRevision, catalogue, default);
+                    Assert(!publication.PreparationApplied, "AI error published local preparation.");
+                    Unchanged();
+                }
+                checks.Add("every AI error shows a Chinese warning, blocks failed-candidate saving and preserves the original order");
+                File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new
+                    { Passed = true, Scope = "preflight-and-ai-errors", RealAiRequest = false, RealGameRun = false, Checks = checks },
+                    new JsonSerializerOptions { WriteIndented = true }));
+                return;
+            }
 
             Reset(); client.Response = (_, _) => Task.FromResult(GoodReply());
             var auditPath = Path.Combine(root, "Data", "ai-audit.json");
@@ -322,6 +375,15 @@ internal static class AiSortingSmokeCheck
                 2, 1, 150, false, preparedOrder.Where(id => id != "first.mod").ToArray(), true)
                 { TrialExclusions = [temporaryTrial] }, null, []) { PreparedOrder = preparedOrder };
             callsBeforePublish = client.Calls;
+            foreach (var failure in Enum.GetValues<AiReplyFailure>().Where(value => value != AiReplyFailure.None))
+            {
+                var aiStopped = automatic.PublishPreparation(unsuccessful with { Maintenance = unsuccessful.Maintenance with
+                    { ReplyFailure = failure } }, request, settings, () => paths, paths, revision, preparationCatalogue, default);
+                Assert(!aiStopped.PreparationApplied && Order().SequenceEqual(originalPreparation)
+                    && vm.ContentRevision == revision && client.Calls == callsBeforePublish,
+                    "AI error published local preparation or changed the original order.");
+            }
+            checks.Add("all AI error categories preserve the original editor order and block preparation publication");
             var publishedPreparation = automatic.PublishPreparation(unsuccessful, request, settings, () => paths,
                 paths, revision, preparationCatalogue, default);
             Assert(publishedPreparation.PreparationApplied && !publishedPreparation.CandidateApplied
@@ -365,6 +427,16 @@ internal static class AiSortingSmokeCheck
             Assert(!cancelledPreparation.PreparationApplied && Order().SequenceEqual(originalPreparation), "Cancelled preparation published changes.");
             checks.Add("unsuccessful tests retain recursive installed dependencies and declared DLC as one undoable unsaved edit, preserve all original mods, reject stale/cancelled results and safely normalize recovery without AI");
 
+            foreach (var failure in Enum.GetValues<AiReplyFailure>().Where(f => f != AiReplyFailure.None))
+            {
+                var failedAi = new AutomaticMaintenanceResult(new(MaintenanceOutcome.Stopped, "合成 AI 错误", 2, 1, 300, false,
+                    ["second.mod", "first.mod"], true) { ReplyFailure = failure }, null, []);
+                Assert(!AutomaticSortingSession.NeedsLastOrderChoice(failedAi.Maintenance), "AI error offered a stopped-order save choice.");
+                var notice = AiSortingWindow.TerminalNotice(failedAi, false);
+                Assert(notice?.Title == "AI 错误，自动排序已停止" && notice.Value.Image == MessageBoxImage.Warning,
+                    "AI error did not present a Chinese warning.");
+            }
+            checks.Add("AI errors show a Chinese terminal warning and never offer to save a stopped candidate");
             foreach (var stop in new[] { MaintenanceOutcome.Cancelled, MaintenanceOutcome.Failed, MaintenanceOutcome.Stopped })
             {
                 Reset();
@@ -1586,12 +1658,13 @@ internal static class AiSortingSmokeCheck
     }
     private sealed class FakeClient : IAiClient
     {
-        internal int Calls;
+        internal int Calls, ConnectionCalls;
+        internal AiConnectionResult Connection = new(true, "合成连接正常");
         internal required Func<AiRequest, CancellationToken, Task<AiClientResult>> Response;
         public Task<AiClientResult> GetSuggestionAsync(AiRequest request, CancellationToken cancellationToken)
         { Calls++; return Response(request, cancellationToken); }
         public Task<AiConnectionResult> TestConnectionAsync(AiSettings settings, string? apiKey, CancellationToken cancellationToken)
-            => throw new InvalidOperationException("Unexpected connection test.");
+        { ConnectionCalls++; return Task.FromResult(Connection); }
     }
 }
 #endif

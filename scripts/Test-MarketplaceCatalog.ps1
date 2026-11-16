@@ -81,8 +81,13 @@ try {
     [IO.File]::WriteAllBytes((Join-Path $baseline $later), $laterBytes)
     [IO.File]::WriteAllBytes((Join-Path $candidate $later), $laterBytes)
     & $runner validate-submission $baseline $candidate
-    if ($LASTEXITCODE -eq 0) { throw 'Partial version removal accepted.' }
-    $checks.Add('Partial removal rejected so an old version cannot reappear')
+    if ($LASTEXITCODE -ne 0) { throw 'Selected version removal rejected.' }
+    $checks.Add('Author may remove one version while preserving another')
+    & $runner build $candidate
+    if ($LASTEXITCODE -ne 0) { throw 'Partial removal catalogue failed.' }
+    $partialIndex = [IO.File]::ReadAllText((Join-Path $candidate 'marketplace/index.json')) | ConvertFrom-Json
+    if (@($partialIndex.entries | Where-Object id -EQ 'test-collection').Count -ne 1 -or @($partialIndex.entries | Where-Object id -EQ 'test-collection')[0].version -cne '1.0.1') { throw 'Remaining version was lost.' }
+    $checks.Add('Catalogue excludes selected version and retains the remaining version')
     [IO.File]::Delete((Join-Path $candidate $later))
     [IO.File]::WriteAllText($changed, $relative + [char]0 + $later + [char]0)
     & $runner validate-submission $baseline $candidate

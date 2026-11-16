@@ -165,6 +165,7 @@ public sealed class LevelOneMaintenance
         var seen = new List<string[]> { current };
         ConflictRemovalApproval[] approvals = [];
         TrialExclusion[] trials = [];
+        IReadOnlyList<string[]> cycleGroups = [];
         StartupFailureDetails? startupFailure = null;
         var replyFailure = AiReplyFailure.None;
         string? analysis = null;
@@ -221,6 +222,18 @@ public sealed class LevelOneMaintenance
             }
             persistFinal = true;
             usagePeriod = recoveryTask.TrackUsagePeriod(request);
+            // A saved AI error is terminal too: do not prepare, replay a candidate, or
+            // begin a local experiment merely because the user reopened the task.
+            if (recoveryTask.Current.Feedback is { } rejectedFeedback
+                && (rejectedFeedback.ReplyFailure != AiReplyFailure.None || rejectedFeedback.ServiceError is not null))
+            {
+                replyFailure = rejectedFeedback.ReplyFailure == AiReplyFailure.None
+                    ? AiReplyFailure.ServiceFailure : rejectedFeedback.ReplyFailure;
+                logPaths = rejectedFeedback.LogPaths;
+                restored = true;
+                Stop(AiErrorStop());
+                return Result(outcome, message);
+            }
             string[]? initialOrder = null;
             if (preparation is not null)
             {
@@ -236,6 +249,14 @@ public sealed class LevelOneMaintenance
                 if (resumeTaskId is null || attempts == 0 && current.SequenceEqual(request.CurrentOrder, StringComparer.Ordinal)
                     || approvals.SelectMany(a => a.RemovedIds).Any(id => current.Contains(id, StringComparer.OrdinalIgnoreCase)))
                     initialOrder = prepared.InitialOrder.ToArray();
+            }
+            if (GameVersion.Parse(request.GameVersion) is { } cycleVersion)
+            {
+                var cycleOrder = DeclaredConflictResolution.Replay(catalogue,
+                    AiOrderPlanner.ExpandRequiredOrder(request.CurrentOrder, catalogue, cycleVersion, allowMissing: true),
+                    request.RetainedMods, cycleVersion, approvals);
+                cycleGroups = new LoadOrderSorter().Sort(catalogue, cycleOrder, cycleVersion, cycleVersion,
+                    rules, deferAdvisoryCycles: true).DeferredCycles;
             }
             began = true; // A partially failed Begin still needs recovery.
             await session.BeginAsync(deadline.Token);
@@ -320,6 +341,8 @@ public sealed class LevelOneMaintenance
                 logPaths = report.LogPaths;
                 analysis = recoveryTask.Current.Feedback?.Analysis ?? analysis;
                 replyFailure = recoveryTask.Current.Feedback?.ReplyFailure ?? AiReplyFailure.None;
+                if (replyFailure != AiReplyFailure.None || recoveryTask.Current.Feedback?.ServiceError is not null)
+                { Stop(AiErrorStop()); break; }
                 if (startupFailure?.Context.Evidence.Any(e => e.Code == "GraphicsManifestUnavailable") == true)
                 // Legacy checkpoints used a broader match. Do not turn unverified historical
                 // failures into passes; fresh logs use the exact approved parser exclusions.
@@ -370,6 +393,42 @@ public sealed class LevelOneMaintenance
                 { Stop("已针对明确的运行时阻断完成一次定向复测，但仍有其他未解决错误；按安全边界不再请求 AI 或排除其他模组。原排序已恢复，请先更新或处理阻断模组及剩余兼容问题。"); break; }
                 if (startupFailure is null && ((!report.StartupVerified && !report.CanDiagnose) || report.Errors.Count == 0))
                 { Stop("游戏未完成启动验证，不能将空日志判定为通过。"); break; }
+                if (GameVersion.Parse(request.GameVersion) is { } cycleVersionForReport)
+                {
+                    var associated = OrderingCycleTrials.Associated(report, catalogue, current, cycleVersionForReport);
+                    var related = OrderingCycleTrials.Related(cycleGroups, current, associated);
+                    if (related.Count > 0)
+                    {
+                        if (AttemptLimitReached(attempts))
+                        { Stop("循环组出现关联红字，但测试次数已用尽；未应用无法复测的换位或试排除。"); break; }
+                        var swapped = false;
+                        foreach (var candidate in OrderingCycleTrials.Swaps(related, current, associated, seen, deadline.Token))
+                        {
+                            var swapPlan = AiOrderPlanner.PreparedOrder(current, candidate, catalogue, request.RetainedMods,
+                                cycleVersionForReport, rules, []);
+                            if (!swapPlan.CanApply) continue;
+                            // Journal the target before touching the private test configuration.
+                            // Recovery rebuilds it with the same trusted planner and no AI request.
+                            recoveryTask.Save(recoveryTask.Current with { Phase = AiTaskPhase.Paused,
+                                CurrentOrder = candidate.ToArray(), SeenOrders = seen.Append(candidate).ToArray(),
+                                Feedback = null, MayApply = false, Actions = [], PendingConflict = null });
+                            await session.ApplyAsync(swapPlan, deadline.Token);
+                            current = candidate; seen.Add(current);
+                            Save(AiTaskPhase.Paused, clearFeedback: true);
+                            Report("本轮红字关联到循环组，正在交换组内位置复测："
+                                + string.Join("、", related.SelectMany(group => group).Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .Select(id => ModDisplayName.Resolve(catalogue, cycleVersionForReport, id)))
+                                + "。保留模组及安装文件，尚未确认报错解决。");
+                            swapped = true;
+                            break;
+                        }
+                        if (swapped) continue;
+                        if (await TryTrialAsync(report, related.SelectMany(group => group).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()))
+                            continue;
+                        Stop("循环组的可用换位未解决红字，且没有进一步满足保留及依赖保护的单项试排除；已保留日志，未将剩余错误判定为通过。");
+                        break;
+                    }
+                }
                 var failureFingerprint = MaintenanceFailureSignature.Create(report);
                 if (recoveryTask.Current.Feedback is not { ReplyReceived: true }
                     && MaintenanceErrorMemory.Covered(report, recoveryTask.Current.DiagnosedErrors))
@@ -402,8 +461,7 @@ public sealed class LevelOneMaintenance
                     if (recoveryTask.Current.LastUsage?.Output > (recoveryTask.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest))
                         Stop("服务未遵守输出上限，已停止；恢复不会绕过用量限制。");
                     else if (await TryTrialAsync(report)) continue;
-                    else Stop(replyFailure != AiReplyFailure.None ? ReplyFailureStop(report)
-                        : "上轮 AI 回复已保存，但没有通过校验的待执行调整；已停止，避免重复付费请求。");
+                    else Stop("上轮 AI 回复已保存，但没有通过校验的待执行调整；已停止，避免重复付费请求。");
                     break;
                 }
                 // Even the final failed launch deserves a diagnosis, but cannot authorize an untestable change.
@@ -422,9 +480,7 @@ public sealed class LevelOneMaintenance
                 if (outputLimit is null)
                 {
                     replyFailure = AiReplyFailure.OutputLimit;
-                    Report("服务已在当前输出额度下截断最终方案，暂停后续 AI 请求；继续检查本轮日志关联的本地试排除候选。");
-                    if (await TryTrialAsync(report)) continue;
-                    Stop("AI 输出额度不足以完成方案，本地候选也已用尽；请调整模型或服务配置后再试。");
+                    Stop(AiErrorStop());
                     break;
                 }
                 if (outputLimit > (recoveryTask.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest))
@@ -449,30 +505,27 @@ public sealed class LevelOneMaintenance
                 unknownReserve = recoveryTask.Current.ReservedTokens;
                 pendingReserve = 0;
                 var usage = reply.Usage is { Valid: true } validUsage ? validUsage : null;
-                if (usage is null) Report("服务未回报有效 token 用量，已保留预估占用；继续处理本次回复。");
+                if (usage is null) Report("服务未回报有效 token 用量，已保留预估占用，未视为零消耗。");
                 startupFailure = recoveryTask.Current.Feedback?.StartupFailure;
                 replyFailure = recoveryTask.Current.Feedback?.ReplyFailure ?? AiReplyFailure.None;
                 analysis = reply.Succeeded && reply.Response is { } liveResponse
                     ? BoundedAnalysis(liveResponse) : recoveryTask.Current.Feedback?.Analysis;
-                var replyText = reply.Succeeded && reply.Response is { } displayResponse
+                var replyText = replyFailure == AiReplyFailure.None && reply.Succeeded && reply.Response is { } displayResponse
                     ? BoundedAnalysis(displayResponse)
                     : (replyFailure == AiReplyFailure.OutputLimit ? AiReplyFailureText.Describe(replyFailure)
                         : reply.ServiceError?.DisplayText ?? AiReplyFailureText.Describe(replyFailure))
-                        + "\n本轮未收到可执行的 AI 最终方案，将依据本轮日志检查可恢复的本地试排除候选。";
-                progress?.Report(new(attempts, "已收到 AI 响应，正在校验。", spent)
+                        + "\n已停止自动排序，不再进行本地换位、试排除或后续请求。请检查 AI 设置及错误原因后重新开始。";
+                progress?.Report(new(attempts, replyFailure == AiReplyFailure.None
+                    ? "已收到 AI 响应，正在校验。" : "AI 返回错误，已停止自动排序。", spent)
                     { ReportText = replyText });
                 // A valid zero-input report still counts toward the budget, but cannot calibrate input size.
                 if (usage is { Input: > 0 }) estimator.Observe(estimate, usage);
                 if (limits.TokenLimitReached((long)spent + unknownReserve) || usage?.Output > request.OutputTokenLimit)
                 { Stop("已回报用量与未回报预估已达到预算，或服务未遵守输出上限，已停止后续请求。"); break; }
                 deadline.Token.ThrowIfCancellationRequested();
-                if (!reply.Succeeded || reply.Response is null)
+                if (!reply.Succeeded || reply.Response is null || replyFailure != AiReplyFailure.None || reply.ServiceError is not null)
                 {
-                    // A rejected reply is not a lack of local evidence. Never execute its actions or
-                    // resend the paid request; use the same bounded trial path as an ineffective plan.
-                    Report(ReplyFailureDescription() + " 已保留本次用量，正在检查本轮日志关联的试排除候选…");
-                    if (await TryTrialAsync(report)) continue;
-                    Stop(ReplyFailureStop(report));
+                    Stop(AiErrorStop());
                     break;
                 }
                 if (startupFailure is not null)
@@ -493,6 +546,8 @@ public sealed class LevelOneMaintenance
                     current, catalogue, request.RetainedMods, GameVersion.Parse(request.GameVersion), rules);
                 // Prefer a new valid reorder; otherwise try a locally associated, reversible exclusion.
                 // Only explicit player choices can publish those removals to their personal order.
+                if (plan.Rejected.Count > 0)
+                { replyFailure = AiReplyFailure.InvalidStructure; Stop(AiErrorStop()); break; }
                 if ((!plan.CanApply || seen.Any(o => o.SequenceEqual(plan.After, StringComparer.OrdinalIgnoreCase)))
                     && await TryTrialAsync(report)) continue;
                 if (!plan.CanApply && reply.Response.Actions.Count == 0 && reply.Response.Conflicts.Count > 0
@@ -535,7 +590,12 @@ public sealed class LevelOneMaintenance
             or System.ComponentModel.Win32Exception or TimeoutException or NotSupportedException or HttpRequestException)
         {
             outcome = MaintenanceOutcome.Failed;
-            message = "自动维护失败：" + ex.Message;
+            if (requestInFlight)
+            {
+                replyFailure = AiReplyFailure.ServiceFailure;
+                message = AiErrorStop();
+            }
+            else message = "自动维护失败：" + ex.Message;
             Diagnostics.DiagnosticEventLog.Current?.Record("automatic-sorting", "failure-location",
                 $"{ex.GetType().Name}: {ex.StackTrace}");
         }
@@ -606,10 +666,11 @@ public sealed class LevelOneMaintenance
             var nextSpent = checked(checkpoint.ReportedTokens + (usage?.Total ?? 0));
             var nextReserve = checked(unknownReserve + (usage is null ? pendingReserve : 0));
             var plan = reply.Succeeded && reply.Response is { } response
-                && !limits.TokenLimitReached((long)nextSpent + nextReserve) && (usage is null || usage.Output <= request.OutputTokenLimit)
                 ? AiOrderPlanner.Plan(response.Actions, AiPermissionLevel.Level1OrderAndRequiredDependencies,
                     current, catalogue, request.RetainedMods, GameVersion.Parse(request.GameVersion), rules) : null;
-            var canApply = plan is { CanApply: true } && AllowsStartupActions(report, reply.Response!)
+            var canApply = plan is { CanApply: true } && reply.Failure == AiReplyFailure.None && reply.ServiceError is null
+                && !limits.TokenLimitReached((long)nextSpent + nextReserve) && (usage is null || usage.Output <= request.OutputTokenLimit)
+                && AllowsStartupActions(report, reply.Response!)
                 && report.Errors.Count > 0
                 && !AttemptLimitReached(attempts)
                 && !seen.Any(order => order.SequenceEqual(plan.After, StringComparer.OrdinalIgnoreCase));
@@ -630,9 +691,12 @@ public sealed class LevelOneMaintenance
                 OutputBudgetExhausted = reply.Failure == AiReplyFailure.OutputLimit,
                 UnknownUsage = unknown || usage is null, ReservedTokens = nextReserve, LastUsage = usage,
                 Feedback = checkpoint.Feedback! with { ReplyReceived = true,
-                    ServiceError = reply.Failure == AiReplyFailure.ServiceFailure ? reply.ServiceError?.CopyValidated() : null,
-                    ReplyFailure = !reply.Succeeded || reply.Response is null
-                        ? reply.Failure == AiReplyFailure.None ? AiReplyFailure.Unspecified : reply.Failure : AiReplyFailure.None,
+                    ServiceError = reply.ServiceError?.CopyValidated(),
+                    ReplyFailure = reply.ServiceError is not null ? AiReplyFailure.ServiceFailure
+                        : reply.Failure != AiReplyFailure.None ? reply.Failure
+                        : !reply.Succeeded || reply.Response is null
+                        ? reply.Failure == AiReplyFailure.None ? AiReplyFailure.Unspecified : reply.Failure
+                        : plan is { Rejected.Count: > 0 } ? AiReplyFailure.InvalidStructure : AiReplyFailure.None,
                     // Display-only summary survives a recovery checkpoint; execution still
                     // requires separately validated actions and technical evidence.
                     Analysis = reply.Succeeded && reply.Response is { } text
@@ -660,13 +724,11 @@ public sealed class LevelOneMaintenance
             + (trialStopReason is null ? "" : "\n" + trialStopReason); }
         string ReplyFailureDescription() => recoveryTask?.Current.Feedback?.ServiceError?.DisplayText
             ?? AiReplyFailureText.Describe(replyFailure);
-        string ReplyFailureStop(MaintenanceGameReport report) => ReplyFailureDescription()
-            + " 本次用量已记录，不重复请求。" + (AttemptLimitReached(attempts)
-                ? "测试次数已用尽，未应用无法复测的试排除。"
-                : report.StartupFailure?.Context.EnvironmentFailure == true
-                    ? "本轮存在系统环境错误，不能靠试排除模组处理。"
-                    : "未找到满足保护与依赖校验的本轮关联试排除候选，已停止并保留日志。");
-        async Task<bool> TryTrialAsync(MaintenanceGameReport report)
+        string AiErrorStop() => ReplyFailureDescription()
+            + (recoveryTask?.Current.LastUsage?.Output > (recoveryTask?.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest)
+                ? " 服务未遵守输出上限。" : "")
+            + " 已停止自动排序，不再进行本地换位、试排除、游戏复测或后续 AI 请求。原排序及本轮日志已保留；请检查 AI 设置及错误原因后重新开始。已回报用量按实记录，未回报用量仍记为未知，不自动重复请求。";
+        async Task<bool> TryTrialAsync(MaintenanceGameReport report, IReadOnlyList<string>? cycleMembers = null)
         {
             deadline.Token.ThrowIfCancellationRequested();
             trialStopReason = null;
@@ -677,7 +739,7 @@ public sealed class LevelOneMaintenance
                     : "当前会话尚不满足可恢复试排除的执行条件。";
                 return false;
             }
-            var candidates = TrialExclusionPlanning.Candidates(report, catalogue, current, request.RetainedMods, version, attempts);
+            var candidates = TrialExclusionPlanning.Candidates(report, catalogue, current, request.RetainedMods, version, attempts, cycleMembers);
             TrialExclusion? trial = null;
             AiOrderPlan? plan = null;
             foreach (var candidate in candidates)
@@ -697,7 +759,8 @@ public sealed class LevelOneMaintenance
                     : "已检查全部关联候选，均违反排序约束或已测试过，未重复执行。";
                 return false;
             }
-            var batch = TrialExclusionPlanning.Batch(report, catalogue, current, request.RetainedMods, version, trial);
+            var batch = cycleMembers is null
+                ? TrialExclusionPlanning.Batch(report, catalogue, current, request.RetainedMods, version, trial) : [trial];
             if (batch.Length > 1)
             {
                 var remaining = current.Except(batch.SelectMany(t => t.RemovedIds), StringComparer.OrdinalIgnoreCase).ToArray();
@@ -720,7 +783,8 @@ public sealed class LevelOneMaintenance
             seen.Add(current);
             Save(AiTaskPhase.Paused, clearFeedback: true);
             Report((batch.Length > 1 ? $"合并试排除 {batch.Length} 组独立错误关联项，一次复测：" : "临时试排除：")
-                + string.Join("、", batch.SelectMany(t => t.RemovedIds)) + "；尚未证明各项根因。结束后恢复原排序，移除仍按用户设置确认。");
+                + string.Join("、", batch.SelectMany(t => t.RemovedIds).Select(id => ModDisplayName.Resolve(catalogue, version, id)))
+                + "；尚未证明各项根因。结束后恢复原排序，移除仍按用户设置确认。");
             return true;
         }
         MaintenanceResult Result(MaintenanceOutcome state, string text) =>

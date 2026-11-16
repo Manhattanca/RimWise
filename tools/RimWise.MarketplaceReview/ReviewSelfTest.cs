@@ -48,22 +48,29 @@ internal static class ReviewSelfTest
                 Check(pair.Item2.Length==0?message.Length==0:message.Contains(pair.Item2),"Readiness reports actual check state: "+pair.Item1);
                 Check(server.Writes==0,"Readiness never merges or reruns workflows: "+pair.Item1);
             }
-            foreach(var mode in new[]{"inspect","tampered-image","extra-file","wrong-author"})
+            foreach(var mode in new[]{"inspect","tampered-image","extra-file","wrong-author","removal","removal-other-user","removal-partial","removal-extra","removal-stale"})
             {
                 var server=new Server(mode);using var api=new ReviewApi(server);api.SetToken("synthetic-test-token");
-                bool accepted=false;try{var snapshot=await api.InspectAsync(7,CancellationToken.None);accepted=snapshot.Supported;if(accepted)Check(snapshot.Images.Count==1,"Inspection reads declared image");}catch(Exception ex)when(ex is MarketplaceException or InvalidDataException){}
-                Check(accepted==(mode=="inspect"),"Pinned image inspection: "+mode);Check(server.Writes==0,"Inspect is read-only: "+mode);
+                bool accepted=false;try{var snapshot=await api.InspectAsync(7,CancellationToken.None);accepted=snapshot.Supported;if(accepted)Check(mode.StartsWith("removal")?snapshot.IsRemoval&&snapshot.Images.Count==0:snapshot.Images.Count==1,"Inspection reads the correct publication or removal scope");}catch(Exception ex)when(ex is MarketplaceException or InvalidDataException or InvalidOperationException){}
+                Check(accepted==(mode is "inspect" or "removal" or "removal-partial"),"Pinned image or author removal inspection: "+mode);Check(server.Writes==0,"Inspect is read-only: "+mode);
             }
             using(var handler=new Server("inspect"))using(var api=new ReviewApi(handler))
             {api.SetToken("synthetic-test-token");var identity=await api.IdentityAsync(CancellationToken.None);Check(identity=="Manhattanca","Maintainer identity requires repository push permission");var pulls=await api.ListAsync(CancellationToken.None);Check(pulls.Count==1,"Poll reads open main-branch PR list only");}
+            using(var server=new Server("removal"))using(var api=new ReviewApi(server))
+            {
+                api.SetToken("synthetic-test-token");var removal=await api.InspectAsync(7,CancellationToken.None);
+                await api.MergeAsync(removal,CancellationToken.None);
+                Check(server.Writes==1&&server.MergeSha==Head&&server.MergeTitle=="作者本人下架排序 #7",
+                    "Reviewer can merge a verified author removal with the exact head and correct removal action");
+            }
             await File.WriteAllTextAsync(Path.Combine(directory,"result.json"),JsonSerializer.Serialize(new{Passed=checks.Count,Checks=checks},new JsonSerializerOptions{WriteIndented=true}));return 0;
         }
         catch(Exception ex){await File.WriteAllTextAsync(Path.Combine(directory,"failure.txt"),ex.ToString());return 1;}
     }
-    private static ReviewPull Pull()=>new(7,"合成排序","Manhattanca","",Head,ReviewApi.Repository,Base,"main",false,DateTimeOffset.UtcNow);
+    private static ReviewPull Pull()=>new(7,"合成排序","Manhattanca","",Head,ReviewApi.Repository,Base,"main",false,DateTimeOffset.UtcNow) {AuthorId=123};
     private sealed class Server(string mode):HttpMessageHandler
     {
-        internal int Writes;internal string? MergeSha;
+        internal int Writes;internal string? MergeSha;internal string? MergeTitle;
         private int gets;
         private readonly byte[] image=Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         private MarketplaceManifest Manifest()
@@ -72,8 +79,8 @@ internal static class ReviewSelfTest
             return new MarketplaceManifest(1,"synthetic-review","1.0.0","合成排序",author,"<script>只是纯文本</script>","1.7",[],null,[new("ludeon.rimworld",null)])
                 {Images=[MarketplaceImages.Prepare(author,"synthetic-review","1.0.0",0,image).Image]};
         }
-        private object PullJson()=>new{number=7,title="合成排序",body="",user=new{login="Manhattanca"},state=mode=="closed"?"closed":"open",draft=mode=="draft",updated_at=DateTimeOffset.UtcNow,
-            head=new{sha=mode=="head-changed"||mode=="final-head-changed"&&gets>1?Merge:Head,repo=new{full_name=ReviewApi.Repository}},@base=new{sha=mode=="base-changed"||mode=="final-base-changed"&&gets>1?Merge:Base,@ref="main",repo=new{full_name=ReviewApi.Repository}},merge_commit_sha=Merge};
+        private object PullJson()=>new{number=7,title="合成排序",body="",user=new{login="Manhattanca",id=123L},state=mode=="closed"?"closed":"open",draft=mode=="draft",updated_at=DateTimeOffset.UtcNow,
+            head=new{sha=mode=="head-changed"||(mode is "final-head-changed" or "removal-stale")&&gets>1?Merge:Head,repo=new{full_name=ReviewApi.Repository}},@base=new{sha=mode=="base-changed"||mode=="final-base-changed"&&gets>1?Merge:Base,@ref="main",repo=new{full_name=ReviewApi.Repository}},merge_commit_sha=Merge};
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();var uri=request.RequestUri!;object response;
@@ -88,10 +95,19 @@ internal static class ReviewSelfTest
             if(path=="/user")response=new{login="Manhattanca"};
             else if(path=="/repos/"+ReviewApi.Repository)response=new{permissions=new{push=true}};
             else if(path.EndsWith("/pulls/7")){gets++;response=PullJson();}
+            else if(path.EndsWith("/pulls/1/files"))response=new[]{new{filename=MarketplaceJson.GetManifestPath("Manhattanca","synthetic-review","1.0.0"),status="added"}};
+            else if(path.EndsWith("/commits"))response=new[]{new{sha=Merge}};
+            else if(path.EndsWith("/commits/"+Merge+"/pulls"))response=new[]{new{number=1,merged_at="2026-11-01T00:00:00Z",user=new{id=mode=="removal-other-user"?456:123},@base=new{@ref="main",repo=new{full_name=ReviewApi.Repository}}}};
+            else if(path.Contains("/git/trees/"))
+            {
+                var paths=new List<object>{new{path=MarketplaceJson.GetManifestPath("Manhattanca","synthetic-review","1.0.0"),type="blob"}};
+                if(mode=="removal-partial")paths.Add(new{path=MarketplaceJson.GetManifestPath("Manhattanca","synthetic-review","1.0.1"),type="blob"});
+                response=new{truncated=false,tree=paths};
+            }
             else if(path.EndsWith("/files"))
             {
-                var m=Manifest();var paths=new List<object>{new{filename=MarketplaceJson.GetManifestPath(m.Author,m.Id,m.Version),status="added"},new{filename=m.Images[0].Path,status="added"}};
-                if(mode=="extra-file")paths.Add(new{filename=".github/workflows/evil.yml",status="added"});response=paths;
+                var m=Manifest();var status=mode.StartsWith("removal")?"removed":"added";var paths=new List<object>{new{filename=MarketplaceJson.GetManifestPath(m.Author,m.Id,m.Version),status},new{filename=m.Images[0].Path,status}};
+                if(mode is "extra-file" or "removal-extra")paths.Add(new{filename=".github/workflows/evil.yml",status});response=paths;
             }
             else if(path.EndsWith("/pulls"))response=new[]{PullJson()};
             else if(path.EndsWith("/check-runs")&&mode=="missing-check")response=new{total_count=0,check_runs=Array.Empty<object>()};
@@ -100,7 +116,7 @@ internal static class ReviewSelfTest
             else if(path.EndsWith("/actions/runs/123"))response=new{path=mode=="foreign-workflow"?".github/workflows/foreign.yml":".github/workflows/marketplace.yml",@event="pull_request",head_sha=Head,check_suite_id=99L,repository=new{full_name=ReviewApi.Repository},pull_requests=Array.Empty<object>()};
             else if(path.EndsWith("/jobs"))response=new{total_count=1,jobs=new[]{new{name="validate-submission",conclusion="success",steps=new[]{new{name="Validate data with the trusted base-branch tool (base "+(mode=="old-base-proof"?Merge:Base)+")",status="completed",conclusion="success"}}}}};
             else if(path.EndsWith("/merge"))
-            {Writes++;using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));MergeSha=body.RootElement.GetProperty("sha").GetString();response=new{merged=mode!="merge-rejected"};}
+            {Writes++;using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));MergeSha=body.RootElement.GetProperty("sha").GetString();MergeTitle=body.RootElement.GetProperty("commit_title").GetString();response=new{merged=mode!="merge-rejected"};}
             else throw new InvalidOperationException("Unexpected mock request "+uri);
             return new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(response),Encoding.UTF8,"application/json"),RequestMessage=request};
         }

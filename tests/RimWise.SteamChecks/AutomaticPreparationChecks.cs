@@ -29,7 +29,7 @@ internal static class AutomaticPreparationChecks
             Assert(sorted.Complete && sorted.Order.SequenceEqual(order));
             Assert(sorted.Diagnostics.Any(d => d.Code == "SelfRequirementIgnored")
                 && !sorted.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error));
-            Assert(!new LoadOrderSorter().Sort(new([Mod("test.a", ["test.b"]), Mod("test.b", ["test.a"])]),
+            Assert(new LoadOrderSorter().Sort(new([Mod("test.a", ["test.b"]), Mod("test.b", ["test.a"])]),
                 ["test.a", "test.b"], Version, Version, deferAdvisoryCycles: true).Complete);
             var workshop = self with { Source = ModSource.Workshop, WorkshopId = "123", Directory = self.Directory + "-steam" };
             Assert(new LoadOrderSorter().Sort(new([self, workshop]), ["test.self_steam"], Version, Version, deferAdvisoryCycles: true).Complete);

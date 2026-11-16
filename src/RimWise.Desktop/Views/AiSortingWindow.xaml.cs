@@ -341,7 +341,8 @@ public partial class AiSortingWindow : Window
         if (selected is null || !ApplyButton.IsEnabled) return;
         var plan = selected.Plan!;
         var preview = new OrderPreviewWindow(new OrderComparison(new LoadOrder(plan.Before), new LoadOrder(plan.After)),
-            "应用 自动排序", "确认后调整当前排序；点击主界面的保存排序才写入游戏。", "应用排序") { Owner = this };
+            "应用 自动排序", "确认后调整当前排序；点击主界面的保存排序才写入游戏。", "应用排序",
+            catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
         if (preview.ShowDialog() != true) return;
         try { ApplyResult(selected); }
         catch (Exception ex) when (IsExpectedError(ex))

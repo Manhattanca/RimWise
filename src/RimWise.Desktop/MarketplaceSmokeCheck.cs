@@ -72,6 +72,7 @@ internal static class MarketplaceSmokeCheck
         var loads = 0;
         var downloads = 0;
         var manifestLoads = 0;
+        string? requestedVersion = null;
         var publishes = 0;
         var fail = false;
         var cache = false;
@@ -92,6 +93,7 @@ internal static class MarketplaceSmokeCheck
             { manifestLoads++; return Task.FromResult(new MarketplaceResult<MarketplaceManifest>(byId[entry.Id], cache, null)); },
             LoadManifestWithProgressAsync = async (entry, progress, token) =>
             {
+                requestedVersion = entry.Version;
                 manifestLoads++;
                 progress.Report(new(256, 1024));
                 if (heldManifest is not null) return await heldManifest.Task.WaitAsync(token);
@@ -251,6 +253,46 @@ internal static class MarketplaceSmokeCheck
         await pending;
         Check(page.ResultsList.Items.Count == 2 && !page.IsBusy, "Late cancelled catalogue cannot replace visible data");
         held = null;
+        var oldVersion = first with { Version = "1.0.9", ReleaseNotes = "旧版排序说明", Description = "仅旧版具有的搜索词" };
+        var latestVersion = first with { Version = "1.0.10", ReleaseNotes = "最新版排序说明" };
+        catalogue = MarketplaceJson.CreateCatalogue([oldVersion, latestVersion, second]);
+        byId[first.Id] = latestVersion;
+        await page.RefreshAsync();
+        Check(page.ResultsList.Items.Count == 2, "Multiple versions remain one market entry per author and order");
+        page.ResultsList.SelectedIndex = 0;
+        if (page.SelectedEntry?.Id != first.Id) page.ResultsList.SelectedIndex = 1;
+        Check(page.SelectedEntry?.Version == "1.0.10" && page.VersionPicker.Items.Count == 2 && page.VersionHistory.Items.Count == 1,
+            "Entering a grouped order selects numeric latest and exposes old-version history below DLC");
+        var loadsBeforeVersions = manifestLoads;
+        page.VersionPicker.SelectedIndex = 1;
+        Check(page.SelectedEntry?.Version == "1.0.9" && page.SelectedManifest is null && page.DetailReleaseNotes.Text == "旧版排序说明" && manifestLoads == loadsBeforeVersions,
+            "Old-version selection updates metadata without downloading manifests");
+        byId[first.Id] = oldVersion;
+        page.DownloadButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await page.PendingOperation;
+        Check(page.SelectedManifest?.Version == "1.0.9" && requestedVersion == "1.0.9", "Explicit download uses the selected old sorting version");
+        await page.RefreshAsync();
+        Check(page.SelectedEntry?.Version == "1.0.9" && page.VersionPicker.SelectedIndex == 1,
+            "Refresh preserves the explicitly selected version when it still exists");
+        page.SearchBox.Text = "仅旧版具有的搜索词";
+        Check(page.ResultsList.Items.Count == 1, "Grouped search includes older-version metadata");
+        page.SearchBox.Clear();
+        page.VersionPicker.SelectedIndex = 0;
+        byId[first.Id] = latestVersion;
+        page.DownloadButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await page.PendingOperation;
+        Check(page.SelectedManifest?.Version == "1.0.10" && requestedVersion == "1.0.10", "Switching back to latest does not reuse an old-version manifest");
+        var groupedMine = new MarketplaceMyOrdersWindow(catalogue.Entries) { Owner = window };
+        Check(groupedMine.OrdersList.Items.Count == 2, "My published orders also groups versions into one entry");
+        foreach (var theme in new[] { ThemePreference.Light, ThemePreference.Dark })
+        {
+            ((App)Application.Current).Themes.Select(theme, save: false);
+            window.Width = 1360; window.Height = 820;
+            await Idle(window);
+            PrototypeSmokeCheck.SavePreview(window, Path.Combine(output, $"market-version-history-{theme}.png"));
+            Check(page.VersionPicker.ActualWidth >= 100 && page.VersionHistoryPanel.IsVisible,
+                $"Version picker and history are visible in {theme}");
+        }
         catalogue = new(1, []);
         cache = false;
         await page.RefreshAsync();

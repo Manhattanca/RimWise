@@ -26,7 +26,7 @@ public sealed class MarketplacePageActions
     public Action<MarketplaceEntry>? UpdateOrder { get; init; }
     public Func<IReadOnlyList<MarketplaceSavedDraft>>? LoadDrafts { get; init; }
     public Action<MarketplaceSavedDraft>? DeleteDraft { get; init; }
-    public Func<MarketplaceEntry, CancellationToken, Task<MarketplaceSubmission>>? DeleteOrderAsync { get; init; }
+    public Func<MarketplaceEntry, MarketplaceDeletionScope, CancellationToken, Task<MarketplaceSubmission>>? DeleteOrderAsync { get; init; }
     public Action<MarketplaceSavedDraft>? OpenDraft { get; init; }
     public Func<GitHubMarketplaceUser?>? CurrentUser { get; init; }
 }
@@ -38,6 +38,8 @@ public partial class MarketplacePage : UserControl
     private IReadOnlyList<MarketplaceCard> cards = [];
     private readonly Dictionary<(string Author, string Id, string Version, string Hash), MarketplaceResult<MarketplaceManifest>> manifests = [];
     private MarketplaceCard? selected;
+    private MarketplaceEntry? selectedVersion;
+    private bool changingVersions;
     private MarketplaceManifest? manifest;
     private CancellationTokenSource? active;
     private readonly HashSet<CancellationTokenSource> operations = [];
@@ -48,7 +50,7 @@ public partial class MarketplacePage : UserControl
     private GitHubMarketplaceUser? user;
     private long cancellationRevision;
     public Task PendingOperation { get; private set; } = Task.CompletedTask;
-    public MarketplaceEntry? SelectedEntry => selected?.Entry;
+    public MarketplaceEntry? SelectedEntry => selectedVersion;
     public MarketplaceManifest? SelectedManifest => manifest;
     public bool IsBusy => operations.Count > 0;
     public event EventHandler? BusyChanged;
@@ -138,7 +140,7 @@ public partial class MarketplacePage : UserControl
         if (actions is null || IsBusy) return;
         try
         {
-            var entries = cards.Select(card => card.Entry).Where(entry => user is not null && entry.Author.Equals(user.Login, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var entries = cards.SelectMany(card => card.Versions).Where(entry => user is not null && entry.Author.Equals(user.Login, StringComparison.OrdinalIgnoreCase)).ToArray();
             var dialog = new MarketplaceMyOrdersWindow(entries, actions.LoadDrafts?.Invoke() ?? [], new MarketplaceMyOrdersActions
             { DeleteDraft = actions.DeleteDraft, DeleteOrderAsync = actions.DeleteOrderAsync }) { Owner = Window.GetWindow(this) };
             if (dialog.ShowDialog() != true) return;
@@ -203,18 +205,19 @@ public partial class MarketplacePage : UserControl
         {
             var result = await actions!.LoadCatalogueAsync(source.Token);
             if (!Current(source)) return;
-            (string Author, string Id, string Version, string Hash)? oldKey = selected is null ? null : EntryKey(selected.Entry);
-            cards = result.Value.Entries.Select(entry => new MarketplaceCard(entry)).ToArray();
+            var previous = selectedVersion;
+            cards = MarketplaceVersions.Group(result.Value.Entries).Select(versions => new MarketplaceCard(versions)).ToArray();
             catalogueFromCache = result.FromCache;
             if (!result.FromCache) manifests.Clear();
             CacheBanner.Visibility = result.FromCache || !string.IsNullOrWhiteSpace(result.Warning) ? Visibility.Visible : Visibility.Collapsed;
             CacheText.Text = result.FromCache ? "当前显示上次保存的市场缓存。" : "";
             if (!string.IsNullOrWhiteSpace(result.Warning)) CacheText.Text += " " + Safe(result.Warning);
-            selected = oldKey is null ? null : cards.FirstOrDefault(card => EntryKey(card.Entry) == oldKey);
+            selected = previous is null ? null : cards.FirstOrDefault(card => card.Versions.Any(entry => EntryKey(entry) == EntryKey(previous)));
             selected ??= cards.FirstOrDefault();
+            selectedVersion = selected?.Versions.FirstOrDefault(entry => previous is not null && EntryKey(entry) == EntryKey(previous)) ?? selected?.Entry;
             manifest = null;
             FilterResults();
-            if (selected is not null) RenderEntry(selected.Entry);
+            if (selectedVersion is not null) RenderEntry(selectedVersion);
             StatusText.Text = cards.Count == 0 ? "市场暂无已发布的排序。" : $"已读取 {cards.Count} 份排序";
             if (cards.Count == 0) HideDetails();
         }
@@ -261,6 +264,7 @@ public partial class MarketplacePage : UserControl
     {
         if (changingResults || ResultsList.SelectedItem is not MarketplaceCard card || ReferenceEquals(selected, card)) return;
         selected = card;
+        selectedVersion = card.Entry;
         manifest = null;
         RenderEntry(card.Entry);
         DetailScroll.ScrollToTop();
@@ -269,6 +273,18 @@ public partial class MarketplacePage : UserControl
 
     private void RenderEntry(MarketplaceEntry entry)
     {
+        changingVersions = true;
+        try
+        {
+            VersionPicker.ItemsSource = selected?.Versions;
+            VersionPicker.SelectedItem = entry;
+        }
+        finally { changingVersions = false; }
+        VersionPickerPanel.Visibility = selected?.Versions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        VersionHistory.ItemsSource = selected?.Versions.Where(version => EntryKey(version) != EntryKey(entry))
+            .Select(version => new { Heading = "v" + version.Version + " · RimWorld " + version.GameVersion,
+                Notes = string.IsNullOrWhiteSpace(version.ReleaseNotes) ? "作者未填写更新日志。" : version.ReleaseNotes }).ToArray();
+        VersionHistoryPanel.Visibility = selected?.Versions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         DetailPlaceholder.Visibility = Visibility.Collapsed;
         DetailPanel.Visibility = Visibility.Visible;
         DetailTitle.Text = entry.Title;
@@ -310,6 +326,8 @@ public partial class MarketplacePage : UserControl
 
     private void HideDetails()
     {
+        imageLoading?.Cancel();
+        selectedVersion = null;
         manifest = null;
         DetailPlaceholder.Visibility = Visibility.Visible;
         DetailPanel.Visibility = Visibility.Collapsed;
@@ -320,11 +338,20 @@ public partial class MarketplacePage : UserControl
     {
         if (DownloadButton is null) return;
         DownloadButton.IsEnabled = UseButton.IsEnabled = selected is not null && !IsBusy && actions is not null;
+        VersionPicker.IsEnabled = !IsBusy;
+    }
+
+    private void Version_Selected(object sender, SelectionChangedEventArgs e)
+    {
+        if (changingVersions || IsBusy || VersionPicker.SelectedItem is not MarketplaceEntry entry || entry == selectedVersion) return;
+        selectedVersion = entry;
+        manifest = null;
+        RenderEntry(entry);
     }
 
     private async Task DownloadAsync(bool use)
     {
-        if (selected is not { } card || active is not null || actions is null) return;
+        if (selectedVersion is not { } entry || active is not null || actions is null) return;
         downloading = true;
         ResultsList.IsEnabled = false;
         var source = BeginOperation(use ? "正在下载并准备使用排序…" : "正在下载排序…");
@@ -349,15 +376,15 @@ public partial class MarketplacePage : UserControl
         });
         try
         {
-            if (!manifests.TryGetValue(EntryKey(card.Entry), out var result))
+            if (!manifests.TryGetValue(EntryKey(entry), out var result))
                 result = actions.LoadManifestWithProgressAsync is { } load
-                    ? await load(card.Entry, transfer, source.Token)
-                    : await actions.LoadManifestAsync(card.Entry, source.Token);
+                    ? await load(entry, transfer, source.Token)
+                    : await actions.LoadManifestAsync(entry, source.Token);
             source.Token.ThrowIfCancellationRequested();
             if (!Current(source)) return;
             transferring = false;
             if (manifests.Count >= 16) manifests.Remove(manifests.Keys.First());
-            manifests[EntryKey(card.Entry)] = result;
+            manifests[EntryKey(entry)] = result;
             var snapshot = manifest = result.Value;
             DetailModCount.Text = $"{snapshot.Mods.Count} 个模组";
             DetailWarning.Text = result.FromCache ? "使用已通过目录哈希校验的本地排序缓存。" : "";
@@ -384,7 +411,7 @@ public partial class MarketplacePage : UserControl
 
     private void Workshop_Click(object sender, RoutedEventArgs e)
     {
-        var id = selected?.Entry.WorkshopCollectionId;
+        var id = selectedVersion?.WorkshopCollectionId;
         if (actions is null || string.IsNullOrEmpty(id) || !id.All(char.IsAsciiDigit)) return;
         try { actions.OpenTrustedLink(new Uri("https://steamcommunity.com/sharedfiles/filedetails/?id=" + id)); }
         catch (Exception ex) { StatusText.Text = "无法打开工坊合集：" + Safe(ex.Message); }
@@ -414,11 +441,12 @@ public partial class MarketplacePage : UserControl
     private static string Safe(string value) => value.Any(c => c is >= '\u3400' and <= '\u9fff')
         ? new DiagnosticRedactor().Text(value) : "市场数据请求或校验未完成，请稍后重试。";
 
-    private sealed record MarketplaceCard(MarketplaceEntry Entry)
+    private sealed record MarketplaceCard(IReadOnlyList<MarketplaceEntry> Versions)
     {
+        public MarketplaceEntry Entry => Versions[0];
         public string Monogram => string.IsNullOrWhiteSpace(Entry.Title) ? "R" : System.Globalization.StringInfo.GetNextTextElement(Entry.Title.Trim());
         public string Summary => Entry.Description.Replace('\r', ' ').Replace('\n', ' ');
-        public string VersionLabel => $"RimWorld {Entry.GameVersion}  ·  v{Entry.Version}";
-        public string SearchText => string.Join('\n', Entry.Title, Entry.Author, Entry.Description, Entry.GameVersion, Entry.Version);
+        public string VersionLabel => $"RimWorld {Entry.GameVersion}  ·  v{Entry.Version}" + (Versions.Count > 1 ? $" · 共 {Versions.Count} 个版本" : "");
+        public string SearchText => string.Join('\n', Versions.Select(entry => string.Join('\n', entry.Title, entry.Author, entry.Description, entry.GameVersion, entry.Version)));
     }
 }

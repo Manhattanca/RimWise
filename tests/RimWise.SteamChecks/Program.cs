@@ -1,6 +1,23 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (args.Length == 2 && args[0] == "--ordering-cycle-checks")
+{
+    Directory.CreateDirectory(args[1]);
+    var results = new List<string>(); var failures = new List<string>();
+    void Record(string name, Action test)
+    {
+        try { test(); results.Add(name); Console.WriteLine("PASS " + name); }
+        catch (Exception ex) { failures.Add(name + ": " + ex); Console.WriteLine("FAIL " + name + ": " + ex); }
+    }
+    SorterChecks.Run(Record); OrderingCycleChecks.Run(args[1], Record); TrialExclusionChecks.Run(args[1], Record);
+    File.WriteAllText(Path.Combine(args[1], "result.json"), JsonSerializer.Serialize(new { Passed = results.Count,
+        Failed = failures.Count, Checks = results, Failures = failures }, new JsonSerializerOptions { WriteIndented = true }));
+    Console.WriteLine($"Ordering cycles and trial exclusions: {results.Count}/{results.Count + failures.Count}");
+    Environment.ExitCode = failures.Count == 0 ? 0 : 1;
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--completed-map-diagnostics-replay")
 {
     MaintenanceDiagnosisChecks.ReplayCompletedMapReports(args[1]);
@@ -100,6 +117,7 @@ if (args.Length == 1 && args[0] == "--lifecycle-probe")
 if (args.Length == 1 && args[0] == "--ai-response-checks")
 {
     var results = new List<string>();
+    DeepSeekCompatibilityChecks.Run((name, test) => { test(); results.Add(name); });
     AiResponseFormatChecks.Run((name, test) => { test(); results.Add(name); });
     Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
     return;
@@ -141,9 +159,14 @@ if (args.Length == 1 && args[0] is "--insertion-ordering-checks" or "--automatic
 }
 
 var checks = new List<string>();
+var offlineFailures = new List<string>();
 string Reply(object[] items, string operation = "search") => JsonSerializer.Serialize(new { Success = true, Operation = operation, Items = items });
 object Item(string id = "123", uint app = 294100) => new { Id = id, Title = "中文 模组", ConsumerAppId = app };
-void Check(string name, Action action) { action(); checks.Add(name); }
+void Check(string name, Action action)
+{
+    try { action(); checks.Add(name); }
+    catch (Exception ex) { offlineFailures.Add(name + ": " + ex); Console.Error.WriteLine("FAIL " + name + ": " + ex); }
+}
 void Reject(string name, string json, int exit = 0) => Check(name, () =>
 {
     try { SteamWorkshopClient.ParseSearchResult(json, exit); }
@@ -220,4 +243,5 @@ if (args.Length == 2 && args[0] == "--live")
     catch (IOException ex) when (ex.Message.Contains("AccessDenied"))
     { checks.Add("Reported item: Steam AccessDenied reproduced with readable diagnostic"); }
 }
-Console.WriteLine(JsonSerializer.Serialize(new { Passed = checks.Count, Checks = checks }, new JsonSerializerOptions { WriteIndented = true }));
+Console.WriteLine(JsonSerializer.Serialize(new { Passed = checks.Count, Failed = offlineFailures.Count, Checks = checks, Failures = offlineFailures }, new JsonSerializerOptions { WriteIndented = true }));
+Environment.ExitCode = offlineFailures.Count == 0 ? 0 : 1;

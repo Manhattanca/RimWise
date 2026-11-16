@@ -261,9 +261,11 @@ internal static class MaintenanceProgressChecks
         public Task<AiClientResult> GetSuggestionAsync(AiRequest request, CancellationToken token)
         {
             Calls++;
-            var response = reorder ? new StructuredAiResponse(1, "test", [new("move", Order[2], 2, false, null, null)], []) : null;
-            return Task.FromResult(new AiClientResult(response is not null, "simulated", response, null)
-                { Usage = new(10, 10, 20), Failure = response is null ? AiReplyFailure.ServiceFailure : AiReplyFailure.None });
+            // These checks exercise local progress after a valid diagnosis. Service
+            // failures now stop immediately and are covered independently.
+            var response = new StructuredAiResponse(1, "test", reorder ? [new("move", Order[2], 2, false, null, null)] : [], []);
+            return Task.FromResult(new AiClientResult(true, "simulated", response, null)
+                { Usage = new(10, 10, 20), Failure = AiReplyFailure.None });
         }
     }
     private sealed class Session(Func<int, MaintenanceGameReport> report) : ILevelOneGameSession, IMaintenanceTrialSession

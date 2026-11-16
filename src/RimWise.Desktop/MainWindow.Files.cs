@@ -62,7 +62,8 @@ public partial class MainWindow
         var notice = $"{OrderFileCodec.DisplayName(loaded.SourceFormat)} · 游戏版本：{(loaded.Configuration.GameVersion.Length > 0 ? loaded.Configuration.GameVersion : "未注明")}";
         notice += "\n载入后替换当前编辑清单，不写入游戏配置。";
         if (ViewModel.HasChanges) notice += "当前未保存的调整会被替换，载入后可撤销。";
-        var preview = new OrderPreviewWindow(comparison, title, notice, "载入清单") { Owner = this };
+        var preview = new OrderPreviewWindow(comparison, title, notice, "载入清单",
+            catalogue: ViewModel.CurrentCatalogue, version: ViewModel.CatalogueVersion) { Owner = this };
         if (preview.ShowDialog() != true) return false;
         ViewModel.ReplaceFileUndoable(loaded, path, title);
         ViewModel.SelectedRow = ViewModel.Rows.FirstOrDefault();
@@ -99,7 +100,8 @@ public partial class MainWindow
         var warnings = new OrderFileCodec().ConversionWarnings(document, target);
         var comparison = new OrderComparison(document.Configuration.Order, document.Configuration.Order);
         var preview = new OrderPreviewWindow(comparison, "导出预览",
-            $"目标：{targetName ?? OrderFileCodec.DisplayName(target)}\n" + string.Join("\n", warnings), "导出新文件") { Owner = this };
+            $"目标：{targetName ?? OrderFileCodec.DisplayName(target)}\n" + string.Join("\n", warnings), "导出新文件",
+            catalogue: ViewModel.CurrentCatalogue, version: ViewModel.CatalogueVersion) { Owner = this };
         preview.Summary.Text = $"{document.Configuration.Order.PackageIds.Count} 个模组 · 保留原始标识与顺序";
         return preview;
     }

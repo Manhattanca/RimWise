@@ -70,7 +70,7 @@ public partial class MainWindow
                 CurrentUser = () => MarketplaceAuthor.User,
                 UpdateOrder = entry => PublishMarketplaceOrderCore(entry),
                 DeleteDraft = saved => new MarketplaceDraftStore(UserStorage.DirectoryPath).Delete(saved.Key),
-                DeleteOrderAsync = (entry, token) => MarketplaceAuthor.RequestDeletionAsync(entry, token),
+                DeleteOrderAsync = (entry, scope, token) => MarketplaceAuthor.RequestDeletionAsync(entry, scope, token),
                 LoadDrafts = () => new MarketplaceDraftStore(UserStorage.DirectoryPath).ReadAll(),
                 OpenDraft = saved => PublishMarketplaceOrderCore(null, saved)
             });

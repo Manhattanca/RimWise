@@ -59,7 +59,8 @@ public partial class MainWindow
         if (!ViewModel.HasDocument) { ViewModel.Status = "请先载入排序"; return; }
         var disk = files.Read(CurrentOrderLocation.Resolve(paths));
         var comparison = new OrderComparison(disk.Order, new LoadOrder(ViewModel.Rows.Select(row => row.PackageId)));
-        new OrderPreviewWindow(comparison, "与游戏排序比较", "比较游戏文件与当前编辑清单，仅查看。", "关闭") { Owner = this }.ShowDialog();
+        new OrderPreviewWindow(comparison, "与游戏排序比较", "比较游戏文件与当前编辑清单，仅查看。", "关闭",
+            catalogue: ViewModel.CurrentCatalogue, version: ViewModel.CatalogueVersion) { Owner = this }.ShowDialog();
     });
 
     private void OrderRules_Click(object sender, RoutedEventArgs e) => RunFileAction(() =>
@@ -89,7 +90,8 @@ public partial class MainWindow
         {
             if (list.SelectedItem is not ListBoxItem { Tag: RimWise.Integration.Safety.RecoveryEntry entry } || !ViewModel.HasDocument) return;
             var preview = new OrderPreviewWindow(new OrderComparison(new LoadOrder(ViewModel.Rows.Select(r => r.PackageId)), new LoadOrder(entry.Record.Before)),
-                "恢复 AI 调整前排序", "恢复到编辑清单；不会自动写入游戏配置。", "恢复到编辑清单") { Owner = picker };
+                "恢复 AI 调整前排序", "恢复到编辑清单；不会自动写入游戏配置。", "恢复到编辑清单",
+                catalogue: ViewModel.CurrentCatalogue, version: ViewModel.CatalogueVersion) { Owner = picker };
             if (preview.ShowDialog() != true) return;
             var document = ViewModel.CreateExportDocument().WithOrder(new LoadOrder(entry.Record.Before));
             ViewModel.ReplaceFileUndoable(OrderFileDocument.FromConfiguration(document), "AI 调整记录");

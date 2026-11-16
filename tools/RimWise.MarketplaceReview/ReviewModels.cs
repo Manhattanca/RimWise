@@ -7,13 +7,17 @@ namespace RimWise.MarketplaceReview;
 internal sealed record ReviewPull(int Number, string Title, string Author, string Body, string Sha,
     string HeadRepository, string BaseSha, string BaseBranch, bool Draft, DateTimeOffset Updated)
 {
+    internal long AuthorId { get; init; }
     public override string ToString() => $"#{Number}  {Title}  ·  {Author}";
     internal string Url => $"https://github.com/{ReviewApi.Repository}/pull/{Number}";
 }
 internal sealed record ChangedFile(string Path, string Status);
 internal sealed record ReviewImage(MarketplaceImage Metadata, byte[] Content);
 internal sealed record ReviewSnapshot(ReviewPull Pull, string Text, IReadOnlyList<ChangedFile> Files,
-    IReadOnlyList<ReviewImage> Images, bool Supported, string Warning);
+    IReadOnlyList<ReviewImage> Images, bool Supported, string Warning)
+{
+    internal bool IsRemoval => Files.Count > 0 && Files.All(file => file.Status == "removed");
+}
 
 internal static partial class ReviewRules
 {
@@ -50,7 +54,7 @@ internal static partial class ReviewRules
         return new(root.GetProperty("number").GetInt32(), root.GetProperty("title").GetString() ?? "",
             root.GetProperty("user").GetProperty("login").GetString() ?? "", root.GetProperty("body").GetString() ?? "",
             sha, headRepository, baseSha, basis.GetProperty("ref").GetString() ?? "", root.GetProperty("draft").GetBoolean(),
-            root.GetProperty("updated_at").GetDateTimeOffset());
+            root.GetProperty("updated_at").GetDateTimeOffset()) { AuthorId = root.GetProperty("user").GetProperty("id").GetInt64() };
     }
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$")]
     private static partial Regex RepositoryPattern();

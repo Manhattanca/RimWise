@@ -48,12 +48,13 @@ internal static class InsertionOrderingChecks
             Assert(sorted.Complete && sorted.Order.SequenceEqual(["old.a", "old.b"])
                 && sorted.Diagnostics.Any(d => d.Code == "OrderingCycleDeferred"));
         });
-        check("Actual reciprocal required dependencies still fail instead of being ignored", () =>
+        check("Actual reciprocal dependencies retain their original group order for runtime testing", () =>
         {
             var catalogue = new ModCatalogue([Mod("old.a", "old.b"), Mod("old.b", "old.a")]);
             var rules = InsertionScope.Rules([], InsertionScope.Capture(["old.a", "old.b"]));
             var sorted = new LoadOrderSorter().Sort(catalogue, ["old.a", "old.b"], Version, Version, rules, true);
-            Assert(!sorted.Complete && sorted.Diagnostics.Any(d => d.Code == "OrderingCycle"));
+            Assert(sorted.Complete && sorted.Order.SequenceEqual(["old.a", "old.b"])
+                && sorted.Diagnostics.Any(d => d.Code == "OrderingCycleDeferred"));
         });
         check("Baseline preference does not hide a reverse community rule; explicit user override still works", () =>
         {

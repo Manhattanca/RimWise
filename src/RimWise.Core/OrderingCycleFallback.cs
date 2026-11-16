@@ -1,12 +1,14 @@
 namespace RimWise.Core;
 
-/// <summary>Find strongly connected groups without recursion. Only advisory edges inside
-/// a cyclic group may be deferred; required dependencies and official content stay intact.</summary>
+/// <summary>Find strongly connected groups without recursion. Defer contradictory advice first.
+/// An optional fixed graph permits testing a genuine dependency cycle while preserving
+/// dependency presence, official content and explicit mandatory order constraints.</summary>
 public static class OrderingCycleFallback
 {
     public static IReadOnlyList<string[]> DeferAdvisoryEdges(string[] order,
         Dictionary<string, HashSet<string>> edges, Dictionary<string, HashSet<string>> required,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Dictionary<string, HashSet<string>>? fixedEdges = null)
     {
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var finished = new List<string>(order.Length);
@@ -54,8 +56,44 @@ public static class OrderingCycleFallback
             var removed = 0;
             foreach (var id in group)
                 removed += edges[id].RemoveWhere(to => group.Contains(to) && !required[id].Contains(to));
-            if (removed > 0) groups.Add(group.OrderBy(id => positions[id]).ToArray());
+            var stable = StableOrder(group);
+            if (stable.Length != group.Count && fixedEdges is not null)
+            {
+                // Only an impossible internal dependency order is suspended. Dependencies
+                // must still be installed/enabled, including during trial exclusion replay.
+                foreach (var id in group)
+                    removed += edges[id].RemoveWhere(to => group.Contains(to) && !fixedEdges[id].Contains(to));
+                stable = StableOrder(group);
+            }
+            if (removed > 0)
+            {
+                groups.Add(group.OrderBy(id => positions[id]).ToArray());
+                // A code-derived preference or external prerequisite must not silently
+                // reverse the group's relative order before there is runtime evidence.
+                if (stable.Length == group.Count)
+                    for (var index = 1; index < stable.Length; index++)
+                        edges[stable[index - 1]].Add(stable[index]);
+            }
         }
         return groups;
+
+        string[] StableOrder(HashSet<string> group)
+        {
+            var degrees = group.ToDictionary(id => id, _ => 0, StringComparer.OrdinalIgnoreCase);
+            foreach (var id in group)
+                foreach (var to in edges[id])
+                    if (group.Contains(to)) degrees[to]++;
+            var ready = new SortedSet<int>(group.Where(id => degrees[id] == 0).Select(id => positions[id]));
+            var result = new List<string>(group.Count);
+            while (ready.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var index = ready.Min; ready.Remove(index);
+                var id = order[index]; result.Add(id);
+                foreach (var to in edges[id])
+                    if (group.Contains(to) && --degrees[to] == 0) ready.Add(positions[to]);
+            }
+            return result.ToArray();
+        }
     }
 }

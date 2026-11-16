@@ -407,7 +407,7 @@ public static class MarketplacePublishSmokeCheck
             {
                 ConfirmDelete = _ => confirmed,
                 DeleteDraft = item => drafts.Delete(item.Key),
-                DeleteOrderAsync = (_, _) => { removeCalls++; return deletionReply.Task; }
+                DeleteOrderAsync = (_, _, _) => { removeCalls++; return deletionReply.Task; }
             }) { Owner = window };
             removeManager.Show();
             await Idle(removeManager);
@@ -428,13 +428,46 @@ public static class MarketplacePublishSmokeCheck
             deletionReply.SetResult(new(14, new Uri("https://github.com/Manhattanca/RimWise-Marketplace/pull/14"), "fixture", deletionEntry.ManifestPath, deletionEntry.Sha256));
             await removal;
             await removeManager.DeleteSelectedAsync();
-            Check(removeCalls == 1 && removeManager.OrdersList.Items.Count == 1 && removeManager.EmptyText.Text.Contains("审核通过后下架"),
-                "Successful deletion is shown as awaiting review and keeps published rows until catalogue approval");
+            Check(removeCalls == 1 && removeManager.OrdersList.Items.Count == 1 && removeManager.EmptyText.Text.Contains("核实原发布者后自动下架"),
+                "A submitted removal reports automatic author verification without claiming the remote catalogue has already changed");
             Check(removeManager.OrdersList.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>().Select(item => item.Header.ToString()).SequenceEqual(["修改排序", "删除"])
                 && removeManager.DraftsList.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>().Select(item => item.Header.ToString()).SequenceEqual(["修改排序", "删除"])
                 && removeManager.EditButton.Content.ToString() == "修改排序" && removeManager.FindName("ContinueButton") is null,
                 "Both lists offer the same edit and delete context menu and one shared edit button");
             removeManager.Close();
+            var olderEntry = deletionEntry with { Version = "0.9.0", ManifestPath = MarketplaceJson.GetManifestPath(deletionEntry.Author, deletionEntry.Id, "0.9.0") };
+            var rangeDialog = new MarketplaceDeleteWindow([olderEntry, deletionEntry]) { Owner = window };
+            rangeDialog.Show();
+            await Idle(rangeDialog);
+            Check(rangeDialog.SingleVersion.IsChecked == true && rangeDialog.VersionPicker.IsEnabled
+                && ((MarketplaceEntry)rangeDialog.VersionPicker.SelectedItem).Version == deletionEntry.Version,
+                "Deletion range dialog defaults to one explicit latest version rather than all versions");
+            rangeDialog.AllVersions.IsChecked = true;
+            Check(!rangeDialog.VersionPicker.IsEnabled, "All-version removal disables the single-version picker");
+            rangeDialog.SingleVersion.IsChecked = true;
+            rangeDialog.VersionPicker.SelectedIndex = 1;
+            Check(((MarketplaceEntry)rangeDialog.VersionPicker.SelectedItem).Version == olderEntry.Version && rangeDialog.VersionPicker.IsEnabled,
+                "Author can select an older version independently of the grouped market row");
+            rangeDialog.Close();
+            foreach (var choice in new MarketplaceDeletionScope?[] { null, MarketplaceDeletionScope.SelectedVersion, MarketplaceDeletionScope.AllVersions })
+            {
+                MarketplaceDeletionRequest? sent = null;
+                var selectorCalls = 0;
+                var grouped = new MarketplaceMyOrdersWindow([olderEntry, deletionEntry], [], new()
+                {
+                    ChooseDeletion = versions => { selectorCalls++; Check(versions.Count == 2, "Deletion receives every published version");
+                        return choice is null ? null : new(olderEntry, choice.Value); },
+                    DeleteOrderAsync = (entry, scope, _) => { sent = new(entry, scope); return Task.FromResult(new MarketplaceSubmission(15,
+                        new Uri("https://github.com/Manhattanca/RimWise-Marketplace/pull/15"), "synthetic", entry.ManifestPath, entry.Sha256)); }
+                }) { Owner = window };
+                grouped.Show();
+                await Idle(grouped);
+                grouped.OrdersList.SelectedIndex = 0;
+                await grouped.DeleteSelectedAsync();
+                Check(selectorCalls == 1 && (choice is null ? sent is null : sent?.Entry == olderEntry && sent.Scope == choice),
+                    "Selected deletion range is passed exactly, cancellation sends no request: " + choice);
+                grouped.Close();
+            }
             foreach (var editDraft in new[] { true, false })
             {
                 var doubleClick = new MarketplaceMyOrdersWindow([deletionEntry], drafts.ReadAll()) { Owner = window };

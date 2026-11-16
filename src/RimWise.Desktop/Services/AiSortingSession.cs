@@ -58,22 +58,25 @@ internal sealed class AiSortingSession(MainViewModel editor, string dataDirector
         var catalogue = editor.CurrentCatalogue!;
         var rules = editor.CustomRules.ToArray();
         var request = CreateRequest(editor, settings, Secrets.Read(settings.SecretName)) with { ResponseProgress = progress };
+        using var ownedClient = client is null ? new AiClient() : null;
+        var connection = await AiSortingPreflight.CheckAsync(client ?? ownedClient!, settings, request.ApiKey, token);
+        if (!connection.Succeeded) throw new InvalidOperationException(connection.Message);
         using var requestSlot = Tasks.AcquireRequestSlot();
         using var task = Tasks.Create(new(AiTaskKind.Sorting, AiTaskPhase.Prepared, Context(request),
             request.CurrentOrder.ToArray(), request.CurrentOrder.ToArray(), DateTimeOffset.UtcNow));
-        using var ownedClient = client is null ? new AiClient() : null;
         using var usagePeriod = task.TrackUsagePeriod(request);
         // Publish the possibly-billed state BEFORE handing control to the transport.
         task.Save(task.Current with { Phase = AiTaskPhase.RequestPending, Requests = 1, UnknownUsage = true,
             ReservedTokens = estimate.Upper, Message = "请求已准备发送；若中断，须先核对用量。" });
         var result = await AiUsageTracking.SendAsync(task, client ?? ownedClient!, request, token);
+        var validReply = result.Succeeded && result.Failure == AiReplyFailure.None && result.ServiceError is null;
         var recoveryPlan = result.Response is null ? null : AiOrderPlanner.Plan(result.Response.Actions, settings.PermissionLevel,
             request.CurrentOrder, catalogue, request.RetainedMods, GameVersion.Parse(request.GameVersion), rules);
         var hasUsage = result.Usage is { Valid: true };
         task.Save(task.Current with { Phase = AiTaskPhase.ReplySaved, UnknownUsage = !hasUsage,
             ReservedTokens = hasUsage ? 0 : estimate.Upper, LastUsage = hasUsage ? result.Usage : null,
             ReportedTokens = hasUsage ? result.Usage!.Total : 0,
-            MayApply = result.Succeeded && recoveryPlan?.CanApply == true && !token.IsCancellationRequested,
+            MayApply = validReply && recoveryPlan?.CanApply == true && !token.IsCancellationRequested,
             Actions = recoveryPlan?.CanApply == true ? result.Response!.Actions.Select(a => a with { Reason = null, TargetPath = null }).ToArray() : [],
             Message = "响应检查点已保存；恢复时会重新校验。" });
         string? notice = null;
@@ -104,7 +107,8 @@ internal sealed class AiSortingSession(MainViewModel editor, string dataDirector
         return new(result, preview, plan, revision, catalogue, settings, estimate, notice, audited && !token.IsCancellationRequested) { TaskId = task.Id };
     }
 
-    internal bool CanApply(AiSortingOutcome outcome) => outcome.MayApply && outcome.Result.Succeeded && outcome.Plan?.CanApply == true
+    internal bool CanApply(AiSortingOutcome outcome) => outcome.MayApply && outcome.Result.Succeeded
+        && outcome.Result.Failure == AiReplyFailure.None && outcome.Result.ServiceError is null && outcome.Plan?.CanApply == true
         && ReadinessProblem is null && outcome.Revision == editor.ContentRevision
         && ReferenceEquals(outcome.Catalogue, editor.CurrentCatalogue);
 

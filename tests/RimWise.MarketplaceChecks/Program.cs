@@ -41,6 +41,18 @@ internal static class Checks
 
     internal static IEnumerable<(string Name, Func<Task> Check)> All(string output)
     {
+        yield return ("versions group by author and identity with numeric SemVer latest first", () => Sync(() =>
+        {
+            var source = new[] { "1.0.9", "1.0.10-rc.10", "1.0.10", "1.0.10-rc.2", "2.0.0-beta" }
+                .Select(version => Sample() with { Version = version, ReleaseNotes = version });
+            var entries = MarketplaceJson.CreateCatalogue(source).Entries;
+            var groups = MarketplaceVersions.Group(entries.Concat([entries[0] with { Id = "another-order" }]));
+            Equal(groups.Count, 2);
+            Equal(string.Join(',', groups[0].Select(entry => entry.Version)), "2.0.0-beta,1.0.10,1.0.10-rc.10,1.0.10-rc.2,1.0.9");
+            True(MarketplaceVersions.Compare("1.0.0", "1.0.0-rc") > 0);
+            True(MarketplaceVersions.Compare("1.0.0-beta.2", "1.0.0-beta.11") < 0);
+            Equal(MarketplaceVersions.Group([entries[0], entries[0] with { Author = "AnotherAuthor" }]).Count, 2);
+        }));
         foreach (var check in ImageChecks.All(output)) yield return check;
         yield return ("software and marketplace repositories are separate", () => Sync(() =>
         {
@@ -657,6 +669,21 @@ internal static class Checks
             await Throws<OperationCanceledException>(async () => await publisher.RequestDeletionAsync(Entry(), Token, source.Token));
             Equal(server.Handler.Requests.Count, 0);
         });
+        foreach (var version in new[] { "1.0.0", "1.0.1" })
+        {
+            var selectedVersion = version;
+            yield return ("selected version removal retains other manifests and images: " + version, async () =>
+            {
+                var server = new DeletionServer("version-images");
+                using var publisher = new GitHubMarketplacePublisher(server.Handler, new FastClock());
+                var entry = MarketplaceJson.CreateCatalogue([Sample() with { Version = selectedVersion }]).Entries.Single();
+                await publisher.RequestDeletionAsync(entry, MarketplaceDeletionScope.SelectedVersion, Token);
+                Equal(server.Removed.Count, 2);
+                True(server.Removed.Contains(entry.ManifestPath));
+                True(server.Removed.Contains($"marketplace/images/contributor/synthetic-order/{selectedVersion}/0.png"));
+                True(!server.Removed.Any(path=>path.Contains(selectedVersion == "1.0.0" ? "1.0.1" : "1.0.0")));
+            });
+        }
         yield return ("cancelled publication creates no PR", async () =>
         {
             using var cancellation = new CancellationTokenSource();
@@ -748,6 +775,8 @@ internal static class Checks
                     new { path = "marketplace/manifests/another/other-order/1.0.0.json", type = "blob", mode = "100644", sha = Commit } };
                 if (mode != "missing") foreach (var version in new[] { "1.0.0", "1.0.1" })
                     files.Add(new { path = prefix + (mode == "bad-path" ? "nested/" : "") + version + ".json", type = "blob", mode = mode == "symlink" ? "120000" : "100644", sha = Commit });
+                if (mode == "version-images") foreach (var version in new[] { "1.0.0", "1.0.1" })
+                    files.Add(new {path=$"marketplace/images/{owner}/synthetic-order/{version}/0.png",type="blob",mode="100644",sha=Commit});
                 return Json(new { sha = Tree, truncated = mode == "truncated", tree = files });
             }
             if (route == upstream + "/forks")

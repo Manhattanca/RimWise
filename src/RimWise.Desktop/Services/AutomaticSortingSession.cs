@@ -225,6 +225,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
 
     internal static bool NeedsLastOrderChoice(MaintenanceResult result) =>
         result.Outcome is MaintenanceOutcome.Cancelled or MaintenanceOutcome.Failed or MaintenanceOutcome.Stopped
+        && result.ReplyFailure == AiReplyFailure.None
         && result.OriginalRestored && result.Attempts > 0 && result.LastAttemptedOrder.Count > 0;
 
     internal AutomaticMaintenanceResult ResolveLastOrder(AutomaticMaintenanceResult result, bool keep, bool approveTrialRemovals = false)
@@ -293,6 +294,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         ModCatalogue catalogue, CancellationToken token, DatabaseSnapshot? database = null)
     {
         if (result.Maintenance.Outcome is not (MaintenanceOutcome.Stopped or MaintenanceOutcome.Failed)
+            || result.Maintenance.ReplyFailure != AiReplyFailure.None
             || result.PreparedOrder.Count == 0 || result.Maintenance.Attempts == 0
             || token.IsCancellationRequested || sorting.ReadinessProblem is not null
             || revision != editor.ContentRevision || !ReferenceEquals(catalogue, editor.CurrentCatalogue)

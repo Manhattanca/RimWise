@@ -3,10 +3,12 @@ namespace RimWise.Integration.AI;
 // Only fixed classifications and status codes are persisted, never a provider's error body.
 public sealed record AiServiceError(string Kind, int? HttpStatus = null)
 {
+    public string Provider { get; init; } = "compatible";
+    public bool RequiresConfigurationChange => Kind == "http" && HttpStatus is 400 or 401 or 403 or 404 or 405 or 413 or 422 or 429;
     internal AiServiceError CopyValidated()
     {
         if (Kind is not ("http" or "network" or "read" or "format" or "size" or "redirect" or "cancelled" or "output-limit" or "incomplete")
-            || HttpStatus is < 100 or > 599)
+            || HttpStatus is < 100 or > 599 || Provider is not ("compatible" or "siliconflow" or "deepseek"))
             throw new InvalidDataException("AI service error record is invalid.");
         return this;
     }
@@ -16,7 +18,11 @@ public sealed record AiServiceError(string Kind, int? HttpStatus = null)
         "http" => $"AI 服务返回 HTTP {HttpStatus}。" + (HttpStatus switch
         {
             400 or 413 or 422 => "请检查模型接口参数及上下文容量。",
-            401 or 403 => "请检查服务访问权限和密钥。",
+            401 => Provider == "siliconflow"
+                ? "硅基流动密钥未通过认证。请在 AI 设置中核对硅基流动服务地址，并更换属于该服务、仍有效的 API 密钥；DeepSeek 官方密钥不能用于硅基流动。"
+                : Provider == "deepseek" ? "DeepSeek 官方密钥未通过认证，请核对服务地址并更换有效的官方 API 密钥。"
+                : "密钥未通过认证，请核对当前服务地址与密钥是否匹配、是否已失效。",
+            403 => "请检查当前服务的密钥权限、模型使用权限和账户限制。",
             404 => "请检查接口地址和模型名称。",
             429 => "服务限流或额度不足，请检查服务端状态。",
             >= 500 => "服务端处理失败，请检查模型服务日志。",

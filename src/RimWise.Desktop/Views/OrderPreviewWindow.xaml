@@ -17,7 +17,11 @@
                   RowBackground="{DynamicResource PanelBrush}" AlternatingRowBackground="{DynamicResource AlternateBrush}">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="#" Binding="{Binding IndexLabel}" Width="54" />
-                <DataGridTextColumn Header="模组标识" Binding="{Binding Identifier}" Width="*" />
+                <DataGridTextColumn Header="模组名称" Binding="{Binding Name}" Width="*">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding Identifier}" /></Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
                 <DataGridTextColumn Header="变化" Binding="{Binding Change}" Width="130" />
             </DataGrid.Columns>
         </DataGrid>

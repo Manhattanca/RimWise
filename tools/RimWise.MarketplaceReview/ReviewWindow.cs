@@ -123,6 +123,7 @@ internal sealed class ReviewWindow : Form
         login.Enabled=idle&&user is null;logout.Enabled=refresh.Enabled=idle&&user is not null;
         list.Enabled=idle;inspect.Enabled=idle&&user is not null&&list.SelectedItem is ReviewPull;
         checks.Enabled=idle&&list.SelectedItem is ReviewPull;
+        merge.Text=snapshot?.IsRemoval==true ? "同意并下架" : "同意并上架";
         merge.Enabled=idle&&user is not null&&snapshot is { Supported:true };cancelButton.Enabled=!idle;
     }
     private async Task RunAsync(Func<CancellationToken,Task> work)
@@ -169,7 +170,8 @@ internal sealed class ReviewWindow : Form
         {
             status.Text="投稿已读取，正在核对市场校验状态…";
             await api.CheckReadinessAsync(loaded.Pull, token);
-            status.Text="市场可信校验已通过。请确认图片和文字合规后点击“同意并上架”。";
+            status.Text=loaded.IsRemoval ? "原发布者与市场校验均已通过。服务器将自动下架，也可点击“同意并下架”完成。"
+                : "市场可信校验已通过。请确认图片和文字合规后点击“同意并上架”。";
         }
     }
     internal void PreviewForChecks(ReviewSnapshot value) { list.Items.Add(value.Pull); RenderSnapshot(value); SetControls(); }

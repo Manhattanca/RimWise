@@ -149,7 +149,8 @@ public partial class MainWindow
             if (approvePreview is not null) approved = await approvePreview(comparison, notice, operationToken);
             else
             {
-                var preview = new OrderPreviewWindow(comparison, "导入市场排序", notice, "导入并保存排序") { Owner = this };
+                var preview = new OrderPreviewWindow(comparison, "导入市场排序", notice, "导入并保存排序",
+                    catalogue: ViewModel.CurrentCatalogue, version: ViewModel.CatalogueVersion) { Owner = this };
                 using var closeOnCancel = operationToken.Register(() => Dispatcher.BeginInvoke(() => { if (preview.IsVisible) preview.Close(); }));
                 approved = preview.ShowDialog() == true;
             }

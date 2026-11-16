@@ -86,12 +86,12 @@ public sealed class MarketplaceAuthorSession
         return await publisher.SubmitWithImagesAsync(manifest, images, saved, token);
     }
 
-    public async Task<MarketplaceSubmission> RequestDeletionAsync(MarketplaceEntry entry, CancellationToken token)
+    public async Task<MarketplaceSubmission> RequestDeletionAsync(MarketplaceEntry entry, MarketplaceDeletionScope scope, CancellationToken token)
     {
         var tokenValue = accessToken ?? store.ReadToken();
         if (tokenValue is null) throw new InvalidOperationException("请先登录 GitHub。");
         using var publisher = new GitHubMarketplacePublisher();
-        return await publisher.RequestDeletionAsync(entry, tokenValue, token);
+        return await publisher.RequestDeletionAsync(entry, scope, tokenValue, token);
     }
 
     public void Logout()

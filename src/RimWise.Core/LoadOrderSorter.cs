@@ -7,6 +7,7 @@ public sealed record LoadOrderSortResult(
     bool Complete,
     string? FailureReason = null)
 {
+    public IReadOnlyList<string[]> DeferredCycles { get; init; } = [];
     public string Explanation => !Complete ? FailureReason ?? "当前清单无法安全自动排序，请先处理诊断。"
         : Diagnostics.Any(d => d.Code == "InsertionOrderAdjusted") ? "已按模组需求调整相关原有模组的位置，其余尽量保留原顺序。"
         : Diagnostics.Any(d => d.Code == "OrderingCycleDeferred") ? "已按可执行的规则整理排序；循环内的先后建议暂不处理，保留必要前置，运行兼容性仍需游戏测试。"
@@ -81,6 +82,7 @@ public sealed class LoadOrderSorter
             .ToDictionary(group => group.Key, group => group.Select(item => item.Key).ToArray(), StringComparer.OrdinalIgnoreCase);
         var edges = original.ToDictionary(id => id, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
         var requiredEdges = original.ToDictionary(id => id, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+        var fixedEdges = original.ToDictionary(id => id, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
         var indegree = original.ToDictionary(id => id, _ => 0, StringComparer.OrdinalIgnoreCase);
         foreach (var identifier in original)
         {
@@ -95,6 +97,7 @@ public sealed class LoadOrderSorter
         foreach (var (before, after) in GameContentOrder.Pairs(catalogue, original, configurationVersion))
         {
             requiredEdges[before].Add(after);
+            fixedEdges[before].Add(after);
             if (edges[before].Add(after)) indegree[after]++;
         }
 
@@ -104,19 +107,21 @@ public sealed class LoadOrderSorter
                 foreach (var to in ResolveOrderIdentifiers(rule.After))
                 {
                     if (from.Equals(to, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (rule.Required) requiredEdges[from].Add(to);
+                    if (rule.Required) { requiredEdges[from].Add(to); fixedEdges[from].Add(to); }
                     if (edges[from].Add(to)) indegree[to]++;
                 }
         }
 
         var deferredDiagnostics = new List<CatalogueDiagnostic>();
+        IReadOnlyList<string[]> deferredCycles = [];
         if (deferAdvisoryCycles)
         {
-            foreach (var group in OrderingCycleFallback.DeferAdvisoryEdges(original, edges, requiredEdges))
+            deferredCycles = OrderingCycleFallback.DeferAdvisoryEdges(original, edges, requiredEdges, fixedEdges: fixedEdges);
+            foreach (var group in deferredCycles)
             {
-                var names = string.Join("、", group.Take(12));
+                var names = string.Join("、", group.Take(12).Select(id => ModDisplayName.Resolve(catalogue, configurationVersion, id)));
                 if (group.Length > 12) names += $"…（共 {group.Length} 项）";
-                var message = $"先后规则存在循环，暂不处理组内矛盾建议：{names}。保留必要前置要求，其余尽量沿用当前顺序，运行兼容性仍需游戏测试。";
+                var message = $"先后规则存在循环，暂缓组内矛盾顺序：{names}。保留全部模组及必要前置，先沿用组内原顺序测试；只有关联红字才尝试换位，仍失败再核对临时试排除。";
                 deferredDiagnostics.AddRange(group.Select(id => new CatalogueDiagnostic(
                     "OrderingCycleDeferred", DiagnosticSeverity.Warning, message, Identifier: id)));
             }
@@ -181,8 +186,8 @@ public sealed class LoadOrderSorter
         if (sorted.Count != original.Length)
         {
             var cycle = FindCycle(original.Where(id => indegree[id] > 0), edges);
-            var path = cycle.Count <= 12 ? string.Join(" → ", cycle.Append(cycle[0]))
-                : string.Join(" → ", cycle.Take(12)) + $" → …（共 {cycle.Count} 项）";
+            var path = cycle.Count <= 12 ? string.Join(" → ", cycle.Append(cycle[0]).Select(Display))
+                : string.Join(" → ", cycle.Take(12).Select(Display)) + $" → …（共 {cycle.Count} 项）";
             var reason = $"循环排序规则：{path}。请检查这些模组的前置或先后声明。";
             diagnostics.AddRange(cycle.Select(id => new CatalogueDiagnostic("OrderingCycle", DiagnosticSeverity.Error, reason, Identifier: id)));
             return new(original, diagnostics.AsReadOnly(), false, false, reason);
@@ -191,16 +196,17 @@ public sealed class LoadOrderSorter
         {
             var violated = edges.SelectMany(pair => pair.Value.Where(to => positions[pair.Key] >= positions[to])
                 .Select(to => new CatalogueDiagnostic("OrderConstraintViolated", DiagnosticSeverity.Error,
-                    $"{pair.Key} 必须在 {to} 之前加载。", Identifier: pair.Key))).ToArray();
+                    $"{Display(pair.Key)} 必须在 {Display(to)} 之前加载。", Identifier: pair.Key))).ToArray();
             var checkedDiagnostics = diagnostics.Concat(deferredDiagnostics).Concat(adjustedDiagnostics).Concat(violated).ToArray();
             return new(original, checkedDiagnostics, false, violated.Length == 0,
-                violated.Length == 0 ? null : string.Join("；", violated.Take(3).Select(d => d.Message)));
+                violated.Length == 0 ? null : string.Join("；", violated.Take(3).Select(d => d.Message))) { DeferredCycles = deferredCycles };
         }
         var changed = !sorted.SequenceEqual(original, StringComparer.Ordinal);
         var finalDiagnostics = CatalogueAnalysis.InspectSelectedOrder(catalogue, sorted, configurationVersion, targetVersion)
             .Concat(deferredDiagnostics).Concat(adjustedDiagnostics).ToArray();
-        return new(sorted.AsReadOnly(), finalDiagnostics, changed, true);
+        return new(sorted.AsReadOnly(), finalDiagnostics, changed, true) { DeferredCycles = deferredCycles };
 
+        string Display(string id) => ModDisplayName.Resolve(catalogue, configurationVersion, id);
         void AddTargets(IEnumerable<string> targets, string identifier, bool before, bool required = false)
         {
             foreach (var target in targets)
@@ -209,9 +215,8 @@ public sealed class LoadOrderSorter
                 {
                     var from = before ? targetIdentifier : identifier;
                     var to = before ? identifier : targetIdentifier;
-                    // An installation cannot load before itself, even when its metadata
-                    // uses a different spelling/source alias for its own package ID.
-                    if (from.Equals(to, StringComparison.OrdinalIgnoreCase)) continue;
+                    // Keep self declarations in the graph: strict sorting reports them,
+                    // automatic testing defers them through the same cycle policy.
                     if (required) requiredEdges[from].Add(to);
                     if (edges[from].Add(to)) indegree[to]++;
                 }

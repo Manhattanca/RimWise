@@ -39,10 +39,12 @@ internal static class OfflineSortingChecks
             result = OfflineSorting.Sort(catalogue, ["a", "b"], [], version, [new("a", "b")], database, root, default);
             Assert(result.Complete && result.Plan!.After.SequenceEqual(["a", "b"]));
         });
-        check("Offline keeps declared conflicts and required cycles unresolved", () =>
+        check("Offline keeps declared conflicts unresolved and preserves mutually dependent mods in their original order", () =>
         {
             Assert(!Sort(new([Mod("a", conflicts: ["b"]), Mod("b")]), ["a", "b"]).Complete);
-            Assert(!Sort(new([Mod("a", ["b"]), Mod("b", ["a"])]), ["a", "b"]).Complete);
+            var result = Sort(new([Mod("a", ["b"]), Mod("b", ["a"])]), ["a", "b"]);
+            Assert(result.Complete && result.Plan!.After.SequenceEqual(["a", "b"])
+                && result.Messages.Any(message => message.Contains("循环")));
         });
         check("Offline respects user rules and defers advisory cycles without dropping mods", () =>
         {

@@ -91,11 +91,13 @@ internal static class MaintenanceEfficiencyChecks
             Assert(result.Outcome == MaintenanceOutcome.Passed && result.Attempts == 4 && client.Calls == 1
                 && result.TrialExclusions.Count == 2, result.Message);
         });
-        check("Rejected AI replies are not remembered as valid diagnosis", () =>
+        check("Rejected AI replies stop without trials and are not remembered as valid diagnosis", () =>
         {
             var client = new Client { Reject = true }; var session = new Session(n => n < 3 ? Failure(n == 2) : new(true, []));
             var result = Run("rejected", client, session);
-            Assert(result.Outcome == MaintenanceOutcome.Passed && client.Calls == 2, result.Message);
+            Assert(result.Outcome == MaintenanceOutcome.Stopped && client.Calls == 1 && result.Attempts == 1
+                && result.TrialExclusions.Count == 0 && result.OriginalRestored
+                && result.LastAttemptedOrder.SequenceEqual(Order), result.Message);
             Assert(new AiTaskRecoveryStore(Path.Combine(Root, "rejected")).Inspect().Single().Checkpoint!.DiagnosedErrors.Length == 0);
         });
         check("Reuse survives interruption and checkpoint serialization without another request", () =>

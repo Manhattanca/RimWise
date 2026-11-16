@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using RimWise.Core;
 using RimWise.Desktop.Services;
 using RimWise.Desktop.Presentation;
 using RimWise.Integration.AI;
@@ -60,7 +61,7 @@ public partial class AiSortingWindow
         outcome=null;
         automaticResultShown=false;
         trialDecisionShown=false;
-        ResponseText.Text="正在补全前置并准备规则排序；有本轮结果后会在此持续显示。\n"; SummaryText.Text="";
+        ResponseText.Text="正在校验 AI 连接；通过后准备自动排序，本轮结果会在此持续显示。\n"; SummaryText.Text="";
         ShowDependencyReasons(null);
         ShowStartupFailure(null);
         AcceptedList.ItemsSource=null; RejectedList.ItemsSource=null;
@@ -251,7 +252,8 @@ public partial class AiSortingWindow
         if (progress.DependencyReasons is { } reasons) ShowDependencyReasons(reasons);
         if (progress.PreparedOrder is { } order)
         {
-            AcceptedList.ItemsSource = order.Select((id, i) => $"{i + 1}. {id}").ToArray();
+            AcceptedList.ItemsSource = order.Select((id, i) =>
+                $"{i + 1}. {ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id)}").ToArray();
             SummaryText.Text = $"当前临时测试顺序共 {order.Count} 项，尚未保存到个人排序。测试可临时排除模组；最终移出遵循确认设置。";
         }
         TokenText.Text = $"本任务已报告 {progress.ReportedTokens:N0} token · 第 {progress.Attempt} 次测试";
@@ -297,7 +299,8 @@ public partial class AiSortingWindow
 
             var removal = new OrderPreviewWindow(new(new(plan.After), new(removalPlan.After)), "确认试排除候选是否移出？",
                 "AI 未提出排序调整，保留全部模组时顺序不会变化。下方只显示未验证的临时试排除候选；移出不证明它们就是根因，且不会删除安装文件。\n\n"
-                + TrialDescription(result.Maintenance), "移出并保存", "保留模组，不更改排序") { Owner = this };
+                + TrialDescription(result.Maintenance), "移出并保存", "保留模组，不更改排序",
+                catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
             DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-dialog", "UnchangedOrderWithTrialRemovals");
             var removeTrialMods = removal.ShowDialog() == true;
             DiagnosticEventLog.Current?.Record("automatic-sorting", "stopped-removal-decision", $"remove={removeTrialMods}");
@@ -318,7 +321,8 @@ public partial class AiSortingWindow
             + (needsRemovalConfirmation
                 ? "\n此预览保留试排除模组。选择保存后，会单独询问是否移出这些模组；不同意移出也会保存排序调整。"
                 : "\n保留将保存该顺序（不删除模组文件）；恢复原排序则放弃本次调整。"),
-            "保留并保存最后顺序", "恢复原排序") { Owner = this };
+            "保留并保存最后顺序", "恢复原排序",
+            catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
         DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-dialog", result.Maintenance.Outcome.ToString());
         var keep = preview.ShowDialog() == true;
         var approveRemovals = false;
@@ -330,7 +334,8 @@ public partial class AiSortingWindow
                 var removal = new OrderPreviewWindow(new(new(plan.After), new(removalPlan.After)), "是否移出试排除模组？",
                     "以下模组只在测试中临时排除，剩余组合尚未验证通过，不能认定这些模组就是根因。\n"
                     + "移出仅改变排序，保留安装文件；不移出或关闭此窗口，会放回这些模组并保存排序调整。\n\n"
-                    + TrialDescription(result.Maintenance), "移出并保存", "不移出，保存排序调整") { Owner = this };
+                    + TrialDescription(result.Maintenance), "移出并保存", "不移出，保存排序调整",
+                    catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
                 approveRemovals = removal.ShowDialog() == true;
                 DiagnosticEventLog.Current?.Record("automatic-sorting", "stopped-removal-decision", $"remove={approveRemovals}");
             }
@@ -355,10 +360,11 @@ public partial class AiSortingWindow
                 : "本次未请求 AI，已按本地规则及测试结果处理。\n"));
         var keptTrialMods = result.Maintenance.TrialDecisionRecorded && !result.Maintenance.TrialRemovalsApproved;
         AcceptedList.ItemsSource=(result.LastOrderKept || keptTrialMods || result.PreparationApplied ? editor.Rows.Select(r => r.PackageId) : result.Maintenance.LastAttemptedOrder)
-            .Select((id,i)=>$"{i+1}. {id}").ToArray();
-        RejectedList.ItemsSource=result.Subscriptions.Select(d=>$"已记录缺失模组／前置订阅：{d.PackageId} · {d.WorkshopId}")
-            .Concat(result.Maintenance.ConflictApprovals.Select(a=>"已记录移出排序："+string.Join("、",a.RemovedIds)+"（安装文件保留）"))
-            .Concat(result.Maintenance.TrialExclusions.Select(t=>$"第 {t.Attempt} 轮临时试排除："+string.Join("、",t.RemovedIds))).ToArray();
+            .Select((id,i)=>$"{i+1}. {ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id)}").ToArray();
+        string Name(string id) => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id);
+        RejectedList.ItemsSource=result.Subscriptions.Select(d=>$"已记录缺失模组／前置订阅：{Name(d.PackageId)}")
+            .Concat(result.Maintenance.ConflictApprovals.Select(a=>"已记录移出排序："+string.Join("、",a.RemovedIds.Select(Name))+"（安装文件保留）"))
+            .Concat(result.Maintenance.TrialExclusions.Select(t=>$"第 {t.Attempt} 轮临时试排除："+string.Join("、",t.RemovedIds.Select(Name)))).ToArray();
         SummaryText.Text=result.CandidateApplied && result.Maintenance.ExistingErrorsOnly ? "新增 Mod 已定位并保存；完整对照测试仅重现已有错误。原有红字仍然存在，并非全部无红。"
             : result.CandidateApplied && result.Maintenance.HasVulkanConfigurationWarning ? "已排序完成并保存。除已忽略的 Vulkan 配置读取错误外，本轮地图生成与短时运行测试未发现其他错误；未覆盖游戏内全部内容。"
             : result.CandidateApplied ? "已排序完成。本轮地图生成与短时运行测试未检测到红字；未覆盖游戏内全部内容。"
@@ -425,7 +431,8 @@ public partial class AiSortingWindow
         if (maintenance.LogPaths.Count > 0)
             text += "\n\n本轮日志：\n" + string.Join("\n", maintenance.LogPaths.Select(StoredEvidence.Resolve).Distinct());
         text += "\n\n可在设置中导出诊断日志。";
-        return (maintenance.Outcome == MaintenanceOutcome.Failed ? "自动排序失败" : "自动排序未完成", text, MessageBoxImage.Warning);
+        return (maintenance.ReplyFailure != AiReplyFailure.None ? "AI 错误，自动排序已停止"
+            : maintenance.Outcome == MaintenanceOutcome.Failed ? "自动排序失败" : "自动排序未完成", text, MessageBoxImage.Warning);
     }
 
     internal void ShowStartupFailure(StartupFailureDetails? failure, AiReplyFailure replyFailure = AiReplyFailure.None)
@@ -483,8 +490,7 @@ public partial class AiSortingWindow
 
     private string TrialDescription(MaintenanceResult result)
     {
-        string Name(string id) => editor.CurrentCatalogue?.Resolve(id, editor.CatalogueVersion)
-            .UniqueInstallation?.Metadata?.Name is { Length: > 0 } name ? name + "（" + id + "）" : id;
+        string Name(string id) => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id);
         return string.Join("\n\n", result.TrialExclusions.Select(t => $"第 {t.Attempt} 轮：" + Name(t.SelectedId)
             + (t.RemovedIds.Length > 1 ? "\n连带依赖项：" + string.Join("、", t.RemovedIds.Where(id => id != t.SelectedId).Select(Name)) : "")));
     }

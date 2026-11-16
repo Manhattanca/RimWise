@@ -76,7 +76,8 @@ public partial class MainWindow
         var notice = $"游戏配置：{target}\n确认后更新游戏启用清单，并备份原配置。";
         if (ViewModel.ErrorCount > 0 || ViewModel.WarningCount > 0)
             notice += $"\n当前有 {ViewModel.ErrorCount} 个错误、{ViewModel.WarningCount} 个警告；保存不代表问题已解决。";
-        var preview = new OrderPreviewWindow(comparison, "恢复游戏配置", notice, "恢复到游戏") { Owner = this };
+        var preview = new OrderPreviewWindow(comparison, "恢复游戏配置", notice, "恢复到游戏",
+            catalogue: ViewModel.CurrentCatalogue, version: ViewModel.CatalogueVersion) { Owner = this };
         if (preview.ShowDialog() != true) return;
         ApplyGamePlan(plan, target, restoreEditor: true);
     }

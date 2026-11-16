@@ -90,8 +90,10 @@ internal sealed class ReviewApi : IDisposable
             return new(pull, "此投稿包含修改、重命名或混合新增与删除，请到 GitHub 检查。", files, [], false, "不支持此投稿范围，已禁用合并。");
         if (deletions.Length > 0)
         {
-            bool valid = deletions.All(file => ReviewRules.IsManifest(file.Path, pull.Author) || ReviewRules.IsImagePath(file.Path, pull.Author));
-            return new(pull, "作者申请下架排序及关联图片：\r\n\r\n" + string.Join("\r\n", files.Select(f => f.Path)), files, [], valid, valid ? "删除申请仍须通过市场可信校验。" : "包含不受支持的删除位置。");
+            await VerifyRemovalAsync(pull, deletions, cancel);
+            var latestRemoval = await GetPullAsync(number, cancel); Same(pull, latestRemoval);
+            return new(pull, "作者本人下架排序及关联图片：\r\n\r\n" + string.Join("\r\n", files.Select(f => f.Path)), files, [], true,
+                "已核实原发布者账号与所选版本范围。服务器将自动下架；尚未自动完成时可点击“同意并下架”。");
         }
         var manifests = additions.Where(file => ReviewRules.IsManifest(file.Path, pull.Author)).ToArray();
         if (manifests.Length != 1) return new(pull, "请一次审核一份新排序或一个版本。", files, [], false, "投稿清单范围无效。");
@@ -123,16 +125,71 @@ internal sealed class ReviewApi : IDisposable
         var last = await GetPullAsync(snapshot.Pull.Number, cancel); Same(snapshot.Pull, last);
         if (last.MergeSha != current.MergeSha) throw new InvalidOperationException("合并提交已变化，请刷新后重新审核。");
         using var result = await JsonAsync($"repos/{Repository}/pulls/{snapshot.Pull.Number}/merge", cancel, HttpMethod.Put,
-            new { sha = snapshot.Pull.Sha, merge_method = "squash", commit_title = "审核上架市场排序 #" + snapshot.Pull.Number });
+            new { sha = snapshot.Pull.Sha, merge_method = "squash", commit_title = (snapshot.IsRemoval ? "作者本人下架排序 #" : "审核上架市场排序 #") + snapshot.Pull.Number });
         if (!result.RootElement.GetProperty("merged").GetBoolean()) throw new InvalidOperationException("GitHub 未确认合并，请刷新核对结果。");
     }
     private static void Same(ReviewPull shown, (ReviewPull Pull, string MergeSha, bool Open) current)
     {
         if (!current.Open || current.Pull.Draft || current.Pull.BaseBranch != "main" || current.Pull.Sha != shown.Sha
-            || current.Pull.BaseSha != shown.BaseSha || current.Pull.Author != shown.Author || current.Pull.HeadRepository != shown.HeadRepository)
+            || current.Pull.BaseSha != shown.BaseSha || current.Pull.Author != shown.Author || current.Pull.AuthorId != shown.AuthorId || current.Pull.HeadRepository != shown.HeadRepository)
             throw new InvalidOperationException("投稿内容或主分支已经变化，请刷新并重新查看后再同意。");
     }
     internal Task CheckReadinessAsync(ReviewPull pull, CancellationToken cancel) => RequireTrustedCheckAsync(pull, cancel);
+
+    private async Task VerifyRemovalAsync(ReviewPull pull, IReadOnlyList<ChangedFile> files, CancellationToken cancel)
+    {
+        var paths = files.Where(file => ReviewRules.IsManifest(file.Path, pull.Author)).Select(file => file.Path).ToArray();
+        if (pull.AuthorId <= 0 || paths.Length == 0) throw new InvalidDataException("未能确认下架申请的原发布者。");
+        var expected = new HashSet<string>(StringComparer.Ordinal);
+        string? order = null;
+        foreach (var path in paths)
+        {
+            var bytes = await SendAsync(HttpMethod.Get, ReviewRules.Raw(Repository, pull.BaseSha, path).AbsoluteUri, cancel, max: MarketplaceJson.MaximumManifestBytes);
+            var m = MarketplaceJson.ParseManifest(bytes);
+            order ??= m.Id;
+            if (m.Id != order || !m.Author.Equals(pull.Author, StringComparison.OrdinalIgnoreCase) || MarketplaceJson.GetManifestPath(m.Author,m.Id,m.Version) != path)
+                throw new InvalidDataException("下架只允许原作者删除同一排序的指定版本或全部版本。");
+            expected.Add(path); foreach (var image in m.Images) expected.Add(image.Path);
+            using var commits = await JsonAsync($"repos/{Repository}/commits?path={Uri.EscapeDataString(path)}&sha={pull.BaseSha}&per_page=100",cancel);
+            long? originalAuthor = null;
+            foreach (var commit in commits.RootElement.EnumerateArray())
+            {
+                var sha = commit.GetProperty("sha").GetString() ?? "";
+                if (!ReviewRules.IsSha(sha)) throw new InvalidDataException("发布记录无效。");
+                using var originals = await JsonAsync($"repos/{Repository}/commits/{sha}/pulls?per_page=100",cancel);
+                if (originals.RootElement.GetArrayLength() >= 100) throw new InvalidDataException("发布记录不完整。");
+                foreach (var original in originals.RootElement.EnumerateArray())
+                {
+                    if (original.GetProperty("merged_at").ValueKind == JsonValueKind.Null || original.GetProperty("base").GetProperty("ref").GetString() != "main"
+                        || original.GetProperty("base").GetProperty("repo").GetProperty("full_name").GetString() != Repository) continue;
+                    int originalNumber = original.GetProperty("number").GetInt32();
+                    bool found = false;
+                    for (int page=1; page<=30; page++)
+                    {
+                        using var originalFiles = await JsonAsync($"repos/{Repository}/pulls/{originalNumber}/files?per_page=100&page={page}",cancel);
+                        found |= originalFiles.RootElement.EnumerateArray().Any(file => file.GetProperty("filename").GetString() == path && file.GetProperty("status").GetString() == "added");
+                        if (originalFiles.RootElement.GetArrayLength() < 100) break;
+                        if (page==30) throw new InvalidDataException("发布记录不完整。");
+                    }
+                    if (found)
+                    {
+                        long author = original.GetProperty("user").GetProperty("id").GetInt64();
+                        if (originalAuthor is not null && originalAuthor != author) throw new InvalidDataException("发布者身份记录不一致。");
+                        originalAuthor = author;
+                    }
+                }
+            }
+            if (originalAuthor != pull.AuthorId) throw new InvalidDataException("下架者与原发布者不是同一 GitHub 账号，无法下架。");
+        }
+        if (!expected.SetEquals(files.Select(file=>file.Path))) throw new InvalidDataException("下架申请包含无关文件或遗漏关联图片。");
+        using var tree = await JsonAsync($"repos/{Repository}/git/trees/{pull.BaseSha}?recursive=1",cancel);
+        if (tree.RootElement.GetProperty("truncated").GetBoolean()) throw new InvalidDataException("版本列表不完整，无法下架。");
+        string prefix = $"marketplace/manifests/{pull.Author.ToLowerInvariant()}/{order}/";
+        var all = tree.RootElement.GetProperty("tree").EnumerateArray().Where(item=>item.GetProperty("type").GetString()=="blob")
+            .Select(item=>item.GetProperty("path").GetString()!).Where(path=>path.StartsWith(prefix,StringComparison.Ordinal));
+        var published = all.ToHashSet(StringComparer.Ordinal);
+        if (paths.Any(path=>!published.Contains(path))) throw new InvalidDataException("下架申请包含未发布的版本。");
+    }
 
     private async Task RequireTrustedCheckAsync(ReviewPull pull, CancellationToken cancel)
     {

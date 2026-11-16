@@ -160,10 +160,14 @@ public sealed class GitHubMarketplacePublisher : IDisposable
         return forkPath;
     }
 
-    /// <summary>Proposes deletion of all versions of one author's order. Main is never modified here.</summary>
-    public async Task<MarketplaceSubmission> RequestDeletionAsync(MarketplaceEntry entry, string accessToken,
+    /// <summary>Legacy callers request the whole order. Main is never modified here.</summary>
+    public Task<MarketplaceSubmission> RequestDeletionAsync(MarketplaceEntry entry, string accessToken,
+        CancellationToken cancellationToken = default) => RequestDeletionAsync(entry, MarketplaceDeletionScope.AllVersions, accessToken, cancellationToken);
+
+    public async Task<MarketplaceSubmission> RequestDeletionAsync(MarketplaceEntry entry, MarketplaceDeletionScope scope, string accessToken,
         CancellationToken cancellationToken = default)
     {
+        if (!Enum.IsDefined(scope)) throw new ArgumentOutOfRangeException(nameof(scope));
         MarketplaceJson.ValidateEntry(entry);
         MarketplaceHttp.ValidateToken(accessToken);
         cancellationToken.ThrowIfCancellationRequested();
@@ -194,10 +198,12 @@ public sealed class GitHubMarketplacePublisher : IDisposable
             foreach (var item in root.GetProperty("tree").EnumerateArray())
             {
                 var path = GitHubJson.String(item, "path", 512);
-                var imagePrefix = $"marketplace/images/{entry.Author.ToLowerInvariant()}/{entry.Id}/";
+                var imagePrefix = $"marketplace/images/{entry.Author.ToLowerInvariant()}/{entry.Id}/" +
+                    (scope == MarketplaceDeletionScope.SelectedVersion ? entry.Version + "/" : "");
                 if (path.StartsWith(imagePrefix, StringComparison.Ordinal) && GitHubJson.String(item, "type", 20) == "blob")
                 { MarketplaceJson.Require(GitHubJson.String(item, "mode", 20) == "100644" && paths.Add(path), "图片删除范围无效。"); continue; }
                 if (!path.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                if (scope == MarketplaceDeletionScope.SelectedVersion && path != entry.ManifestPath) continue;
                 var versionFile = path[prefix.Length..];
                 MarketplaceJson.Require(versionFile.EndsWith(".json", StringComparison.Ordinal)
                     && MarketplaceJson.GetManifestPath(entry.Author, entry.Id, versionFile[..^5]) == path
@@ -228,9 +234,10 @@ public sealed class GitHubMarketplacePublisher : IDisposable
                 && GitHubJson.Sha(GitHubJson.Object(reference.RootElement, "object"), "sha") == removedCommit, "GitHub 未确认删除审核分支。");
         using var pull = await http.JsonAsync(HttpMethod.Post, upstream + "/pulls", accessToken, new
         {
-            title = "申请下架排序：" + entry.Id,
+            title = "申请下架排序：" + entry.Id + (scope == MarketplaceDeletionScope.SelectedVersion ? " v" + entry.Version : "（全部版本）"),
             head = user.Login.Equals(MarketplaceRepository.Owner, StringComparison.OrdinalIgnoreCase) ? branch : user.Login + ":" + branch,
-            @base = "main", body = "作者申请删除此排序的全部已发布版本，审核合并后重建市场目录。\n\n排序标识：" + entry.Id + "\n版本数量：" + paths.Count,
+            @base = "main", body = "作者申请下架" + (scope == MarketplaceDeletionScope.SelectedVersion ? "指定版本 v" + entry.Version : "全部已发布版本")
+                + "，核实原发布者身份后自动处理并重建市场目录。\n\n排序标识：" + entry.Id + "\n版本数量：" + paths.Count(path => path.StartsWith(prefix, StringComparison.Ordinal)),
             maintainer_can_modify = true
         }, cancellationToken).ConfigureAwait(false);
         return ValidateSubmission(pull.RootElement, user, branch, entry.ManifestPath, entry.Sha256);

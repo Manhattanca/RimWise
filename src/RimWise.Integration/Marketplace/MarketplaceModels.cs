@@ -1,6 +1,8 @@
 namespace RimWise.Integration.Marketplace;
 
 public sealed record MarketplaceMod(string PackageId, string? WorkshopId);
+public enum MarketplaceDeletionScope { SelectedVersion, AllVersions }
+public sealed record MarketplaceDeletionRequest(MarketplaceEntry Entry, MarketplaceDeletionScope Scope);
 public sealed record MarketplaceImage(string Path, string Sha256, int Bytes, int Width, int Height);
 public sealed record MarketplaceImageUpload(MarketplaceImage Image, byte[] Content);
 

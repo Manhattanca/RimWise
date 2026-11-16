@@ -44,6 +44,13 @@ public static class AutomaticGameMaintenance
         if ((database?.Id ?? "") != request.DatabaseSnapshotId)
             throw new InvalidDataException("自动任务数据库快照不匹配。");
         InsertionScope.ValidateOrder(limits.InsertionBaselineJson, request.CurrentOrder);
+        progress?.Report(new(0, "正在校验 AI 连接与鉴权…", 0) { AwaitingAi = true });
+        var connection = await AiSortingPreflight.CheckAsync(client, request.Settings, request.ApiKey, token);
+        if (!connection.Succeeded)
+            return new(new(MaintenanceOutcome.Stopped, connection.Message, 0, 0, 0, false,
+                Array.AsReadOnly(request.CurrentOrder.ToArray()), true) { ReplyFailure = AiReplyFailure.ServiceFailure }, null, [])
+                { DatabaseSnapshotId = database?.Id ?? "" };
+        progress?.Report(new(0, "AI 连接与鉴权校验通过，正在准备自动排序…", 0));
         var session = new PreparedGameSession(options with { UseFixedHelper=true, WarnOnSlowStartup=true, MaximumSeconds=1800,
             CollectInsertionEvidence=limits.InsertionBaselineJson is not null },paths,catalogue,request,rules,progress,gameProgress,chooseConflict,database,limits);
         var controller = new LevelOneMaintenance(client,estimator,session,resumeTaskId);

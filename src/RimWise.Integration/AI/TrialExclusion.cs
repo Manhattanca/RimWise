@@ -80,7 +80,8 @@ internal static class TrialExclusionPlanning
         => Candidates(report, catalogue, order, retained, version, attempt).FirstOrDefault();
 
     internal static IReadOnlyList<TrialExclusion> Candidates(MaintenanceGameReport report, ModCatalogue catalogue,
-        IReadOnlyList<string> order, IReadOnlyList<string> retained, GameVersion version, int attempt)
+        IReadOnlyList<string> order, IReadOnlyList<string> retained, GameVersion version, int attempt,
+        IReadOnlyList<string>? cycleMembers = null)
     {
         if (!report.CanDiagnose || report.Errors.Count == 0 || report.StartupFailure?.Context.EnvironmentFailure == true)
             return [];
@@ -91,7 +92,10 @@ internal static class TrialExclusionPlanning
         // Files are bounded, error-targeted local evidence. A reference is a hypothesis, never proof.
         var files = report.LogContext?.Files.Where(f => f.OrderIndex > 0 && Active(f.PackageId) is not null).ToArray() ?? [];
         var members = facts.Select(f => Active(f.PackageId)!).Concat(files.Select(f => Active(f.PackageId)!))
+            .Concat((cycleMembers ?? []).Select(Active).OfType<string>())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (cycleMembers is not null)
+            members = members.Intersect(cycleMembers, StringComparer.OrdinalIgnoreCase).ToArray();
         // Fix the current blocker before experimenting on unrelated loading errors. If its
         // owners are protected, excluding unrelated mods cannot bypass that protection.
         var blockers = facts.Where(f => f.Code == "GameTestBlockingFailure")

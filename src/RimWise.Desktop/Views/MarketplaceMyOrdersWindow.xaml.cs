@@ -9,13 +9,15 @@ namespace RimWise.Desktop.Views;
 public sealed class MarketplaceMyOrdersActions
 {
     public Action<MarketplaceSavedDraft>? DeleteDraft { get; init; }
-    public Func<MarketplaceEntry, CancellationToken, Task<MarketplaceSubmission>>? DeleteOrderAsync { get; init; }
+    public Func<MarketplaceEntry, MarketplaceDeletionScope, CancellationToken, Task<MarketplaceSubmission>>? DeleteOrderAsync { get; init; }
     internal Func<string, bool>? ConfirmDelete { get; init; }
+    internal Func<IReadOnlyList<MarketplaceEntry>, MarketplaceDeletionRequest?>? ChooseDeletion { get; init; }
 }
 
 public partial class MarketplaceMyOrdersWindow : Window
 {
     private readonly MarketplaceMyOrdersActions actions;
+    private readonly IReadOnlyList<MarketplaceEntry> publishedEntries;
     private readonly HashSet<string> pendingDeletions = new(StringComparer.OrdinalIgnoreCase);
     public MarketplaceEntry? SelectedEntry => OrdersList.SelectedItem as MarketplaceEntry;
     public MarketplaceSavedDraft? SelectedDraft => DraftsList.SelectedItem as MarketplaceSavedDraft;
@@ -26,8 +28,9 @@ public partial class MarketplaceMyOrdersWindow : Window
         MarketplaceMyOrdersActions? actions = null)
     {
         this.actions = actions ?? new();
+        publishedEntries = entries.ToArray();
         InitializeComponent();
-        OrdersList.ItemsSource = entries;
+        OrdersList.ItemsSource = MarketplaceVersions.Group(entries).Select(versions => versions[0]).ToArray();
         DraftsList.ItemsSource = drafts ?? [];
         EmptyText.Text = entries.Count == 0 ? "当前没有你已上架的排序；可登录后刷新市场。" : "";
         if (drafts?.Count == 0) EmptyText.Text += " 本机尚无草稿，在发布窗口点击“保存草稿”即可。";
@@ -87,10 +90,28 @@ public partial class MarketplaceMyOrdersWindow : Window
         if (draft is null && entry is null) return;
         if (draft is not null && actions.DeleteDraft is null || entry is not null &&
             (actions.DeleteOrderAsync is null || pendingDeletions.Contains(entry.Author + "/" + entry.Id))) return;
-        var question = draft is not null ? $"删除草稿“{draft.Title}”？删除后无法继续编辑这份草稿。"
-            : $"申请删除已发布排序“{entry!.Title}”的所有版本？审核通过后从市场下架，不影响已下载的排序或模组文件。";
-        if (!(actions.ConfirmDelete?.Invoke(question) ?? MessageDialog.Show(this, question, "删除排序", MessageBoxButton.YesNo,
-            MessageBoxImage.Question) == MessageBoxResult.Yes)) return;
+        var scope = MarketplaceDeletionScope.SelectedVersion;
+        var versions = publishedEntries.Where(item => entry is not null && item.Author.Equals(entry.Author, StringComparison.OrdinalIgnoreCase) && item.Id == entry.Id).ToArray();
+        if (draft is null && versions.Length > 1)
+        {
+            MarketplaceDeletionRequest? selection;
+            if (actions.ChooseDeletion is not null) selection = actions.ChooseDeletion(versions);
+            else
+            {
+                var dialog = new MarketplaceDeleteWindow(versions) { Owner = this };
+                selection = dialog.ShowDialog() == true ? dialog.Selection : null;
+            }
+            if (selection is null) return;
+            if (!versions.Contains(selection.Entry) || !Enum.IsDefined(selection.Scope)) throw new InvalidOperationException("删除版本范围无效。");
+            entry = selection.Entry; scope = selection.Scope;
+        }
+        else
+        {
+            var question = draft is not null ? $"删除草稿“{draft.Title}”？删除后无法继续编辑这份草稿。"
+                : $"下架已发布排序“{entry!.Title}”的 v{entry.Version}？系统核实为原发布者后自动下架，不影响已下载的排序或模组文件。";
+            if (!(actions.ConfirmDelete?.Invoke(question) ?? MessageDialog.Show(this, question, "删除排序", MessageBoxButton.YesNo,
+                MessageBoxImage.Question) == MessageBoxResult.Yes)) return;
+        }
         IsBusy = true;
         OrdersList.IsEnabled = DraftsList.IsEnabled = false;
         RefreshState();
@@ -104,11 +125,11 @@ public partial class MarketplaceMyOrdersWindow : Window
             }
             else
             {
-                EmptyText.Text = "正在提交删除审核…";
+                EmptyText.Text = "正在提交本人下架申请…";
                 EmptyText.Visibility = Visibility.Visible;
-                var result = await actions.DeleteOrderAsync!(entry!, CancellationToken.None);
+                var result = await actions.DeleteOrderAsync!(entry!, scope, CancellationToken.None);
                 pendingDeletions.Add(entry!.Author + "/" + entry.Id);
-                EmptyText.Text = $"删除申请已提交（审核 #{result.PullRequestNumber}），审核通过后下架；可稍后刷新市场查看。";
+                EmptyText.Text = $"{(scope == MarketplaceDeletionScope.AllVersions ? "全部版本" : "版本 v" + entry.Version)}下架申请已提交（#{result.PullRequestNumber}），系统核实原发布者后自动下架；请稍后刷新市场。";
             }
         }
         catch (Exception ex)

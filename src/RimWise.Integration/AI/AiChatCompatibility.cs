@@ -6,9 +6,18 @@ namespace RimWise.Integration.AI;
 /// <summary>Chat Completions wire conventions; never converts reasoning or tool calls into actions.</summary>
 internal static class AiChatCompatibility
 {
+    internal static bool IsDeepSeek(string model) => ModelName(model).StartsWith("deepseek-", StringComparison.Ordinal);
+    private static string ModelName(string model) => model[(model.LastIndexOf('/') + 1)..].ToLowerInvariant();
+    internal static string Provider(AiSettings settings) => new Uri(settings.Endpoint).IdnHost switch
+    {
+        "api.siliconflow.cn" or "api.siliconflow.com" => "siliconflow",
+        "api.deepseek.com" => "deepseek",
+        _ => "compatible"
+    };
+
     internal static void Configure(Dictionary<string, object> payload, AiSettings settings, int? limit)
     {
-        var model = settings.Model[(settings.Model.LastIndexOf('/') + 1)..].ToLowerInvariant();
+        var model = ModelName(settings.Model);
         var host = new Uri(settings.Endpoint).IdnHost;
         // Most compatible providers still require max_tokens. Only OpenAI model families
         // use the newer parameter, including when reached through a compatible relay.
@@ -23,6 +32,22 @@ internal static class AiChatCompatibility
         {
             payload["reasoning_effort"] = "low";
             payload["response_format"] = new { type = "json_object" };
+        }
+        if (Provider(settings) == "siliconflow" && IsDeepSeek(settings.Model))
+        {
+            // SiliconFlow max_tokens excludes reasoning; V4 low/medium map to high.
+            // Keep both portions within our total allowance without a paid retry.
+            if (model.StartsWith("deepseek-v4") || model.StartsWith("deepseek-v3.1") || model.StartsWith("deepseek-v3.2"))
+            {
+                var thinking = limit is null ? 4096 : limit >= 256 ? Math.Min(8192, limit.Value / 2) : 0;
+                payload["enable_thinking"] = thinking > 0;
+                if (thinking > 0) payload["thinking_budget"] = thinking;
+                if (limit is { } total) payload["max_tokens"] = total - thinking;
+            }
+            // R1/distill endpoints do not all support JSON mode. Unknown relays
+            // retain the conservative common Chat Completions request.
+            if (model.StartsWith("deepseek-v3") || model.StartsWith("deepseek-v4"))
+                payload["response_format"] = new { type = "json_object" };
         }
     }
 

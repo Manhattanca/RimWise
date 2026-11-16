@@ -122,7 +122,15 @@
                         <ScrollViewer x:Name="DetailScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="24,22,22,22">
                             <StackPanel x:Name="DetailContent">
                                 <StackPanel x:Name="DetailImages"/>
-                                <TextBlock x:Name="DetailTitle" FontSize="23" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="DetailTitle" FontSize="23" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                    <StackPanel x:Name="VersionPickerPanel" Grid.Column="1" Width="155" Margin="16,0,0,0" Visibility="Collapsed">
+                                        <TextBlock Text="排序版本" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6"/>
+                                        <ComboBox x:Name="VersionPicker" DisplayMemberPath="Version" SelectionChanged="Version_Selected" MaxDropDownHeight="260" AutomationProperties.Name="选择排序版本"/>
+                                        <TextBlock Text="默认最新版，可选择旧版" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                    </StackPanel>
+                                </Grid>
                                 <TextBlock x:Name="DetailAuthor" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                 <TextBlock x:Name="DetailId" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,0"/>
                                 <WrapPanel Margin="0,15,0,0">
@@ -136,6 +144,15 @@
                                 <TextBlock x:Name="DetailReleaseNotes" Style="{StaticResource BodyText}"/>
                                 <TextBlock Text="所需 DLC" Style="{StaticResource SectionLabel}"/>
                                 <TextBlock x:Name="DetailDlc" Style="{StaticResource BodyText}"/>
+                                <StackPanel x:Name="VersionHistoryPanel" Visibility="Collapsed">
+                                    <TextBlock Text="其他版本更新日志" Style="{StaticResource SectionLabel}"/>
+                                    <ItemsControl x:Name="VersionHistory">
+                                        <ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,14">
+                                            <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                                            <TextBlock Text="{Binding Notes}" Style="{StaticResource BodyText}"/>
+                                        </StackPanel></DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
                                 <StackPanel x:Name="WorkshopPanel" Visibility="Collapsed">
                                     <TextBlock Text="工坊合集" Style="{StaticResource SectionLabel}"/>
                                     <TextBlock TextWrapping="Wrap"><Hyperlink Click="Workshop_Click" Foreground="{DynamicResource LinkBrush}"><Run x:Name="WorkshopText"/></Hyperlink></TextBlock>

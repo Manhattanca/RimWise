@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param([string]$Version = '0.6.0', [string]$PackageCacheRoot = (Join-Path $PSScriptRoot '..\work\nuget'))
+param([string]$Version = '0.6.1', [string]$PackageCacheRoot = (Join-Path $PSScriptRoot '..\work\nuget'))
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Initialize-Environment.ps1') -PackageCacheRoot $PackageCacheRoot
 

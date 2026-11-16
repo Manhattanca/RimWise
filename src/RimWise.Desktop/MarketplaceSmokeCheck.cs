@@ -1,10 +1,13 @@
 #if DEBUG
 using System.IO;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Windows.Input;
+using RimWise.Desktop.Services;
 using RimWise.Desktop.Views;
 using RimWise.Desktop.Presentation;
 using RimWise.Integration.Configuration;
@@ -114,6 +117,7 @@ internal static class MarketplaceSmokeCheck
         };
         window.ConfigureMarketplacePage(Actions());
         Check(loads == 0 && window.MarketplaceHost.Visibility == Visibility.Collapsed, "Market does not fetch during startup");
+        await ExerciseFirstUseWarning(window, output, checks, () => loads);
         window.MarketPageTab.IsChecked = true;
         var page = (MarketplacePage)window.MarketplaceHost.Content;
         await page.PendingOperation;
@@ -263,6 +267,86 @@ internal static class MarketplaceSmokeCheck
         Check(window.ModEditorBody.IsVisible && window.ModEditorFooter.IsVisible
             && revision == window.ViewModel.ContentRevision && original.SequenceEqual(window.ViewModel.Rows.Select(row => row.PackageId)),
             "Browsing, cancelling and publishing preserve editor order and history");
+    }
+
+    private static async Task ExerciseFirstUseWarning(MainWindow window, string output, List<string> checks, Func<int> loads)
+    {
+        void Check(bool passed, string message)
+        {
+            if (!passed) throw new InvalidOperationException(message);
+            checks.Add(message);
+        }
+        var store = new MarketplaceNoticeStore(UserStorage.DirectoryPath);
+        Check(!store.IsAcknowledged(), "A new profile must see the market warning");
+        Directory.CreateDirectory(Path.GetDirectoryName(store.FilePath)!);
+        File.WriteAllText(store.FilePath, "{broken");
+        Check(!store.IsAcknowledged(), "A corrupt acknowledgment cannot suppress the warning");
+        File.WriteAllText(store.FilePath, new string('x', 2048));
+        Check(!store.IsAcknowledged(), "Oversized acknowledgment is ignored safely");
+
+        var themes = ((App)Application.Current).Themes;
+        foreach (var theme in new[] { ThemePreference.Dark, ThemePreference.Light })
+        {
+            themes.Select(theme, save: false);
+            var integrated = theme == ThemePreference.Dark;
+            Exception? failure = null;
+            var observation = window.Dispatcher.InvokeAsync(async () =>
+            {
+                var dialog = Application.Current.Windows.OfType<MessageDialogWindow>().Single();
+                var button = dialog.ButtonsPanel.Children.OfType<Button>().Single();
+                var elapsed = Stopwatch.StartNew();
+                try
+                {
+                    Check(dialog.Title == "警告" && dialog.MessageText.Text == MarketplaceFirstUseNotice.Text
+                        && dialog.TriangleIcon.IsVisible, $"{theme}: Chinese warning includes its warning symbol and exact notice");
+                    Check(!button.IsEnabled && button.Content.ToString() == "已知晓（5 秒）" && !dialog.CloseButton.IsEnabled,
+                        $"{theme}: first frame exposes the disabled five-second acknowledgment");
+                    if (integrated) Check(loads() == 0 && !store.IsAcknowledged(), "Market requests and persistence wait for acknowledgment");
+                    button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    dialog.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(dialog), 0, Key.Escape)
+                        { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+                    dialog.CloseButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    dialog.Close();
+                    Check(dialog.IsVisible && dialog.Result == MessageBoxResult.None, $"{theme}: click, Escape, X and window-close cannot bypass the countdown");
+                    PrototypeSmokeCheck.SavePreview(dialog, Path.Combine(output, $"market-warning-{theme}-countdown.png"));
+                    await Task.Delay(1100);
+                    Check(!button.IsEnabled && button.Content.ToString()!.Contains("秒")
+                        && button.Content.ToString() != "已知晓（5 秒）", $"{theme}: remaining seconds visibly decrease while closing stays blocked");
+                    if (integrated) Check(loads() == 0 && !store.IsAcknowledged(), "No market requests or acknowledgment are recorded during the countdown");
+                    while (!button.IsEnabled && elapsed.Elapsed < TimeSpan.FromSeconds(9)) await Task.Delay(100);
+                    Check(button.IsEnabled && button.Content.ToString() == "已知晓" && dialog.CloseButton.IsEnabled,
+                        $"{theme}: confirmation and window-close unlock after five seconds");
+                    PrototypeSmokeCheck.SavePreview(dialog, Path.Combine(output, $"market-warning-{theme}-ready.png"));
+                }
+                catch (Exception ex) { failure = ex; }
+                finally
+                {
+                    // Even a failed assertion must respect the real minimum reading time.
+                    await Task.Delay(5200 - (int)Math.Min(5200, elapsed.ElapsedMilliseconds));
+                    if (integrated) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    else dialog.Close();
+                }
+            }, DispatcherPriority.ApplicationIdle);
+            if (integrated) window.MarketPageTab.IsChecked = true;
+            else Check(MarketplaceFirstUseNotice.Show(window), "Closing an elapsed warning acknowledges it");
+            await observation.Task.Unwrap();
+            if (failure is not null) throw failure;
+        }
+        Check(new MarketplaceNoticeStore(UserStorage.DirectoryPath).IsAcknowledged(), "Acknowledgment persists across new store instances");
+        Check(!new MarketplaceNoticeStore(Path.Combine(output, "another-profile")).IsAcknowledged(), "Acknowledgment remains specific to each profile");
+        Check(!Directory.EnumerateFiles(Path.GetDirectoryName(store.FilePath)!, "*.tmp").Any(), "Acknowledgment leaves no temporary files");
+        var requests = loads();
+        window.ModsPageTab.IsChecked = true;
+        window.MarketPageTab.IsChecked = true;
+        Check(!Application.Current.Windows.OfType<MessageDialogWindow>().Any() && requests == loads(),
+            "Reopening the acknowledged market neither prompts nor reloads its catalogue");
+
+        // Owned windows must not trap application/owner shutdown during the countdown.
+        var closingOwner = new Window { Owner = window, Width = 300, Height = 200, ShowInTaskbar = false };
+        closingOwner.Show();
+        _ = window.Dispatcher.BeginInvoke(closingOwner.Close, DispatcherPriority.ApplicationIdle);
+        Check(!MarketplaceFirstUseNotice.Show(closingOwner) && !closingOwner.IsVisible,
+            "Closing the owner terminates its countdown dialog without acknowledging it");
     }
 
     private static async Task Idle(Window window)

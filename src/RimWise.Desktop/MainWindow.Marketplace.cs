@@ -18,7 +18,31 @@ public partial class MainWindow
     private MarketplacePage? marketplacePage;
     private MarketplaceClient? marketplaceClient;
     private MarketplaceAuthorSession? marketplaceAuthorSession;
+    private string? marketplaceNoticeAcknowledgedProfile;
+    private bool marketplaceNoticeShowing;
     private MarketplaceAuthorSession MarketplaceAuthor => marketplaceAuthorSession ??= new(UserStorage.DirectoryPath);
+
+    private bool EnsureMarketplaceNotice()
+    {
+        if (marketplaceNoticeShowing) return false;
+        var profile = UserStorage.DirectoryPath;
+        if (marketplaceNoticeAcknowledgedProfile == profile) return true;
+        var store = new MarketplaceNoticeStore(profile);
+        if (store.IsAcknowledged()) { marketplaceNoticeAcknowledgedProfile = profile; return true; }
+        marketplaceNoticeShowing = true;
+        try
+        {
+            if (!MarketplaceFirstUseNotice.Show(this)) return false;
+            marketplaceNoticeAcknowledgedProfile = profile;
+            try { store.Acknowledge(); }
+            catch (Exception ex) when (MarketplaceNoticeStore.IsStorageError(ex))
+            {
+                ViewModel.Status = "提醒确认记录未能保存，下次启动后会再次显示。";
+            }
+            return true;
+        }
+        finally { marketplaceNoticeShowing = false; }
+    }
 
     private void EnsureMarketplacePage()
     {

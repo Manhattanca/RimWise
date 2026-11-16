@@ -15,6 +15,12 @@ public partial class MainWindow
     {
         if (GameLogHost is null || MarketplaceHost is null || ModEditorFooter is null) return;
         var page = MarketPageTab.IsChecked == true ? 2 : LogsPageTab.IsChecked == true ? 1 : 0;
+        if (page == 2 && !EnsureMarketplaceNotice())
+        {
+            if (mainPageIndex == 1) LogsPageTab.IsChecked = true;
+            else ModsPageTab.IsChecked = true;
+            return;
+        }
         var logs = page == 1;
         if (logs && gameLogPage is null)
             GameLogHost.Content = gameLogPage = new GameLogPage(LocateGameLogs, () => ViewModel.CurrentCatalogue);

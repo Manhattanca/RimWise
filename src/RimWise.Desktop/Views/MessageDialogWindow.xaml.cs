@@ -26,12 +26,15 @@ public partial class MessageDialogWindow : Window
 {
     private readonly MessageBoxButton buttons;
     private readonly TimeSpan confirmationDelay;
+    private readonly bool allowDismissAfterDelay;
+    private bool ownerClosing;
     private readonly Stopwatch confirmationWatch = new();
     private DispatcherTimer? confirmationTimer;
     internal MessageBoxResult Result { get; private set; }
 
     internal MessageDialogWindow(Window owner, string message, string title, MessageBoxButton buttons,
-        MessageBoxImage image, MessageBoxResult defaultResult, TimeSpan confirmationDelay = default)
+        MessageBoxImage image, MessageBoxResult defaultResult, TimeSpan confirmationDelay = default,
+        string confirmationText = "确定", bool allowDismissAfterDelay = false)
     {
         if (!Enum.IsDefined(buttons)) throw new ArgumentOutOfRangeException(nameof(buttons));
         InitializeComponent();
@@ -40,6 +43,7 @@ public partial class MessageDialogWindow : Window
         MessageText.Text = message;
         this.buttons = buttons;
         this.confirmationDelay = confirmationDelay;
+        this.allowDismissAfterDelay = allowDismissAfterDelay;
         MaxHeight = Math.Max(240, SystemParameters.WorkArea.Height - 32);
         MaxWidth = Math.Max(300, SystemParameters.WorkArea.Width - 32);
         MessageScroll.MaxHeight = Math.Min(380, Math.Max(80, MaxHeight - 180));
@@ -58,7 +62,7 @@ public partial class MessageDialogWindow : Window
         {
             var button = new Button
             {
-                Content = choice switch { MessageBoxResult.OK => "确定", MessageBoxResult.Cancel => "取消",
+                Content = choice switch { MessageBoxResult.OK => confirmationText, MessageBoxResult.Cancel => "取消",
                     MessageBoxResult.Yes => "是", _ => "否" },
                 Tag = choice,
                 IsDefault = choice == selectedDefault,
@@ -81,7 +85,8 @@ public partial class MessageDialogWindow : Window
             if (confirmationDelay > TimeSpan.Zero)
             {
                 button.IsEnabled = false;
-                button.Content = $"确定（{Math.Ceiling(confirmationDelay.TotalSeconds)} 秒）";
+                button.Content = $"{confirmationText}（{Math.Ceiling(confirmationDelay.TotalSeconds)} 秒）";
+                AutomationProperties.SetName(button, button.Content.ToString());
                 ContentRendered += (_, _) =>
                 {
                     if (confirmationWatch.IsRunning) return;
@@ -89,9 +94,15 @@ public partial class MessageDialogWindow : Window
                     confirmationTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Normal, (_, _) =>
                     {
                         var remaining = Math.Max(0, Math.Ceiling((confirmationDelay - confirmationWatch.Elapsed).TotalSeconds));
-                        button.Content = remaining > 0 ? $"确定（{remaining} 秒）" : "确定";
+                        button.Content = remaining > 0 ? $"{confirmationText}（{remaining} 秒）" : confirmationText;
+                        AutomationProperties.SetName(button, button.Content.ToString());
                         button.IsEnabled = remaining == 0;
-                        if (remaining == 0) { confirmationTimer?.Stop(); button.Focus(); }
+                        if (remaining == 0)
+                        {
+                            confirmationTimer?.Stop();
+                            if (allowDismissAfterDelay) { CloseButton.IsEnabled = true; CloseButton.ToolTip = "关闭"; }
+                            button.Focus();
+                        }
                     }, Dispatcher);
                 };
             }
@@ -100,8 +111,13 @@ public partial class MessageDialogWindow : Window
 
         // Yes/No recovery prompts require an explicit choice: treating X or Esc as No could delete a task.
         CloseButton.IsEnabled = buttons != MessageBoxButton.YesNo && confirmationDelay == default;
-        if (!CloseButton.IsEnabled) CloseButton.ToolTip = confirmationDelay > TimeSpan.Zero ? "请阅读提示后点击确定" : "请选择是或否";
+        if (!CloseButton.IsEnabled) CloseButton.ToolTip = confirmationDelay > TimeSpan.Zero ? $"请阅读提示后点击{confirmationText}" : "请选择是或否";
         Closed += (_, _) => confirmationTimer?.Stop();
+        if (allowDismissAfterDelay)
+        {
+            owner.Closing += Owner_Closing;
+            Closed += (_, _) => owner.Closing -= Owner_Closing;
+        }
     }
 
     private void SetIcon(MessageBoxImage image)
@@ -133,13 +149,23 @@ public partial class MessageDialogWindow : Window
     {
         if (e.Key != Key.Escape) return;
         e.Handled = true;
-        if (buttons != MessageBoxButton.YesNo && confirmationDelay == default) Close();
+        if (buttons != MessageBoxButton.YesNo && (confirmationDelay == default || CanDismissAfterDelay)) Close();
+    }
+
+    private bool CanDismissAfterDelay => allowDismissAfterDelay && confirmationWatch.IsRunning && confirmationWatch.Elapsed >= confirmationDelay;
+
+    private void Owner_Closing(object? sender, CancelEventArgs e)
+    {
+        if (e.Cancel) return;
+        ownerClosing = true;
+        Close();
     }
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (ownerClosing) return;
         if (Result != MessageBoxResult.None) return;
-        if (buttons == MessageBoxButton.YesNo || confirmationDelay > TimeSpan.Zero) { e.Cancel = true; return; }
+        if (buttons == MessageBoxButton.YesNo || (confirmationDelay > TimeSpan.Zero && !CanDismissAfterDelay)) { e.Cancel = true; return; }
         Result = buttons == MessageBoxButton.OK ? MessageBoxResult.OK : MessageBoxResult.Cancel;
     }
 }

@@ -1,5 +1,5 @@
 {
-  "Version": "0.6.0",
+  "Version": "0.6.1",
   "Purpose": "MIT source snapshot; third-party components retain their own licenses",
   "Excluded": [
     "Personal data and credentials",
@@ -146,7 +146,7 @@
     },
     {
       "Path": "packaging/README.preview.md",
-      "Sha256": "b3362d5e5b5b41b0463deeb6efbdb11b4c31ed135fe644b6e2ddee2de541f99b"
+      "Sha256": "a812615257984028a06a600548e39d59e081c9f75387825c76ec7d265d4f4ce4"
     },
     {
       "Path": "packaging/RimWise.iss",
@@ -154,7 +154,7 @@
     },
     {
       "Path": "scripts/Build-Installer.ps1",
-      "Sha256": "d259dad9902f29fc48497b9cbf1203a183aea1a9e38c167dd0707567b5c890de"
+      "Sha256": "da1643b3b0e7c4082a6759df98ba0b29effe65315db2e530aae6d00b45b56666"
     },
     {
       "Path": "scripts/Build-Source.ps1",
@@ -174,7 +174,7 @@
     },
     {
       "Path": "scripts/Publish-Preview.ps1",
-      "Sha256": "938cdaf6d122a7f1bc285b3abfbc7695d226820e5fc5f07b3ed45d3319565c66"
+      "Sha256": "c8edc908d60d07bff209901a2c0d28ff94881f891266e64513d5cd4b8e0c3742"
     },
     {
       "Path": "scripts/Test-Marketplace.ps1",
@@ -374,7 +374,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.GameLog.cs",
-      "Sha256": "52117e5ff711611aa06880d14b9306d916f09cc9413743585a854087f1646ea5"
+      "Sha256": "28be9c71de2a487ad6d46129de64858454756cb530618ec8192f0ef51dafc044"
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.GameSave.cs",
@@ -402,7 +402,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.Marketplace.cs",
-      "Sha256": "096b50f3d79b2cac432f2516fac00a9de4567e740a465e2caa4188eb6287d67e"
+      "Sha256": "a2583585c71ae28c24a1732c256c8064f2115cdcf1da400c0d253f9fb0a8612b"
     },
     {
       "Path": "src/RimWise.Desktop/MainWindow.Marketplace.Notifications.cs",
@@ -446,7 +446,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/MarketplaceSmokeCheck.cs",
-      "Sha256": "d5fe04fbe773ddcecdd85d34b40bebcbcb97883a7b59ff5debe7a03f8ad31553"
+      "Sha256": "e53709be9156a21dd76defbf6e8853c3f11ebae6757fa64d770f9c8c2c5f1112"
     },
     {
       "Path": "src/RimWise.Desktop/MessageDialogSmokeCheck.cs",
@@ -642,7 +642,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/RimWise.Desktop.csproj",
-      "Sha256": "35816168214783ba590c6a55c29fe382b5497a7ac5c87d64087b2ff64be2a268"
+      "Sha256": "a8cd7fdc675358b1a9c5527dde11049a57f94f34182d58be03da737e617b28fa"
     },
     {
       "Path": "src/RimWise.Desktop/RuntimeUiSmokeCheck.cs",
@@ -699,6 +699,10 @@
     {
       "Path": "src/RimWise.Desktop/Services/MarketplaceImagePreview.cs",
       "Sha256": "dcba929ba1d93d247a2d8cbfc19e808c45b7a0904c4bef54ec81ceb0e3dca1f8"
+    },
+    {
+      "Path": "src/RimWise.Desktop/Services/MarketplaceNoticeStore.cs",
+      "Sha256": "ab7190d938f1b307bed0dab209ad223584a8f7d1a83b29a83421d487f9eaaa1a"
     },
     {
       "Path": "src/RimWise.Desktop/Services/ModLocationOpener.cs",
@@ -917,6 +921,10 @@
       "Sha256": "6e534212da9f1c0a4834012c2e899a07dff567a2fdea167ba084d2b72da04b74"
     },
     {
+      "Path": "src/RimWise.Desktop/Views/MarketplaceFirstUseNotice.cs",
+      "Sha256": "a202138e5638dcb3ffd11835880264b47df0a11fdd9538e800476369ead20ca2"
+    },
+    {
       "Path": "src/RimWise.Desktop/Views/MarketplaceMyOrdersWindow.xaml",
       "Sha256": "861333a1d9a2a9212a8bb634bd52af9f20d1f1bf67fe2b6c30f44f32ce9202c3"
     },
@@ -946,7 +954,7 @@
     },
     {
       "Path": "src/RimWise.Desktop/Views/MessageDialogWindow.xaml.cs",
-      "Sha256": "27fe50830f9829d660c8e48f2195561dcc747941a1fc812b0f42b31d5f1de2d2"
+      "Sha256": "8f1ddd8c3646dd38bc160893654f49810efa412fecf3afe5a3a06d6349538372"
     },
     {
       "Path": "src/RimWise.Desktop/Views/MissingModsWindow.xaml",

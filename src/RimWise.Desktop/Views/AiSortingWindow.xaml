@@ -7,54 +7,68 @@
     <Border Background="{DynamicResource PageBrush}" Padding="24">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" MaxHeight="210" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" MaxHeight="100" />
+                <RowDefinition x:Name="SettingsRow" Height="*" MinHeight="60" MaxHeight="210" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                 <RowDefinition Height="2*" MinHeight="120" /><RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <ScrollViewer x:Name="SettingsScroll" MaxHeight="210" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled" ClipToBounds="True"><StackPanel>
+                          HorizontalScrollBarVisibility="Disabled" ClipToBounds="True"><Grid x:Name="SettingsLayout">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <TextBlock x:Name="ConfigurationText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" />
-                <DockPanel Margin="0,12,0,0">
+                <DockPanel x:Name="ModePanel" Grid.Row="1" Margin="0,12,0,0">
                     <TextBlock Text="排序模式" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <ComboBox x:Name="PermissionBox" SelectionChanged="Permission_Changed">
+                    <ComboBox x:Name="PermissionBox" SelectionChanged="Permission_Changed" AutomationProperties.Name="排序模式">
                         <ComboBoxItem Content="尽量保留现有排序，为新增 Mod 寻找位置" Tag="insert" />
                         <ComboBoxItem Content="AI 全部重排序" Tag="full" />
                         <ComboBoxItem Content="模组适配（未完成）" Tag="adapt" />
                         <ComboBoxItem Content="离线自动排序（规则、程序集分析与拓扑；不测试）" Tag="offline" />
                     </ComboBox>
                 </DockPanel>
-                <CheckBox x:Name="ConfirmRemovalToggle" Content="移出模组前由我确认（保留安装文件）" IsChecked="True"
+                <CheckBox x:Name="ConfirmRemovalToggle" Grid.Row="2" Content="移出模组前由我确认（保留安装文件）" IsChecked="True"
                           ToolTip="测试期间可临时排除模组；保存到个人排序前须确认移出。停止、失败或取消后保留排序也遵循此设置。"
                           Click="RemovalPolicy_Click" Margin="0,10,0,0" />
-                <WrapPanel x:Name="AiActionsPanel" Margin="0,14,0,0">
+                <WrapPanel x:Name="AiActionsPanel" Grid.Row="3" Margin="0,14,0,0">
                     <Button x:Name="SettingsButton" Content="AI 设置…" Click="Settings_Click" Margin="0,0,10,6" />
                     <Button x:Name="EstimateButton" Content="预估用量" Click="Estimate_Click" Margin="0,0,0,6" />
                     <Button x:Name="RecoveryButton" Content="恢复任务…" Click="Recovery_Click" Margin="10,0,0,6" />
                     <Button Content="用量与余额…" Click="Usage_Click" Margin="10,0,0,6" />
                 </WrapPanel>
-                <WrapPanel x:Name="LimitPanel" VerticalAlignment="Center" Margin="0,4,0,0">
+                <WrapPanel x:Name="LimitPanel" Grid.Row="4" VerticalAlignment="Center" Margin="0,4,0,0">
                     <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
                     <CheckBox x:Name="AttemptLimitToggle" Content="限制测试次数" VerticalAlignment="Center" />
-                    <TextBox x:Name="AttemptsInput" Text="5" Width="60" Margin="6,0" IsEnabled="{Binding IsChecked, ElementName=AttemptLimitToggle}" />
+                    <TextBox x:Name="AttemptsInput" Text="5" Width="60" Margin="6,0" AutomationProperties.Name="最多测试次数" IsEnabled="{Binding IsChecked, ElementName=AttemptLimitToggle}" />
                     <TextBlock Text="次" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal">
                     <CheckBox x:Name="TokenLimitToggle" Content="限制 token 用量" VerticalAlignment="Center" />
-                    <TextBox x:Name="BudgetInput" Text="50000" Width="100" Margin="6,0" IsEnabled="{Binding IsChecked, ElementName=TokenLimitToggle}" />
+                    <TextBox x:Name="BudgetInput" Text="50000" Width="100" Margin="6,0" AutomationProperties.Name="token 用量上限" IsEnabled="{Binding IsChecked, ElementName=TokenLimitToggle}" />
                     </StackPanel>
                 </WrapPanel>
-            </StackPanel></ScrollViewer>
+            </Grid></ScrollViewer>
             <StackPanel x:Name="LogSettingsPanel" Grid.Row="1" Margin="0,8,0,0">
                 <WrapPanel>
                     <CheckBox x:Name="AutoSaveLogsToggle" Content="自动保存日志 ZIP" Click="AutoSaveLogs_Click" VerticalAlignment="Center" Margin="0,0,12,6" />
-                    <Button x:Name="SaveLastLogsButton" Content="保存上次日志" Click="SaveLastLogs_Click" Margin="0,0,8,6" ToolTip="导出上次自动排序日志及 token 记录，完成后打开文件夹" />
+                    <Button x:Name="SaveLastLogsButton" Content="导出本次排障日志" Click="SaveLastLogs_Click" Margin="0,0,8,6" ToolTip="导出本次排障日志及 token 记录，成功、失败或取消后均可导出；完成后打开文件夹" />
                     <Button x:Name="OpenLogsButton" Content="打开排序日志文件夹" Click="OpenLogs_Click" Margin="0,0,8,6" />
                     <Button x:Name="DeleteAllLogsButton" Content="删除全部日志" Click="DeleteAllLogs_Click" Margin="0,0,0,6" ToolTip="删除可清理的排序日志及保存目录中的排序日志 ZIP；保留待恢复任务和 token 记录" />
                 </WrapPanel>
-                <TextBlock x:Name="LogStatusText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" MaxHeight="44" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="保存目录可在设置 → 路径设置中修改。关闭自动保存后仍可手动保存上次日志。" />
+                <TextBlock x:Name="LogStatusText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" MaxHeight="44" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="保存目录可在设置 → 路径设置中修改。关闭自动保存后，成功、失败或取消均可手动导出本次排障日志。" />
             </StackPanel>
-            <ScrollViewer x:Name="StatusScroll" Grid.Row="2" MaxHeight="100" VerticalScrollBarVisibility="Auto" Margin="0,8,0,14">
-                <StackPanel>
+            <Border Grid.Row="2" Margin="0,8,0,12" Padding="12,8" Background="{DynamicResource HeaderBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6">
+            <StackPanel>
+                <ScrollViewer MaxHeight="64" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <DockPanel>
+                    <TextBlock x:Name="SortingBusyLabel" DockPanel.Dock="Right" Text="正在处理" Visibility="Collapsed" FontWeight="SemiBold" Margin="12,0,0,0" />
                     <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                </DockPanel>
+                </ScrollViewer>
+                <ProgressBar x:Name="SortingProgress" Height="3" Margin="0,6,0,0" Visibility="Collapsed"
+                             Foreground="{DynamicResource AccentBrush}" AutomationProperties.Name="自动排序正在处理，无固定百分比" />
+                <ScrollViewer x:Name="StatusScroll" MaxHeight="100" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
+                <StackPanel>
                     <StackPanel x:Name="DependencyDetails" Visibility="Collapsed" Margin="0,8,0,0">
                         <TextBlock Text="前置与下载原因" FontWeight="SemiBold" Margin="0,0,0,6" />
                         <ListBox x:Name="DependencyList" MaxHeight="90" HorizontalContentAlignment="Stretch"
@@ -65,7 +79,9 @@
                     <TextBlock x:Name="TokenText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,0" />
                     <TextBlock x:Name="SummaryText" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
-            </ScrollViewer>
+                </ScrollViewer>
+            </StackPanel>
+            </Border>
             <Grid x:Name="ResultPanel" Grid.Row="3">
                 <Grid.Resources>
                     <DataTemplate x:Key="ResultLine"><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="2,3" /></DataTemplate>
@@ -74,8 +90,14 @@
                 <Grid Margin="0,0,0,10">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                     <TextBlock x:Name="ResponseHeading" Text="AI 回报与每轮处理结果" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBox x:Name="ResponseText" Grid.Row="1" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                    <TextBox x:Name="ResponseText" Grid.Row="1" IsReadOnly="True" IsUndoEnabled="False" TextWrapping="Wrap" AcceptsReturn="True"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" />
+                    <TextBlock x:Name="ResponseEmptyText" Grid.Row="1" Text="开始后，这里会显示处理进度与回报。"
+                               Margin="14" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" IsHitTestVisible="False">
+                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=ResponseText}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                        </Style></TextBlock.Style>
+                    </TextBlock>
                 </Grid>
                 <Grid Grid.Row="1">
                     <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
@@ -84,22 +106,35 @@
                         <TextBlock x:Name="OrderHeading" Text="当前／最后测试顺序" FontWeight="SemiBold" Margin="0,0,0,6" />
                         <ListBox x:Name="AcceptedList" Grid.Row="1" ItemTemplate="{StaticResource ResultLine}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                  HorizontalContentAlignment="Stretch" />
+                        <TextBlock x:Name="OrderEmptyText" Grid.Row="1" Text="运行后显示排序结果。" Margin="14"
+                                   Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" IsHitTestVisible="False">
+                            <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers><DataTrigger Binding="{Binding HasItems, ElementName=AcceptedList}" Value="False"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                            </Style></TextBlock.Style>
+                        </TextBlock>
                     </Grid>
                     <Grid Grid.Column="1" Margin="8,0,0,0">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition /></Grid.RowDefinitions>
                         <TextBlock Text="警告与未通过的操作" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <ListBox x:Name="RejectedList" Grid.Row="1" ItemTemplate="{StaticResource ResultLine}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                  HorizontalContentAlignment="Stretch" />
+                        <TextBlock x:Name="WarningsEmptyText" Grid.Row="1" Text="运行后的警告会显示在这里。" Margin="14"
+                                   Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" IsHitTestVisible="False">
+                            <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers><DataTrigger Binding="{Binding HasItems, ElementName=RejectedList}" Value="False"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                            </Style></TextBlock.Style>
+                        </TextBlock>
                     </Grid>
                 </Grid>
                 <Expander x:Name="FailureDetails" Grid.Row="2" Header="本轮诊断与日志路径" Visibility="Collapsed" IsExpanded="True">
-            <TextBox x:Name="StartupFailureText"  IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+            <TextBox x:Name="StartupFailureText"  IsReadOnly="True" IsUndoEnabled="False" TextWrapping="Wrap" AcceptsReturn="True"
                      Visibility="Collapsed" Height="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                      ToolTip="可选择并复制本轮日志路径及求助说明" />
                 </Expander>
             </Grid>
             <WrapPanel Grid.Row="4" Margin="0,12,0,0">
                 <Button x:Name="AutomaticButton" Content="自动排序并测试" Click="Automatic_Click" Margin="0,6,10,0"
+                        Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}"
                         ToolTip="经 Steam 测试地图，必要时下载前置并调整重测；启动超过 30 分钟仅提醒，可继续等待或取消" />
                 <Button x:Name="CancelButton" Content="取消" Click="Cancel_Click" Margin="0,6,10,0" IsEnabled="False" />
                 <Button x:Name="ClearLogsButton" Content="清理历史日志" Click="ClearLogs_Click" Margin="0,6,10,0"

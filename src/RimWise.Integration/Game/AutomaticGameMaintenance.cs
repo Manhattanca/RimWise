@@ -51,6 +51,12 @@ public static class AutomaticGameMaintenance
                 Array.AsReadOnly(request.CurrentOrder.ToArray()), true) { ReplyFailure = AiReplyFailure.ServiceFailure }, null, [])
                 { DatabaseSnapshotId = database?.Id ?? "" };
         progress?.Report(new(0, "AI 连接与鉴权校验通过，正在准备自动排序…", 0));
+        if (SteamGameLaunch.IsSteamInstallation(paths.GameDirectory))
+        {
+            progress?.Report(new(0, "正在检查 Steam 是否已启动并登录…", 0));
+            await new SteamWorkshopClient(AppContext.BaseDirectory).EnsureReadyAsync(token);
+            progress?.Report(new(0, "Steam 已就绪，测试时将自动请求启动游戏，请留意 Steam 的启动提示。", 0));
+        }
         var session = new PreparedGameSession(options with { UseFixedHelper=true, WarnOnSlowStartup=true, MaximumSeconds=1800,
             CollectInsertionEvidence=limits.InsertionBaselineJson is not null },paths,catalogue,request,rules,progress,gameProgress,chooseConflict,database,limits);
         var controller = new LevelOneMaintenance(client,estimator,session,resumeTaskId);
@@ -90,6 +96,7 @@ public static class AutomaticGameMaintenance
             await GameTestRecovery.StopInterruptedAsync(options,token);
             if (GameProcessService.IsAnyRunning()) return false;
             TestHelperMount.CleanInterrupted(options);
+            TestHelperMount.EnsureNoHelperRemnants(options.GameDirectory);
             var duplicates = DuplicateInstallations.FindRequired(original, initial.CurrentOrder, options.Version);
             if (duplicates.Count > 0)
                 throw new InvalidDataException(string.Join("\n\n", duplicates.Select(DuplicateInstallations.Describe)));
@@ -248,6 +255,12 @@ public static class AutomaticGameMaintenance
             insertionControl = report.InsertionEvidence ?? new(false, [], []);
             task.Save(task.Current with { InsertionControl = insertionControl, Message = insertionControl.Completed
                 ? "原排序对照完成，接下来测试新增 Mod。" : "原排序未完成全部测试；新增排序仍按严格无红标准检查。" });
+            if (report.StartupFailure?.Context.Stage == "LaunchFailed")
+            {
+                const string message = "原排序对照测试未能确认游戏启动，已停止，未继续候选排序测试。请确认 Steam 已登录，并检查是否有启动确认窗口，然后重新开始。";
+                progress?.Report(new(task.Current.Attempts, message, task.Current.ReportedTokens));
+                throw new MaintenancePauseException(message);
+            }
         }
 
         public async Task<MaintenanceGameReport> TestAsync(IReadOnlyList<string> order,CancellationToken token)

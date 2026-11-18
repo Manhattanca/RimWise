@@ -20,7 +20,11 @@ public partial class MainWindow
         {
             var current = aiSettingsStore.Load();
             var dialog = new AiSettingsWindow(current, aiSettingsStore, aiSecrets) { Owner = this };
-            if (dialog.ShowDialog() == true) ViewModel.Status = "AI 设置已保存";
+            if (dialog.ShowDialog() == true)
+            {
+                ViewModel.Status = "AI 设置已保存";
+                aiSortingWindow?.RefreshConfiguration();
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or JsonException or PlatformNotSupportedException)
         { MessageDialog.Show(this, ex.Message, "无法打开 AI 设置", MessageBoxButton.OK, MessageBoxImage.Warning); }
@@ -43,18 +47,18 @@ public partial class MainWindow
 
     internal AiSortingWindow OpenAiSorting()
     {
-        if (aiSortingWindow is not null)
-        {
-            if (aiSortingWindow.WindowState == WindowState.Minimized) aiSortingWindow.WindowState = WindowState.Normal;
-            aiSortingWindow.Activate();
-            return aiSortingWindow;
-        }
+        AiSortingPageTab.IsChecked = true;
+        return EnsureAiSortingPage();
+    }
+
+    private AiSortingWindow EnsureAiSortingPage()
+    {
+        if (aiSortingWindow is not null) { aiSortingWindow.RefreshConfiguration(); return aiSortingWindow; }
         AutomaticSortingNotice.ShowIfNeeded(this, UserStorage.DirectoryPath);
         var window = new AiSortingWindow(ViewModel, UserStorage.DirectoryPath, lifetime.Token, gamePaths: () => paths,
-            prepareSave: PrepareAutomaticOrderSave, prepareCatalogue: PrepareAutomaticCatalogueAsync) { Owner = this };
+            prepareSave: PrepareAutomaticOrderSave, prepareCatalogue: PrepareAutomaticCatalogueAsync);
         aiSortingWindow = window;
-        window.Closed += (_, _) => aiSortingWindow = null;
-        window.Show();
+        AiSortingHost.Content = window.Embed(this, () => ModsPageTab.IsChecked = true);
         return window;
     }
 }

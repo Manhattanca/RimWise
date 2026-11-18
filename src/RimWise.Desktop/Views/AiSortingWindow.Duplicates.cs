@@ -22,7 +22,7 @@ public partial class AiSortingWindow
             string.Join("\n\n", duplicates.Select(DuplicateInstallations.Describe)));
         var window = new DuplicateModsWindow(duplicates, RefreshDuplicateInstallationsAsync, ChooseDuplicateCopyAsync,
             editor.EffectiveGameVersion,
-            editor.Rows.Select(r => r.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase)) { Owner = this };
+            editor.Rows.Select(r => r.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase)) { Owner = DialogOwner };
         using var registration = cancellation.Register(() => Dispatcher.BeginInvoke(new Action(() =>
         { if (window.IsVisible) window.Close(); })));
         cancellation.ThrowIfCancellationRequested();
@@ -42,7 +42,7 @@ public partial class AiSortingWindow
             + "\n\n以下副本将移入备份（不删除、不取消订阅）：\n"
             + string.Join("\n\n", plan.Moves.Select(m => m.Original + "\n→ " + m.Backup))
             + "\n\n此选择也会影响以后正常启动游戏。可在自动排序页面的“副本备份”恢复。是否继续？";
-        if (MessageDialog.Show(this, detail, "确认使用此副本", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (MessageDialog.Show(DialogOwner, detail, "确认使用此副本", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return false;
         cancellation.ThrowIfCancellationRequested();
         if (revision != editor.ContentRevision || paths != gamePaths()) throw new InvalidOperationException("排序或路径已变化，请重新选择。");
@@ -68,11 +68,11 @@ public partial class AiSortingWindow
         try
         {
             var store = new DuplicateCopyBackups(dataDirectory, gamePaths());
-            var window = new DuplicateCopyBackupsWindow(store, RefreshDuplicateInstallationsAsync) { Owner = this };
+            var window = new DuplicateCopyBackupsWindow(store, RefreshDuplicateInstallationsAsync) { Owner = DialogOwner };
             window.ShowDialog();
         }
         catch (Exception ex) when (IsExpectedError(ex))
-        { MessageDialog.Show(this, ex.Message, "副本备份", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        { MessageDialog.Show(DialogOwner, ex.Message, "副本备份", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
     internal async Task<IReadOnlyList<OrderMatch>> RefreshDuplicateInstallationsAsync(CancellationToken cancellation)

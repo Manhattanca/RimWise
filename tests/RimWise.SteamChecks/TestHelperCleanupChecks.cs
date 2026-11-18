@@ -3,6 +3,7 @@ using RimWise.Integration.Game;
 using RimWise.Integration.Configuration;
 using RimWise.Integration.Diagnostics;
 using System.Text.Json;
+using System.Text;
 
 internal static class TestHelperCleanupChecks
 {
@@ -10,10 +11,12 @@ internal static class TestHelperCleanupChecks
 
     internal static void Run(Action<string, Action> check)
     {
+        TestHelperDirectoryChecks.Run(check);
+        TestHelperSessionChecks.Run(check);
         check("Owned helper junction is removed after use", () =>
         {
             var (options, session) = Fixture();
-            var mount = new TestHelperMount(options, session);
+            var mount = Legacy(options, session);
             var link = Path.Combine(options.GameDirectory, "Mods", "RimWise-Test-" + Path.GetFileName(session)[5..]);
             Assert(new DirectoryInfo(link).LinkTarget is not null);
             mount.Dispose();
@@ -27,14 +30,26 @@ internal static class TestHelperCleanupChecks
             var (options, session) = Fixture();
             for (var i = 0; i < 3; i++)
             {
-                using (var mount = new TestHelperMount(options, session)) Assert(Directory.Exists(Link(options, session)));
+                using (var mount = Legacy(options, session)) Assert(Directory.Exists(Link(options, session)));
+                Assert(!Directory.Exists(Link(options, session)) && !Directory.Exists(Target(session)) && Completed(session));
+            }
+        });
+        check("A recovered legacy session can deploy ordinary files and clean repeatedly", () =>
+        {
+            var (options, session) = Fixture();
+            _ = Legacy(options, session);
+            for (var i = 0; i < 2; i++)
+            {
+                using (var helper = new TestHelperMount(options, session))
+                    Assert(new DirectoryInfo(Link(options, session)).LinkTarget is null
+                        && File.Exists(Path.Combine(Link(options, session), "About", "About.xml")));
                 Assert(!Directory.Exists(Link(options, session)) && !Directory.Exists(Target(session)) && Completed(session));
             }
         });
         check("Interrupted session cleanup removes helper payload and preserves diagnosis", () =>
         {
             var (options, session) = Fixture();
-            _ = new TestHelperMount(options, session); // Simulates parent exit without Dispose.
+            _ = Legacy(options, session); // Simulates parent exit without Dispose.
             var log = Path.Combine(session, "Player.log");
             File.WriteAllText(log, "diagnostic evidence");
             TestHelperMount.CleanInterrupted(options);
@@ -44,7 +59,7 @@ internal static class TestHelperCleanupChecks
         check("Legacy helper remnants are adopted only with matching installation and metadata", () =>
         {
             var (options, session) = Fixture();
-            _ = new TestHelperMount(options, session);
+            _ = Legacy(options, session);
             File.Delete(Path.Combine(session, "helper-mount.json"));
             TestHelperMount.CleanInterrupted(options);
             Assert(!Directory.Exists(Link(options, session)) && !Directory.Exists(Target(session)) && Completed(session));
@@ -52,7 +67,7 @@ internal static class TestHelperCleanupChecks
         check("Dangling owned junction is detached without following its missing target", () =>
         {
             var (options, session) = Fixture();
-            _ = new TestHelperMount(options, session);
+            _ = Legacy(options, session);
             var moved = Path.Combine(session, "preserved-payload");
             Directory.Move(Target(session), moved);
             TestHelperMount.CleanInterrupted(options);
@@ -61,7 +76,7 @@ internal static class TestHelperCleanupChecks
         check("Locked helper payload records pending cleanup and retries after release", () =>
         {
             var (options, session) = Fixture();
-            var mount = new TestHelperMount(options, session);
+            var mount = Legacy(options, session);
             using (var locked = File.Open(Path.Combine(Target(session), "Assemblies", "RimWise.TestHelper.dll"),
                 FileMode.Open, FileAccess.Read, FileShare.None))
             {
@@ -74,7 +89,7 @@ internal static class TestHelperCleanupChecks
         check("Changed helper file is preserved until its original content is restored", () =>
         {
             var (options, session) = Fixture();
-            var mount = new TestHelperMount(options, session);
+            var mount = Legacy(options, session);
             var file = Path.Combine(Target(session), "About", "About.xml");
             var before = File.ReadAllBytes(file);
             File.AppendAllText(file, "user change");
@@ -88,7 +103,7 @@ internal static class TestHelperCleanupChecks
         check("Unregistered helper files are preserved and empty-tree cleanup remains retryable", () =>
         {
             var (options, session) = Fixture();
-            var mount = new TestHelperMount(options, session);
+            var mount = Legacy(options, session);
             var file = Path.Combine(Target(session), "personal.txt");
             File.WriteAllText(file, "preserve");
             mount.Dispose();
@@ -100,7 +115,7 @@ internal static class TestHelperCleanupChecks
         check("An ordinary player directory replacing the link is never deleted", () =>
         {
             var (options, session) = Fixture();
-            var mount = new TestHelperMount(options, session);
+            var mount = Legacy(options, session);
             var link = Link(options, session);
             Directory.Delete(link, recursive: false);
             Directory.CreateDirectory(link);
@@ -112,8 +127,8 @@ internal static class TestHelperCleanupChecks
         {
             var (options, session) = Fixture();
             var (other, otherSession) = Fixture();
-            var mount = new TestHelperMount(options, session);
-            using var foreign = new TestHelperMount(other, otherSession);
+            var mount = Legacy(options, session);
+            using var foreign = Legacy(other, otherSession);
             var link = Link(options, session);
             Directory.Delete(link, recursive: false);
             Directory.Move(Link(other, otherSession), link);
@@ -129,7 +144,7 @@ internal static class TestHelperCleanupChecks
             var profile = Directory.GetParent(Directory.GetParent(options.TestRoot)!.FullName)!.FullName;
             new PathSettingsStore(profile).Save(new() { GameDirectory = options.GameDirectory });
             var before = File.ReadAllBytes(options.PersonalConfigPath);
-            _ = new TestHelperMount(options, session);
+            _ = Legacy(options, session);
             TestDataRetention.MaintainProfile(profile);
             Assert(!Directory.Exists(Link(options, session)) && !Directory.Exists(Target(session)) && Completed(session)
                 && before.SequenceEqual(File.ReadAllBytes(options.PersonalConfigPath)));
@@ -139,7 +154,7 @@ internal static class TestHelperCleanupChecks
             var (options, session) = Fixture();
             var profile = Directory.GetParent(Directory.GetParent(options.TestRoot)!.FullName)!.FullName;
             new PathSettingsStore(profile).Save(new() { GameDirectory = options.GameDirectory });
-            using var mount = new TestHelperMount(options, session);
+            using var mount = Legacy(options, session);
             using var lease = File.Open(Path.Combine(options.TestRoot, "ordinary-game-test.lock"), FileMode.OpenOrCreate,
                 FileAccess.ReadWrite, FileShare.None);
             Assert(TestDataRetention.MaintainProfile(profile).Busy && Directory.Exists(Link(options, session)));
@@ -147,7 +162,7 @@ internal static class TestHelperCleanupChecks
         check("Another installation's helper is preserved", () =>
         {
             var (options, session) = Fixture();
-            using var mount = new TestHelperMount(options, session);
+            using var mount = Legacy(options, session);
             var foreignGame = Path.Combine(Path.GetDirectoryName(options.GameDirectory)!, "foreign-game");
             Directory.CreateDirectory(Path.Combine(foreignGame, "Mods"));
             TestHelperMount.CleanInterrupted(options with { GameDirectory = foreignGame });
@@ -156,10 +171,10 @@ internal static class TestHelperCleanupChecks
         check("A malformed helper journal cannot authorize deletion or block another session cleanup", () =>
         {
             var (options, session) = Fixture();
-            using var mount = new TestHelperMount(options, session);
+            using var mount = Legacy(options, session);
             var otherSession = Path.Combine(options.TestRoot, "game-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(otherSession);
-            _ = new TestHelperMount(options, otherSession);
+            _ = Legacy(options, otherSession);
             File.WriteAllText(Path.Combine(session, "helper-mount.json"), "{}");
             TestHelperMount.CleanInterrupted(options);
             Assert(Directory.Exists(Link(options, session)) && Directory.Exists(Target(session))
@@ -168,12 +183,12 @@ internal static class TestHelperCleanupChecks
         check("Malformed legacy session metadata preserves files without aborting later cleanup", () =>
         {
             var (options, session) = Fixture();
-            _ = new TestHelperMount(options, session);
+            _ = Legacy(options, session);
             File.Delete(Path.Combine(session, "helper-mount.json"));
             File.WriteAllText(Path.Combine(session, "session.json"), "{\"Schema\":\"invalid\"}");
             var next = Path.Combine(options.TestRoot, "game-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(next);
-            _ = new TestHelperMount(options, next);
+            _ = Legacy(options, next);
             TestHelperMount.CleanInterrupted(options);
             Assert(Directory.Exists(Link(options, session)) && Directory.Exists(Target(session))
                 && !Directory.Exists(Link(options, next)) && !Directory.Exists(Target(next)));
@@ -183,6 +198,36 @@ internal static class TestHelperCleanupChecks
     private static string Link(OrdinaryGameTestOptions options, string session) =>
         Path.Combine(options.GameDirectory, "Mods", "RimWise-Test-" + Path.GetFileName(session)[5..]);
     private static string Target(string session) => Path.Combine(session, "fixed-helper");
+
+    // Preserve the actual old layout in regression fixtures. Production no longer
+    // creates junctions; using the new deployer here would not exercise migration.
+    private static IDisposable Legacy(OrdinaryGameTestOptions options, string session)
+    {
+        var about = Encoding.UTF8.GetBytes("<ModMetaData><name>RimWise Test Helper</name><packageId>" + GameProbe.PackageId + "</packageId></ModMetaData>");
+        using var input = typeof(TestHelperMount).Assembly.GetManifestResourceStream("RimWise.TestHelper.dll")!;
+        using var buffer = new MemoryStream(); input.CopyTo(buffer);
+        var assembly = buffer.ToArray();
+        Directory.CreateDirectory(Path.Combine(Target(session), "About"));
+        Directory.CreateDirectory(Path.Combine(Target(session), "Assemblies"));
+        File.WriteAllBytes(Path.Combine(Target(session), "About", "About.xml"), about);
+        File.WriteAllBytes(Path.Combine(Target(session), "Assemblies", "RimWise.TestHelper.dll"), assembly);
+        File.WriteAllText(Path.Combine(session, "helper-mount.json"), JsonSerializer.Serialize(new
+        {
+            Schema = 1, options.GameDirectory,
+            Files = new[] { ("About/About.xml", about), ("Assemblies/RimWise.TestHelper.dll", assembly) }
+                .Select(item => new { Path = item.Item1, Sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(item.Item2)) })
+        }));
+        CreateLegacyJunction(Link(options, session), Target(session));
+        return new LegacyCleanup(options);
+    }
+
+    private sealed class LegacyCleanup(OrdinaryGameTestOptions options) : IDisposable
+    {
+        public void Dispose() => TestHelperMount.CleanInterrupted(options);
+    }
+
+    internal static void CreateLegacyJunction(string path, string destination) => JunctionFixture.Create(path, destination);
+
     private static bool Completed(string session)
     {
         using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(session, "helper-cleanup.json")));

@@ -15,7 +15,7 @@ internal sealed class ReviewWindow : Form
     private readonly FlowLayoutPanel images = new() { Dock = DockStyle.Fill, AutoScroll = true, WrapContents = false, Padding = new Padding(8) };
     private readonly Label account = new() { AutoSize = true, Text = "尚未登录 GitHub", Padding = new Padding(8, 10, 8, 0) };
     private readonly Label status = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
-    private readonly Label schedule = new() { Dock = DockStyle.Fill, ForeColor = Color.FromArgb(145,171,175), Text = "只连接 GitHub · 每 30 分钟自动检查一次 · 查看和审核按需请求 · 关闭后留在托盘" };
+    private readonly Label schedule = new() { Dock = DockStyle.Fill, ForeColor = Color.FromArgb(145,171,175), Text = $"只连接 GitHub · 每 {ReviewSettings.PollInterval.TotalMinutes:0} 分钟自动检查一次 · 查看和审核按需请求 · 关闭后留在托盘" };
     private readonly Button login = new ReviewButton() { Text = "登录 GitHub", AutoSize = true };
     private readonly Button logout = new ReviewButton() { Text = "退出登录", AutoSize = true };
     private readonly Button refresh = new ReviewButton() { Text = "立即检查", AutoSize = true };
@@ -158,7 +158,7 @@ internal sealed class ReviewWindow : Form
         finally {loadingList=false;}
         if(snapshot is not null&&!pulls.Any(p=>p.Number==snapshot.Pull.Number&&p.Sha==snapshot.Pull.Sha)) {snapshot=null;ClearImages();text.Text="所查看的投稿已更新或关闭，请重新查看。";}
         if(changed.Count>0)tray.ShowBalloonTip(10000,"有新的市场投稿待审核",$"{changed.Count} 份投稿新增或更新，点击打开审核助手。",ToolTipIcon.Info);
-        lastSuccess=DateTimeOffset.Now;status.Text=$"{lastSuccess:HH:mm} 检查完成 · 待审 {pulls.Count} 项 · 30 分钟后再次检查";
+        lastSuccess=DateTimeOffset.Now;status.Text=$"{lastSuccess:HH:mm} 检查完成 · 待审 {pulls.Count} 项 · {ReviewSettings.PollInterval.TotalMinutes:0} 分钟后再次检查";
     }
     private async Task InspectAsync(CancellationToken token)
     {

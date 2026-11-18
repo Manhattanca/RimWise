@@ -35,16 +35,22 @@ public partial class MainWindow
         {
             DiagnosticEventLog.Current?.Record("ui", "diagnostic-export-start");
             var result = await ExportDiagnosticsAsync(dialog.FileName);
-            DiagnosticEventLog.Current?.Record("ui", "diagnostic-export-complete", $"files={result.Files};bytes={result.Bytes}");
+            DiagnosticEventLog.Current?.Record("ui", "diagnostic-export-complete", $"files={result.Files};bytes={result.Bytes};omissions={result.OmissionCount};recovered={result.RecoveredRecords}");
             ViewModel.Status = $"已导出诊断日志：{Path.GetFileName(dialog.FileName)}；已回报 {result.ReportedTokens:N0} token"
                 + (result.UnknownTasks > 0 ? $"，另有 {result.UnknownTasks} 项用量未回报" : "");
-            MessageDialog.Show(this, "诊断包已导出。\n\n其中不包含 AI 密钥、加密密钥文件或原始 AI 设置。", "导出完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            ViewModel.Status += result.OmissionCount == 0 ? "" : "；" + result.IncompleteNotice;
+            ViewModel.Status += result.RecoveredRecords == 0 ? "" : "；" + result.RecoveryNotice;
+            MessageDialog.Show(this, "诊断包已导出。\n\n" + (result.OmissionCount == 0 ? "" : result.IncompleteNotice + "\n\n")
+                + (result.RecoveredRecords == 0 ? "" : result.RecoveryNotice + "\n\n")
+                + "其中不包含 AI 密钥、加密密钥文件或原始 AI 设置。", result.OmissionCount == 0 ? "导出完成" : "诊断包未完整导出",
+                MessageBoxButton.OK, result.OmissionCount == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or JsonException or Win32Exception or System.Text.RegularExpressions.RegexMatchTimeoutException)
         {
             DiagnosticEventLog.Current?.Record("ui", "diagnostic-export-failed", ex.GetType().Name);
             ViewModel.Status = "诊断日志导出失败，未生成新的诊断包。";
-            MessageDialog.Show(this, "导出失败。请检查保存位置、用户数据和本地密钥是否可读。\n\n错误类型：" + ex.GetType().Name, "导出诊断日志", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageDialog.Show(this, "导出失败，原日志和已有诊断包均保留。请检查保存位置、用户数据和本地密钥是否可读。\n\n"
+                + new DiagnosticRedactor().Text(ex.Message), "导出诊断日志", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally { exportingDiagnostics = false; if (sender is MenuItem item) item.IsEnabled = true; }
     }

@@ -192,7 +192,8 @@ public sealed class GameOrderPlan
         => (Store, Original, Replacement, Before, After) = (store, original, replacement, before, after);
     public GameOrderCommit Apply() => Store.Commit(this);
     /// <summary>Retarget the original transaction after testing, preserving its expected-file precondition.</summary>
-    public GameOrderPlan WithOrder(LoadOrder order) => Store.PrepareExpected(After.WithOrder(order), Original, RuntimeVersion);
+    public GameOrderPlan WithOrder(LoadOrder order, GameVersion? runtimeVersion = null) =>
+        Store.PrepareExpected(After.WithOrder(order), Original, runtimeVersion ?? RuntimeVersion);
 }
 
 public sealed class GameOrderCommit

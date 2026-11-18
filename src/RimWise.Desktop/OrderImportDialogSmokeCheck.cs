@@ -58,6 +58,7 @@ internal static class OrderImportDialogSmokeCheck
         Exception? failure = null;
         var steps = 0;
         var ticks = 0;
+        var folderReady = false;
         UIntPtr timer = UIntPtr.Zero;
         TimerCallback? callback = null;
         void Trace(string value) => File.AppendAllText(Path.Combine(output, "import-dialog-trace.txt"), value + Environment.NewLine);
@@ -74,7 +75,11 @@ internal static class OrderImportDialogSmokeCheck
                     if (++ticks > 60) throw new InvalidOperationException("Native folder navigation timed out");
                     ((IOleWindow)dialog).GetWindow(out var nativeWindow);
                     var expected = steps == 0 ? xml : steps == 1 ? saves : json;
-                    dialog.GetFolder(out var folder);
+                    OrderImportDialog.IShellItem folder;
+                    try { dialog.GetFolder(out folder); }
+                    catch (COMException ex) when (ex.HResult == unchecked((int)0x80004005) && !folderReady && steps == 0 && ticks < 60)
+                    { Trace("Waiting for initial native folder"); return; }
+                    folderReady = true;
                     string actual;
                     try { actual = OrderImportDialog.FilePath(folder); }
                     finally { Marshal.ReleaseComObject(folder); }

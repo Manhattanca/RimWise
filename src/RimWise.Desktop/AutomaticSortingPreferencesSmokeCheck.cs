@@ -76,8 +76,9 @@ internal static class AutomaticSortingPreferencesSmokeCheck
                 sorting.Height = compact ? sorting.MinHeight : 820;
                 sorting.SettingsScroll.ScrollToTop();
                 await sorting.Dispatcher.InvokeAsync(sorting.UpdateLayout, DispatcherPriority.ApplicationIdle);
-                if (!compact)
-                    Assert(sorting.SettingsScroll.ScrollableHeight < 1, "Default settings view clips controls");
+                Assert(sorting.SettingsScroll.ViewportHeight >= 60
+                    && sorting.SettingsScroll.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
+                    "Settings must remain reachable in the bounded scrolling area");
                 sorting.SettingsScroll.ScrollToBottom();
                 await sorting.Dispatcher.InvokeAsync(sorting.UpdateLayout, DispatcherPriority.ApplicationIdle);
                 foreach (var input in new FrameworkElement[] { sorting.AttemptsInput, sorting.BudgetInput })

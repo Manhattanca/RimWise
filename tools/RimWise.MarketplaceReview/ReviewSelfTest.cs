@@ -27,9 +27,11 @@ internal static class ReviewSelfTest
                 Check(window.Text.Contains("审核助手"),"Chinese themed independent review window creates without credentials or network");window.Hide();
             }
             SynchronizationContext.SetSynchronizationContext(null);
-            var settings=new ReviewSettings{LastCheckUtc=DateTimeOffset.UtcNow};
-            Check(settings.NextCheckUtc-settings.LastCheckUtc.Value==TimeSpan.FromMinutes(30),"Polling interval is exactly thirty minutes");
-            Check(settings.NextCheckUtc>DateTimeOffset.UtcNow,"No background polling before next deadline");
+            var checkedAt=new DateTimeOffset(2026,11,17,0,0,0,TimeSpan.Zero);
+            var settings=new ReviewSettings{LastCheckUtc=checkedAt};
+            Check(settings.NextCheckUtc-settings.LastCheckUtc.Value==TimeSpan.FromMinutes(1),"Polling interval is exactly one minute");
+            Check(checkedAt.AddSeconds(59)<settings.NextCheckUtc,"No background polling at fifty-nine seconds");
+            Check(checkedAt.AddSeconds(60)>=settings.NextCheckUtc,"Automatic polling is due at sixty seconds");
             Check(ReviewSettings.StartupCommand().EndsWith("\" --background"),"Startup command quotes exact executable and uses background mode");
             var state=new NotificationState();var first=Pull();Check(state.Update([first]).Count==1,"New PR notifies once");Check(state.Update([first]).Count==0,"Unchanged PR does not notify again");Check(state.Update([first with{Sha=Merge}]).Count==1,"New PR head notifies again");
             foreach(var mode in new[]{"success","head-changed","base-changed","final-head-changed","final-base-changed","draft","closed","failed-check","queued-check","running-check","missing-check","fake-app","foreign-workflow","old-base-proof","merge-rejected","cancelled"})

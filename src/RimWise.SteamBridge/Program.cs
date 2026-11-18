@@ -28,12 +28,12 @@ internal static class Program
                 input.Append((char)ch);
             }
             var request = JsonSerializer.Deserialize<Request>(input.ToString(), Json) ?? throw new InvalidDataException("Steam 请求为空。");
-            if (request.Operation is not ("inventory" or "search" or "query" or "subscribe" or "enqueue" or "wait-download" or "unsubscribe"
+            if (request.Operation is not ("ready" or "inventory" or "search" or "query" or "subscribe" or "enqueue" or "wait-download" or "unsubscribe"
                     or "states" or "enqueue-many" or "enqueue-collection")
                 || request.Ids is null || request.Ids.Length > 1000
                 || request.Ids.Distinct(StringComparer.Ordinal).Count() != request.Ids.Length
                 || request.Ids.Any(id => id.Length == 0 || !id.All(char.IsAsciiDigit) || !ulong.TryParse(id, out var n) || n == 0 || n.ToString() != id)
-                || (request.Operation is "inventory" or "search" ? request.Ids.Length != 0 : request.Ids.Length == 0)
+                || (request.Operation is "ready" or "inventory" or "search" ? request.Ids.Length != 0 : request.Ids.Length == 0)
                 || request.Operation == "enqueue-collection" && request.Ids.Length != 1
                 || request.Operation == "search" && (string.IsNullOrWhiteSpace(request.SearchText)
                     || request.SearchText.Length > 200 || request.SearchText.Any(char.IsControl)))
@@ -45,7 +45,9 @@ internal static class Program
             if (!SteamUser.BLoggedOn() || SteamUtils.GetAppID().m_AppId != RimWorld
                 || !SteamApps.BIsSubscribedApp(new AppId_t(RimWorld)))
                 throw new IOException("当前 Steam 账户未登录或没有环世界使用权。");
-            if (request.Operation == "search") Search(request.SearchText!.Trim());
+            if (request.Operation == "ready")
+                Write(new { Kind = "result", Success = true, Operation = "ready", Items = Array.Empty<Item>() });
+            else if (request.Operation == "search") Search(request.SearchText!.Trim());
             else if (request.Operation == "inventory")
             {
                 var count = SteamUGC.GetNumSubscribedItems();

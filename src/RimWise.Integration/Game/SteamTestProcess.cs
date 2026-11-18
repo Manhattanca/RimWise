@@ -10,7 +10,7 @@ namespace RimWise.Integration.Game;
 internal static class SteamTestProcess
 {
     internal static async Task<Process> StartAsync(ProcessStartInfo request, string executable, string data,
-        TimeSpan timeout, CancellationToken token)
+        TimeSpan timeout, CancellationToken token, Action<int>? waiting = null)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         token.ThrowIfCancellationRequested();
@@ -26,6 +26,7 @@ internal static class SteamTestProcess
             // so the caller can clean up its own game. Steam itself is never terminated.
             var process = Find(executable, data, since, message => lastFailure = message);
             if (process is not null) return process;
+            waiting?.Invoke((int)watch.Elapsed.TotalSeconds);
             if (watch.Elapsed >= timeout)
             {
                 token.ThrowIfCancellationRequested();

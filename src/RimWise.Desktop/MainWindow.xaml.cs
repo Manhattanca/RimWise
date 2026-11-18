@@ -126,6 +126,12 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        if (aiSortingWindow?.PrepareHostClose() == false)
+        {
+            e.Cancel = true;
+            base.OnClosing(e);
+            return;
+        }
         if (pendingUpdateInstallation is not null)
         {
             if (!ConfirmUpdateClose()) e.Cancel = true;
@@ -148,6 +154,8 @@ public partial class MainWindow : Window
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         lifetime.Cancel();
+        aiSortingWindow?.DisposeEmbedded();
+        AiSortingHost.Content = null;
         ViewModel?.CancelPreviewLoads();
         Themes.Changed -= Theme_Changed;
         gameStatusTimer.Stop();

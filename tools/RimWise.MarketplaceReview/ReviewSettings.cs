@@ -8,7 +8,7 @@ namespace RimWise.MarketplaceReview;
 internal sealed class ReviewSettings
 {
     internal const string StartupName = "RimWiseMarketplaceReview";
-    internal static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(30);
+    internal static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(1);
     public NotificationState Notifications { get; set; } = new();
     public DateTimeOffset? LastCheckUtc { get; set; }
     internal static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RimWiseMarketplaceReview");

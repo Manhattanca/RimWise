@@ -1,6 +1,13 @@
 ﻿using System.Text.Json;
 using RimWise.Integration.Steam;
 
+if (File.Exists(Path.Combine(AppContext.BaseDirectory, "helper-session-fixture.txt"))
+    && args.FirstOrDefault(a => a.StartsWith("-savedatafolder=", StringComparison.Ordinal)) is { } helperData)
+{
+    Environment.ExitCode = await TestHelperSessionChecks.Child(helperData["-savedatafolder=".Length..]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--ordering-cycle-checks")
 {
     Directory.CreateDirectory(args[1]);
@@ -82,9 +89,14 @@ if (args.Length == 1 && args[0] == "--offline-sorting-checks")
 
 if (args.Length == 1 && args[0] == "--helper-cleanup-checks")
 {
-    var results = new List<string>();
-    TestHelperCleanupChecks.Run((name, test) => { test(); results.Add(name); });
-    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    var results = new List<string>(); var failures = new List<string>();
+    TestHelperCleanupChecks.Run((name, test) =>
+    {
+        try { test(); results.Add(name); }
+        catch (Exception ex) { failures.Add(name + ": " + ex); }
+    });
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Failed = failures.Count, Checks = results, Failures = failures }));
+    Environment.ExitCode = failures.Count == 0 ? 0 : 1;
     return;
 }
 

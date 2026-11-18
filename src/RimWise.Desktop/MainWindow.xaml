@@ -162,11 +162,13 @@
         <motion:NavigationTabStrip x:Name="MainPageTabs" DockPanel.Dock="Top" Margin="24,6,24,0" HorizontalAlignment="Left">
         <StackPanel Orientation="Horizontal">
             <RadioButton x:Name="ModsPageTab" Content="模组排序" IsChecked="True" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
+            <RadioButton x:Name="AiSortingPageTab" Content="自动排序" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
             <RadioButton x:Name="LogsPageTab" Content="游戏日志" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
             <RadioButton x:Name="MarketPageTab" Content="排序市场（测试）" GroupName="MainPage" Style="{StaticResource NavigationTab}" Checked="MainPage_Changed"/>
         </StackPanel>
         </motion:NavigationTabStrip>
         <Grid ClipToBounds="True">
+        <ContentControl x:Name="AiSortingHost" Margin="24,12,24,16" Visibility="Collapsed"/>
         <ContentControl x:Name="GameLogHost" Margin="24,0,24,16" Visibility="Collapsed"/>
         <ContentControl x:Name="MarketplaceHost" Margin="24,12,24,16" Visibility="Collapsed"/>
         <Grid x:Name="ModEditorBody" Margin="24,12">
@@ -367,7 +369,7 @@
         </DockPanel>
         <Border x:Name="ModEditorFooter" Grid.Row="2" BorderBrush="{DynamicResource BorderBrush}" Background="{DynamicResource PanelBrush}" BorderThickness="0,1,0,0" Padding="24,12">
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="3*" /></Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock x:Name="LastActionText" Text="{Binding LastAction}" Foreground="{DynamicResource TextBrush}"
                                TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis" ToolTip="{Binding LastAction}"
@@ -377,25 +379,24 @@
                     <Button x:Name="CancelImportDownloadButton" Content="停止等待下载" Visibility="Collapsed" Click="CancelImportDownload_Click"
                             HorizontalAlignment="Left" Padding="6,2" Margin="0,3,0,0" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <StackPanel.Resources>
+                <WrapPanel x:Name="OrderActions" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <WrapPanel.Resources>
                         <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                             <Setter Property="MinWidth" Value="46" /><Setter Property="Padding" Value="8,8" />
-                            <Setter Property="Margin" Value="4,0,0,0" />
+                            <Setter Property="Margin" Value="4,2,0,2" />
                         </Style>
-                    </StackPanel.Resources>
+                    </WrapPanel.Resources>
                     <Button x:Name="RefreshButton" Content="{Binding ScanActionLabel}" Click="Scan_Click" />
                     <Button x:Name="UndoButton" Content="撤销" Command="{Binding UndoCommand}" ToolTip="撤销上一步操作（Ctrl+Z）" />
                     <Button x:Name="RedoButton" Content="取消撤销" Command="{Binding RedoCommand}" ToolTip="取消撤销（Ctrl+Y／Ctrl+Shift+Z）" />
                     <Button x:Name="ClearOrderButton" Content="清空" Command="{Binding ClearOrderCommand}" ToolTip="清除当前清单的模组，保留游戏本体和 DLC；可撤销" />
                     <Button Content="上移" Command="{Binding MoveUpCommand}" ToolTip="搜索时暂停调整顺序" />
                     <Button Content="下移" Command="{Binding MoveDownCommand}" ToolTip="搜索时暂停调整顺序" />
-                    <Button x:Name="AiSortingButton" Content="自动排序" Click="AiSorting_Click" ToolTip="打开自动排序窗口" />
-
                     <Button Content="导出排序" Click="Export_Click" IsEnabled="{Binding HasDocument}" />
+                    <Button x:Name="ImportOrderButton" Content="导入排序" Click="Import_Click" ToolTip="导入排序文件或从存档提取排序；保留原顺序，不自动调整或测试" Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}" />
                     <Button x:Name="SaveOrderButton" Content="保存排序" Click="SaveOrder_Click" IsEnabled="{Binding HasDocument}" Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}" />
                     <Button x:Name="LaunchGameButton" Content="开始游戏" Click="LaunchGame_Click" ToolTip="{Binding Header, ElementName=GameStatusItem}" />
-                </StackPanel>
+                </WrapPanel>
             </Grid>
         </Border>
         <Canvas x:Name="ModInteractionOverlay" Grid.RowSpan="3" IsHitTestVisible="False" ClipToBounds="True" />

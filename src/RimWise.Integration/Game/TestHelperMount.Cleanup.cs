@@ -14,10 +14,8 @@ internal sealed partial class TestHelperMount
     private sealed record OwnedFile(string Path, string Sha256);
     private sealed record MountRecord(int Schema, string GameDirectory, OwnedFile[] Files);
 
-    private static void CreateOwnedPayload(OrdinaryGameTestOptions options, string session)
+    private static byte[][] PayloadBytes()
     {
-        var target = ScopedPaths.Child(session, "fixed-helper");
-        if (Directory.Exists(target)) throw new IOException("测试辅助组件目录已存在，未覆盖现有内容。");
         using var about = new MemoryStream();
         new XDocument(new XElement("ModMetaData", new XElement("name", "RimWise Test Helper"),
             new XElement("author", "RimWise contributors"), new XElement("packageId", GameProbe.PackageId),
@@ -26,25 +24,7 @@ internal sealed partial class TestHelperMount
         using var assembly = new MemoryStream();
         using (var input = typeof(TestHelperMount).Assembly.GetManifestResourceStream("RimWise.TestHelper.dll")
             ?? throw new IOException("测试辅助组件缺失。")) input.CopyTo(assembly);
-        var bytes = new[] { about.ToArray(), assembly.ToArray() };
-        var record = new MountRecord(1, ScopedPaths.Ordinary(options.GameDirectory, true),
-            PayloadFiles.Select((path, i) => new OwnedFile(path, Convert.ToHexString(SHA256.HashData(bytes[i])))).ToArray());
-        var journal = ScopedPaths.Child(session, "helper-mount.json");
-        if (File.Exists(journal))
-        {
-            var previous = ReadRecord(journal);
-            if (JsonSerializer.Serialize(previous) != JsonSerializer.Serialize(record))
-                throw new IOException("测试辅助组件记录已变化，未覆盖旧记录。");
-        }
-        else OrdinaryGameRunner.WriteNew(journal, record); // Durable ownership precedes deployment.
-        WriteState(session, false, "mounted");
-        for (var i = 0; i < PayloadFiles.Length; i++)
-        {
-            var path = ScopedPaths.Child(target, PayloadFiles[i]);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            output.Write(bytes[i]);
-        }
+        return [about.ToArray(), assembly.ToArray()];
     }
 
     internal static void CleanInterrupted(OrdinaryGameTestOptions options)
@@ -83,6 +63,9 @@ internal sealed partial class TestHelperMount
         try
         {
             ScopedPaths.Ordinary(session, true);
+            ValidateSession(session);
+            if (File.Exists(ScopedPaths.Child(session, "helper-deployment.json")))
+                CleanDirectory(gameDirectory, session);
             var journal = ScopedPaths.Child(session, "helper-mount.json");
             var target = ScopedPaths.Child(session, "fixed-helper");
             var mods = ScopedPaths.Child(gameDirectory, "Mods");
@@ -95,6 +78,11 @@ internal sealed partial class TestHelperMount
             }
             else
             {
+                if (File.Exists(ScopedPaths.Child(session, "helper-deployment.json")))
+                {
+                    WriteState(session, true, null);
+                    return;
+                }
                 // Older releases have no helper manifest. Require their installation journal
                 // and exact helper metadata before adopting the two fixed payload files.
                 record = AdoptLegacy(gameDirectory, session, target);

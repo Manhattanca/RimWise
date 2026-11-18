@@ -9,6 +9,16 @@ namespace RimWise.Desktop.Views;
 internal static class OrderImportDialog
 {
     internal static readonly string[] Kinds = ["all", "xml", "json", "rml", "rws", "any"];
+    internal static readonly FilterSpec[] Filters =
+    [
+        new("所有支持的排序与存档", "*.xml;*.json;*.rml;*.rws"),
+        new("XML 排序 · 原版 / RimPy (*.xml)", "*.xml"),
+        new("JSON 排序 · RimSort (*.json)", "*.json"),
+        new("RML 排序 · RimCrow (*.rml)", "*.rml"),
+        new("从游戏存档提取排序 (*.rws)", "*.rws"),
+        new("所有文件 (*.*)", "*.*")
+    ];
+    internal static string FallbackFilter => string.Join("|", Filters.SelectMany(filter => new[] { filter.Name, filter.Spec }));
     private const int Cancelled = unchecked((int)0x800704C7);
 
     internal static string? Show(Window owner, Func<string, string?> folderForKind, Action<IFileDialog>? ready = null)
@@ -19,12 +29,9 @@ internal static class OrderImportDialog
         var events = new Events(folderForKind);
         try
         {
-            dialog.SetTitle("导入排序或存档");
+            dialog.SetTitle("导入排序 · 也可从游戏存档提取");
             dialog.SetOptions(0x40 | 0x800 | 0x1000 | 0x10000000); // Filesystem, existing path/file, no recent-doc entry.
-            FilterSpec[] filters = [new("排序或存档 (*.xml;*.json;*.rml;*.rws)", "*.xml;*.json;*.rml;*.rws"),
-                new("原版 / RimPy (*.xml)", "*.xml"), new("RimSort (*.json)", "*.json"),
-                new("RimCrow (*.rml)", "*.rml"), new("环世界存档 (*.rws)", "*.rws"), new("所有文件 (*.*)", "*.*")];
-            dialog.SetFileTypes((uint)filters.Length, filters);
+            dialog.SetFileTypes((uint)Filters.Length, Filters);
             dialog.SetFileTypeIndex(1);
             var client = new Guid("6B9C6411-07DB-4316-A8D4-7F08F99B5F42");
             dialog.SetClientGuid(ref client);

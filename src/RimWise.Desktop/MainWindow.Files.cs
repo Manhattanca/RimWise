@@ -26,8 +26,8 @@ public partial class MainWindow
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or IOException or UnauthorizedAccessException or ArgumentException)
         {
             // Keep manual import available on systems where the shell dialog cannot initialize.
-            var fallback = new OpenFileDialog { Title = "导入排序或存档", CheckFileExists = true,
-                Filter = "排序或存档 (*.xml;*.json;*.rml;*.rws)|*.xml;*.json;*.rml;*.rws|所有文件 (*.*)|*.*" };
+            var fallback = new OpenFileDialog { Title = "导入排序 · 也可从游戏存档提取", CheckFileExists = true,
+                Filter = OrderImportDialog.FallbackFilter };
             if (fallback.ShowDialog(this) == true) file = fallback.FileName;
         }
         if (file is not null) await ImportOrderAsync(file);

@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Windows;
 using RimWise.Desktop.Presentation;
 using RimWise.Integration.AI;
@@ -71,7 +71,7 @@ public partial class AiSortingWindow
             + "这只是对照测试，尚不能确定该副本是报错原因。\n\n当前副本：\n" + backup.Selected
             + "\n\n可恢复的副本：\n" + string.Join("\n", backup.Moves.Select(m => m.Original))
             + "\n\n恢复会改变游戏扫描到的安装；随后会再次让你选择保留哪份。取消选择时将保留恢复后的副本并停止测试。旧任务保留用量、不再恢复。是否恢复并重新选择？";
-        if (MessageDialog.Show(this, detail, "是否换用其他副本测试", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (MessageDialog.Show(DialogOwner, detail, "是否换用其他副本测试", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return false;
         token.ThrowIfCancellationRequested();
         if (paths != gamePaths() || revision != editor.ContentRevision) throw new IOException("路径或排序已变化，请重新开始。");
@@ -80,7 +80,7 @@ public partial class AiSortingWindow
         await RefreshDuplicateInstallationsAsync(token);
         if (!ResolveDuplicateInstallations(token))
         {
-            MessageDialog.Show(this, "已恢复副本；尚未选择新的副本，测试已停止。当前排序保留，下次开始时会再次提示选择。",
+            MessageDialog.Show(DialogOwner, "已恢复副本；尚未选择新的副本，测试已停止。当前排序保留，下次开始时会再次提示选择。",
                 "副本选择已取消", MessageBoxButton.OK, MessageBoxImage.Information);
             return false;
         }

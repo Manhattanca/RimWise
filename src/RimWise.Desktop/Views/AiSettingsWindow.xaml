@@ -22,7 +22,8 @@
                 </TextBlock>
                 <StackPanel x:Name="EndpointPanel">
                     <TextBlock Text="API 地址" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
-                    <TextBox x:Name="EndpointBox" TextChanged="Endpoint_Changed" Margin="0,0,0,16" ToolTip="支持基础地址（如 https://服务地址/v1/）或完整的 /v1/chat/completions 接口地址" />
+                    <TextBox x:Name="EndpointBox" TextChanged="Endpoint_Changed" LostKeyboardFocus="Endpoint_Completed" Margin="0,0,0,6" ToolTip="支持基础地址或完整接口地址；自动补全根地址、/api、/v1 和 /compatible-mode，不改写其他自定义路径" />
+                    <TextBlock Text="基础地址会自动补全 /v1；已有 /v1 或完整接口不会重复添加。自定义接口路径按原样保留。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,12" />
                 </StackPanel>
                 <TextBlock Text="API 密钥" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
                 <DockPanel Margin="0,0,0,6">

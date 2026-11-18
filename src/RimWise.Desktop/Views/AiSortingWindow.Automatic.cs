@@ -44,9 +44,11 @@ public partial class AiSortingWindow
 
     internal async Task StartAutomaticAsync(string? resumeId=null)
     {
-        if (closed || requestCancellation is not null || ownerLifetime.IsCancellationRequested) return;
+        if (closed || IsWorking || ownerLifetime.IsCancellationRequested) return;
         RefreshConfiguration();
         if (resumeId is null && IsOfflineMode) { await StartOfflineAsync(); return; }
+        if (!await EnsureAiConfiguredAsync()) return;
+        RefreshConfiguration();
         if (gamePaths is null || !AutomaticButton.IsEnabled) return;
         if (resumeId is null && settings.PermissionLevel != AiPermissionLevel.Level1OrderAndRequiredDependencies)
         {
@@ -79,6 +81,10 @@ public partial class AiSortingWindow
         RefreshButtons();
         try
         {
+            // Inspection briefly uses recovery leases. Finish our own reader before
+            // acquiring a request lease, so background display work cannot block sorting.
+            if (!usageRefreshTask.IsCompleted) StatusText.Text = "正在完成本地用量核对，可取消…";
+            await usageRefreshTask.WaitAsync(cancellation.Token);
             if (AiClient.ConfigurationProblem(settings.Normalize()) is { } configurationProblem)
                 throw new InvalidOperationException(configurationProblem);
             var currentGameDirectory = gamePaths().GameDirectory;
@@ -87,7 +93,7 @@ public partial class AiSortingWindow
                 cancellation.Token.ThrowIfCancellationRequested();
                 if (game.Count > 0)
                 {
-                    if (MessageDialog.Show(this,
+                    if (MessageDialog.Show(DialogOwner,
                         "检测到环世界正在运行。开始自动排序前将关闭游戏，请确认已经保存游戏数据。\n\n确认已保存并关闭游戏，继续排序吗？选择“否”将取消本次排序。",
                         "开始排序前关闭游戏", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
                     {
@@ -136,7 +142,7 @@ public partial class AiSortingWindow
                 sortingPreferences.SaveLimits(limits);
                 if (PermissionBox.SelectedIndex == 0)
                 {
-                    var picker = new InsertionPickerWindow(editor) { Owner = this };
+                    var picker = new InsertionPickerWindow(editor) { Owner = DialogOwner };
                     if (picker.ShowDialog() != true) { StatusText.Text = "已取消选择，未启动测试。"; return; }
                     if (picker.SelectedIdentifiers.Length == 0)
                     {
@@ -167,36 +173,23 @@ public partial class AiSortingWindow
             });
             var warnedProcesses = new HashSet<int>();
             string? lastLoggedPhase = null;
+            var lastLoggedProcess = -1;
+            var lastHeartbeatSeconds = -30;
             var gameProgress=new Progress<OrdinaryGameProgress>(p=>
             {
                 if(closed || !receiving) return;
-                if (lastLoggedPhase != p.Phase)
+                var changed = lastLoggedPhase != p.Phase || lastLoggedProcess != p.ProcessId;
+                if (changed || p.ElapsedSeconds - lastHeartbeatSeconds >= 30)
                 {
                     lastLoggedPhase = p.Phase;
-                    DiagnosticEventLog.Current?.Record("game-test", "phase-changed", $"phase={p.Phase}; processId={p.ProcessId}; elapsedSeconds={p.ElapsedSeconds}; logBytes={p.LogBytes}");
+                    lastLoggedProcess = p.ProcessId;
+                    lastHeartbeatSeconds = p.ElapsedSeconds;
+                    DiagnosticEventLog.Current?.Record("game-test", changed ? "phase-changed" : "heartbeat",
+                        $"phase={p.Phase}; processId={p.ProcessId}; elapsedSeconds={p.ElapsedSeconds}; logBytes={p.LogBytes}; idleSeconds={p.SecondsSinceLogChange}; startupReady={p.StartupReady}");
                 }
-                StatusText.Text=p.Phase == "diagnostics"
-                    ? "本轮游戏测试已结束，正在整理日志与模组关联证据…"
-                    : p.StartupDelayWarning
-                    ? "游戏启动已等待 30 分钟，可能已卡死；游戏仍在运行，可继续等待或取消测试。"
-                    : (p.Phase switch {
-                        "mods-reset" => "游戏加载异常并重置了模组排序，正在收集异常链以继续排障",
-                        "main-menu" => "正在检查主界面和加载报错",
-                        "scenario-selection" => "正在选择测试剧本",
-                        "storyteller-selection" => "正在选择叙述者和难度",
-                        "starting-site" => "正在选择随机落点",
-                        "ideology-selection" => "正在配置测试理念",
-                        "starting-pawns" => "正在检查随机开局人物",
-                        "game-configuration" => "正在完成开局配置",
-                        "world-generation" => "正在生成测试世界",
-                        "faction-check" => "正在检查派系生成",
-                        "waiting-map" => "正在生成测试地图",
-                        "pawn-test" => "正在随机选择小人并检查",
-                        "map-running" => $"正在验证地图和小人运行 · {p.MapTicks}/120 ticks",
-                        _ => p.StartupReady ? "主界面已加载，正在检查测试阶段" : "游戏正在启动" })
-                        + $" · {p.ElapsedSeconds} 秒 · 日志 {p.LogBytes/1024:N0} KB";
+                StatusText.Text = GameTestStatus.Describe(p);
                 if(p.StartupDelayWarning && warnedProcesses.Add(p.ProcessId))
-                    MessageDialog.Show(this, "游戏在 30 分钟内尚未完成启动，可能已卡死。\n\n游戏未被关闭，自动流程正在等待。你可以继续等待，或点击“取消”停止测试。",
+                    MessageDialog.Show(DialogOwner, "游戏在 30 分钟内尚未完成启动，可能已卡死。\n\n游戏未被关闭，自动流程正在等待。你可以继续等待，或点击“取消”停止测试。",
                         "游戏可能已卡死", MessageBoxButton.OK, MessageBoxImage.Warning);
             });
             var responseProgress=new Progress<AiResponseUpdate>(p=>
@@ -229,7 +222,7 @@ public partial class AiSortingWindow
             {
                 StatusText.Text="自动排序未完成："+ex.Message;
                 AppendAutomaticReport("\n" + StatusText.Text + "\n");
-                MessageDialog.Show(this, StatusText.Text + "\n\n可在设置中导出诊断日志。测试记录目录：\n"
+                MessageDialog.Show(DialogOwner, StatusText.Text + "\n\n可在设置中导出诊断日志。测试记录目录：\n"
                     + Path.Combine(dataDirectory, "Data", "GameTests"), "自动排序失败", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
@@ -239,7 +232,7 @@ public partial class AiSortingWindow
             DiagnosticEventLog.Current?.Record("automatic-sorting", "visible-result", StatusText.Text + "\n" + SummaryText.Text + "\n" + StartupFailureText.Text);
             if (runPrepared) await FinishAutomaticLogsAsync(logStarted, resumeId);
             receiving=false; requestCancellation=null; automaticRunning=false;
-            if(!closed) { RefreshUsage(); RefreshButtons(); }
+            if(!closed) { RefreshButtons(); await RefreshUsageAsync(); }
         }
     }
 
@@ -300,7 +293,7 @@ public partial class AiSortingWindow
             var removal = new OrderPreviewWindow(new(new(plan.After), new(removalPlan.After)), "确认试排除候选是否移出？",
                 "AI 未提出排序调整，保留全部模组时顺序不会变化。下方只显示未验证的临时试排除候选；移出不证明它们就是根因，且不会删除安装文件。\n\n"
                 + TrialDescription(result.Maintenance), "移出并保存", "保留模组，不更改排序",
-                catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
+                catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = DialogOwner };
             DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-dialog", "UnchangedOrderWithTrialRemovals");
             var removeTrialMods = removal.ShowDialog() == true;
             DiagnosticEventLog.Current?.Record("automatic-sorting", "stopped-removal-decision", $"remove={removeTrialMods}");
@@ -322,7 +315,7 @@ public partial class AiSortingWindow
                 ? "\n此预览保留试排除模组。选择保存后，会单独询问是否移出这些模组；不同意移出也会保存排序调整。"
                 : "\n保留将保存该顺序（不删除模组文件）；恢复原排序则放弃本次调整。"),
             "保留并保存最后顺序", "恢复原排序",
-            catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
+            catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = DialogOwner };
         DiagnosticEventLog.Current?.Record("automatic-sorting", "last-order-dialog", result.Maintenance.Outcome.ToString());
         var keep = preview.ShowDialog() == true;
         var approveRemovals = false;
@@ -335,7 +328,7 @@ public partial class AiSortingWindow
                     "以下模组只在测试中临时排除，剩余组合尚未验证通过，不能认定这些模组就是根因。\n"
                     + "移出仅改变排序，保留安装文件；不移出或关闭此窗口，会放回这些模组并保存排序调整。\n\n"
                     + TrialDescription(result.Maintenance), "移出并保存", "不移出，保存排序调整",
-                    catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
+                    catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = DialogOwner };
                 approveRemovals = removal.ShowDialog() == true;
                 DiagnosticEventLog.Current?.Record("automatic-sorting", "stopped-removal-decision", $"remove={approveRemovals}");
             }
@@ -404,9 +397,9 @@ public partial class AiSortingWindow
         DiagnosticEventLog.Current?.Record("automatic-sorting", "result-dialog", notice.Value.Title);
         if (CompletionNotice(result) is not null && !result.Maintenance.ExistingErrorsOnly)
             new TrialExclusionWindow([], result.Maintenance.HasWarnings, editor.ShowModBadgeIcons,
-                vulkanConfigurationWarning: result.Maintenance.HasVulkanConfigurationWarning) { Owner = this }.ShowDialog();
+                vulkanConfigurationWarning: result.Maintenance.HasVulkanConfigurationWarning) { Owner = DialogOwner }.ShowDialog();
         else
-            MessageDialog.Show(this, notice.Value.Text, notice.Value.Title, MessageBoxButton.OK, notice.Value.Image);
+            MessageDialog.Show(DialogOwner, notice.Value.Text, notice.Value.Title, MessageBoxButton.OK, notice.Value.Image);
     }
 
     // A trial decision already reports the passing reduced combination. Only suppress
@@ -449,7 +442,7 @@ public partial class AiSortingWindow
         return await Dispatcher.InvokeAsync(() =>
         {
             if (closed || token.IsCancellationRequested) return null;
-            var dialog = new ConflictChoiceWindow(conflict, ResolveConflictRow, editor.ShowModBadgeIcons) { Owner = this };
+            var dialog = new ConflictChoiceWindow(conflict, ResolveConflictRow, editor.ShowModBadgeIcons) { Owner = DialogOwner };
             using var registration = token.Register(() => Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (dialog.IsVisible) dialog.Close();
@@ -468,7 +461,7 @@ public partial class AiSortingWindow
             return new TrialRemovalRow(ResolveConflictRow(id), selected.Contains(id) ? "试排除项" : "连带依赖项");
         }).OrderBy(r => r.Mod.Index == 0 ? int.MaxValue : r.Mod.Index).ToArray();
         var dialog = new TrialExclusionWindow(rows, result.HasWarnings, editor.ShowModBadgeIcons, result.ExistingErrorsOnly,
-            result.HasVulkanConfigurationWarning) { Owner = this };
+            result.HasVulkanConfigurationWarning) { Owner = DialogOwner };
         using var registration = token.Register(() => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (dialog.IsVisible) dialog.Close();

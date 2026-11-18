@@ -41,6 +41,9 @@ public sealed record AiSettings(
             var builder = new UriBuilder(uri) { Fragment = "" };
             if (path.Length == 0) builder.Path = "/v1/chat/completions";
             else if (path.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)) builder.Path = path + "/chat/completions";
+            else if (path.Equals("/api", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/compatible-mode", StringComparison.OrdinalIgnoreCase))
+                builder.Path = path + "/v1/chat/completions";
             endpoint = builder.Uri.AbsoluteUri;
         }
         if (Model.Trim().Length > 200) throw new ArgumentException("模型名称过长。", nameof(Model));

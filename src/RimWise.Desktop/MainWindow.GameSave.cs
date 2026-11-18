@@ -6,6 +6,7 @@ using RimWise.Desktop.Views;
 using RimWise.Formats;
 using RimWise.Integration.Configuration;
 using RimWise.Integration.Scanning;
+using RimWise.Integration.Diagnostics;
 
 namespace RimWise.Desktop;
 
@@ -19,16 +20,17 @@ public partial class MainWindow
         EnsureGameClosed();
         var originalPaths = paths;
         var store = CreateGameOrderStore();
-        var runtimeVersion = ResolveTargetGameVersion(ViewModel.CreateExportDocument());
-        var baseline = store.Prepare(ViewModel.CreateExportDocument(), runtimeVersion);
+        var version = CaptureTargetGameVersion(ViewModel.CreateExportDocument());
+        DiagnosticEventLog.Current?.Record("game-save", "version-baseline", version.Description);
+        var baseline = store.Prepare(ViewModel.CreateExportDocument(), version.EffectiveVersion);
         return () =>
         {
             if (paths != originalPaths) throw new IOException("游戏路径在测试期间已变化，未保存排序。");
             EnsureGameClosed();
-            if (ResolveTargetGameVersion(ViewModel.CreateExportDocument()) != runtimeVersion)
-                throw new IOException("游戏版本在测试期间发生变化，请重新测试后保存。");
-            var plan = baseline.WithOrder(ViewModel.CreateExportDocument().Order);
-            ValidateTargetGameVersion(plan.After);
+            var current = CaptureTargetGameVersion(ViewModel.CreateExportDocument());
+            DiagnosticEventLog.Current?.Record("game-save", "version-check", $"测试前：{version.Description}\n保存前：{current.Description}");
+            version.EnsureUnchanged(current);
+            var plan = baseline.WithOrder(ViewModel.CreateExportDocument().Order, current.EffectiveVersion);
             ApplyGamePlan(plan, store.TargetPath);
         };
     }
@@ -60,15 +62,10 @@ public partial class MainWindow
         => ResolveTargetGameVersion(configuration);
 
     private GameVersion ResolveTargetGameVersion(ModsConfigDocument configuration)
-    {
-        var configVersion = GameVersion.Parse(configuration.GameVersion);
-        var installed = GameVersionDetector.Detect(paths.GameDirectory).Version;
-        var selected = GameVersion.Parse(paths.TargetVersionOverride);
-        var effective = installed ?? selected ?? configVersion
-            ?? throw new InvalidDataException("游戏及配置版本均未识别，请在路径设置中指定目标版本。");
-        GameVersionCompatibility.EnsureCompatibleIdentifiers(configVersion, effective);
-        return effective;
-    }
+        => CaptureTargetGameVersion(configuration).EffectiveVersion;
+
+    private GameVersionSnapshot CaptureTargetGameVersion(ModsConfigDocument configuration) =>
+        GameVersionSnapshot.Capture(paths.GameDirectory, paths.TargetVersionOverride, configuration.GameVersion);
 
     internal void PreviewAndRestoreGamePlan(GameOrderPlan plan, string target)
     {

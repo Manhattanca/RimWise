@@ -13,6 +13,7 @@ public sealed record OrdinaryGameProgress(int ProcessId, int ElapsedSeconds, lon
     public bool StartupDelayWarning { get; init; }
     public string? Phase { get; init; }
     public int MapTicks { get; init; }
+    public int SecondsSinceLogChange { get; init; }
 }
 public sealed record OrdinaryGameReport(int ProcessId, int ExitCode, GameTestStopReason StopReason,
     bool ProcessStopped, bool CaptureCompleted, IReadOnlyList<GameLogSnapshot> Logs)
@@ -55,7 +56,8 @@ internal sealed class OrdinaryGameRunner
         TimeSpan timeout, IProgress<OrdinaryGameProgress>? progress, CancellationToken token, string? runtimeLog = null,
         bool warnOnSlowStartup = false) =>
         RunCoreAsync(t => SteamTestProcess.StartAsync(request, executable, data,
-            timeout < TimeSpan.FromSeconds(45) ? timeout : TimeSpan.FromSeconds(45), t),
+            timeout < TimeSpan.FromSeconds(45) ? timeout : TimeSpan.FromSeconds(45), t,
+            seconds => progress?.Report(new(0, seconds, 0) { Phase = "steam-request" })),
             executable, "steam", false, data, catalogue, timeout, progress, token, runtimeLog, warnOnSlowStartup);
 
     private static async Task<OrdinaryGameReport> RunCoreAsync(Func<CancellationToken, Task<Process>> start,
@@ -83,6 +85,7 @@ internal sealed class OrdinaryGameRunner
         var failureCapture = new GameFailureLogCapture(executable, data, runtimeLog);
         GameProbeSignal? signal = null;
         Process started;
+        progress?.Report(new(0, 0, 0) { Phase = route == "steam" ? "steam-request" : "process-start" });
         try { started = await start(token); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
             or System.ComponentModel.Win32Exception or TimeoutException)
@@ -98,6 +101,7 @@ internal sealed class OrdinaryGameRunner
                     .Select(p => PlayerLogReader.Read(p, catalogue)).Concat(failureLogs).ToArray())
             { StartFailureCode = route == "steam" ? "SteamProcessNotObserved" : "ProcessStartFailed" };
             WriteNew(ScopedPaths.Child(data, "result.json"), failure);
+            progress?.Report(new(0, (int)watch.Elapsed.TotalSeconds, 0) { Phase = "launch-failed" });
             return failure;
         }
         using var process = started;
@@ -148,8 +152,9 @@ internal sealed class OrdinaryGameRunner
                 progress?.Report(new(process.Id, (int)watch.Elapsed.TotalSeconds, bytes)
                 {
                     StartupReady = startupReady,
-                    Phase = resetSince is null ? phase?.Stage : "mods-reset",
+                    Phase = resetSince is null ? phase?.Stage ?? "loading" : "mods-reset",
                     MapTicks = phase?.Ticks ?? 0,
+                    SecondsSinceLogChange = (int)(watch.Elapsed - lastLogChange).TotalSeconds,
                     StartupDelayWarning = resetSince is null && warnOnSlowStartup && !startupReady && watch.Elapsed >= timeout
                 });
                 // The game has discarded this candidate, so the helper can no longer finish its

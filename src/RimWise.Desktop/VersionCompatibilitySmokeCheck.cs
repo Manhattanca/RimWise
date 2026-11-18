@@ -66,9 +66,19 @@ internal static class VersionCompatibilitySmokeCheck
             var rejected = false;
             try { nextSave(); } catch (IOException) { rejected = true; }
             Assert(rejected && File.ReadAllBytes(configFile).SequenceEqual(saved), "A changed runtime version bypassed final-save verification.");
+            File.WriteAllText(Path.Combine(game, "Version.txt"), "1.7");
+            var enrichSave = window.PrepareAutomaticOrderSave();
+            File.WriteAllText(Path.Combine(game, "Version.txt"), "1.7.4995.1069");
+            enrichSave();
+            Assert(File.ReadAllBytes(configFile).SequenceEqual(saved), "Version precision enrichment blocked an unchanged order or rewrote its configuration.");
+            var revisionSave = window.PrepareAutomaticOrderSave();
+            File.WriteAllText(Path.Combine(game, "Version.txt"), "1.7.4995.1070");
+            var revisionRejected = false;
+            try { revisionSave(); } catch (IOException ex) { revisionRejected = ex.Message.Contains("1069") && ex.Message.Contains("1070"); }
+            Assert(revisionRejected && File.ReadAllBytes(configFile).SequenceEqual(saved), "Changed fourth version component bypassed verification or lacked evidence.");
         }
         finally { window.ViewModel.MarkExported(); window.Close(); }
-        File.WriteAllText(Path.Combine(output, "version-compatibility.txt"), "Passed: four-part installed version; stale explicit override; source 1.6 configuration; installed-version catalogue/request/plan; deferred final save; byte-exact undo/redo; changed runtime rejection. No game or AI started.");
+        File.WriteAllText(Path.Combine(output, "version-compatibility.txt"), "Passed: four-part installed version; stale explicit override; source 1.6 configuration; installed-version catalogue/request/plan; deferred final save; byte-exact undo/redo; changed runtime rejection; precision enrichment; fourth-component change evidence. No game or AI started.");
     }
 
     private static void Assert(bool condition, string message)

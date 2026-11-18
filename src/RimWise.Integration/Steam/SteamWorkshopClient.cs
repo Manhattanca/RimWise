@@ -16,6 +16,8 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, MaxDepth = 8 };
 
     public Task<IReadOnlyList<WorkshopItemState>> InventoryAsync(CancellationToken token) => RunAsync("inventory", [], null, token);
+    // Only checks client login/app ownership; never enumerates or changes subscriptions.
+    public async Task EnsureReadyAsync(CancellationToken token) { await RunAsync("ready", [], null, token); }
     public async Task<IReadOnlyList<WorkshopItemState>> StatesAsync(string[] ids, CancellationToken token)
     {
         var items = new List<WorkshopItemState>();
@@ -69,7 +71,8 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
             StandardErrorEncoding = Encoding.UTF8
         };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(operation is "subscribe" or "wait-download" ? TimeSpan.FromMinutes(17)
+        timeout.CancelAfter(operation == "ready" ? TimeSpan.FromSeconds(30)
+            : operation is "subscribe" or "wait-download" ? TimeSpan.FromMinutes(17)
             : operation is "enqueue-many" or "enqueue-collection" ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(150));
         using var process = Process.Start(start) ?? throw new IOException("无法启动 Steam 组件。");
         try
@@ -113,7 +116,11 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
             return (result, process.ExitCode);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
-        { throw new IOException("Steam 尚未确认操作完成。已发出的订阅可能仍在下载，请刷新或恢复任务核对。"); }
+        {
+            throw new IOException(operation == "ready"
+                ? "Steam 就绪检查超时，请确认 Steam 已启动、已登录且拥有环世界后重试。未开始游戏测试，也未更改订阅。"
+                : "Steam 尚未确认操作完成。已发出的订阅可能仍在下载，请刷新或恢复任务核对。");
+        }
         finally
         {
             // This is our own bridge, never Steam or an unrelated game process.

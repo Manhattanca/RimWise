@@ -343,6 +343,12 @@ public sealed class LevelOneMaintenance
                 replyFailure = recoveryTask.Current.Feedback?.ReplyFailure ?? AiReplyFailure.None;
                 if (replyFailure != AiReplyFailure.None || recoveryTask.Current.Feedback?.ServiceError is not null)
                 { Stop(AiErrorStop()); break; }
+                if (startupFailure?.Context.Stage == "LaunchFailed")
+                {
+                    Stop("未能确认本轮游戏测试启动，已停止自动排序。请检查 Steam 登录和启动确认窗口；未继续请求 AI 或试排除模组。"
+                        + "\n" + startupFailure.LocalReason());
+                    break;
+                }
                 if (startupFailure?.Context.Evidence.Any(e => e.Code == "GraphicsManifestUnavailable") == true)
                 // Legacy checkpoints used a broader match. Do not turn unverified historical
                 // failures into passes; fresh logs use the exact approved parser exclusions.

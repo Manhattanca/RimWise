@@ -140,6 +140,23 @@ public partial class AiSettingsWindow : Window
 
     private void Model_Changed(object sender, SelectionChangedEventArgs e)
     { if (ready && ModelListBox.SelectedItem is string model) ModelBox.Text = model; }
+
+    private void Endpoint_Completed(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        if (!ready || updating || testCancellation is not null || saving) return;
+        try
+        {
+            var endpoint = (AiSettings.Default with { Endpoint = EndpointBox.Text }).Normalize().Endpoint;
+            // Canonicalizing the same address must not clear an entered key or model.
+            updating = true;
+            EndpointBox.Text = endpoint;
+            ProviderBox.SelectedIndex = AiServicePresets.Find(endpoint);
+            RefreshService();
+            UpdateKeyStatus();
+        }
+        catch (ArgumentException ex) { StatusText.Text = ex.Message; }
+        finally { updating = false; }
+    }
     private void ManualModel_Changed(object sender, RoutedEventArgs e)
     {
         if (ModelBox is null || ModelListBox is null) return;
@@ -275,11 +292,15 @@ public partial class AiSettingsWindow : Window
                 if (result.Succeeded && result.Models.Count > 0)
                 {
                     ModelListBox.ItemsSource = result.Models;
-                    ModelListBox.SelectedItem = result.Models.FirstOrDefault(id => id == settings.Model);
+                    // Keep an explicit manual model, otherwise select a real returned model.
+                    // Use the provider's order rather than silently preferring a costly model.
+                    ModelListBox.SelectedItem = result.Models.FirstOrDefault(id => id == settings.Model)
+                        ?? (settings.Model.Length == 0 ? result.Models[0] : null);
                     if (fetchModels)
                     {
                         ManualModelBox.IsChecked = settings.Model.Length > 0 && ModelListBox.SelectedItem is null;
-                        StatusText.Text += $" 已获取 {result.Models.Count} 个模型，请从列表选择。";
+                        StatusText.Text += $" 已获取 {result.Models.Count} 个模型。"
+                            + (ModelListBox.SelectedItem is string selected ? $" 当前选择：{selected}，可随时更换。" : "已保留手动填写的模型。");
                     }
                 }
                 else if (fetchModels)

@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -85,7 +85,9 @@ public partial class AiSortingWindow : Window
                 : $"AI 模型：{(settings.Model.Length == 0 ? "未选择模型" : settings.Model)}";
             if (outcome is not null && settings != outcome.Settings) InvalidateResult("AI 设置已变化，请重新开始排序。");
             if (requestCancellation is null && outcome is null && !automaticResultShown)
-                StatusText.Text = session.ReadinessProblem ?? (IsOfflineMode
+                StatusText.Text = !IsOfflineMode && (!settings.Enabled || AiClient.ConfigurationProblem(settings) is not null)
+                    ? "尚未完成 AI 配置；点击“自动排序并测试”直接进入设置。"
+                    : session.ReadinessProblem ?? (IsOfflineMode
                     ? "点击离线排序；结果可撤销，点击主界面“保存排序”后写入游戏。"
                     : PermissionBox.SelectedIndex == 2
                     ? "模组适配尚未完成，请选择其他排序模式。"
@@ -152,8 +154,14 @@ public partial class AiSortingWindow : Window
     private void RefreshButtons()
     {
         var busy = requestCancellation is not null || clearingLogs || savingLogs;
-        AutomaticButton.IsEnabled = !closed && !busy && session.ReadinessProblem is null
-            && (IsOfflineMode || (settings.Enabled && gamePaths is not null && PermissionBox.SelectedIndex is 0 or 1));
+        SortingBusyLabel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        SortingProgress.IsIndeterminate = busy && InterfaceMotion.Enabled;
+        SortingProgress.Visibility = busy && InterfaceMotion.Enabled ? Visibility.Visible : Visibility.Collapsed;
+        var needsConfiguration = !settings.Enabled || AiClient.ConfigurationProblem(settings) is not null;
+        AutomaticButton.IsEnabled = !closed && !busy
+            && (IsOfflineMode ? session.ReadinessProblem is null
+                : gamePaths is not null && PermissionBox.SelectedIndex is 0 or 1
+                    && (needsConfiguration || session.ReadinessProblem is null));
         AutomaticButton.Content = IsOfflineMode ? "离线排序" : "自动排序并测试";
         AutomaticButton.ToolTip = IsOfflineMode ? "仅进行一次本地排序，不调用 AI、不下载模组、不启动游戏；完成后可在主界面保存或撤销。"
             : "经 Steam 测试地图，必要时下载前置并调整重测；启动超过 30 分钟仅提醒，可继续等待或取消";
@@ -177,7 +185,7 @@ public partial class AiSortingWindow : Window
     {
         try
         {
-            new AiSettingsWindow(session.SettingsStore.Load(), session.SettingsStore, session.Secrets) { Owner = this }.ShowDialog();
+            new AiSettingsWindow(session.SettingsStore.Load(), session.SettingsStore, session.Secrets) { Owner = DialogOwner }.ShowDialog();
             RefreshConfiguration();
         }
         catch (Exception ex) when (IsExpectedError(ex)) { StatusText.Text = "无法打开 AI 设置：" + ex.Message; }
@@ -186,7 +194,7 @@ public partial class AiSortingWindow : Window
     private void Usage_Click(object sender, RoutedEventArgs e)
     {
         if (usageWindow is not null) { usageWindow.Activate(); return; }
-        usageWindow = new(session.SettingsStore, session.Secrets, session.Tasks) { Owner = this };
+        usageWindow = new(session.SettingsStore, session.Secrets, session.Tasks) { Owner = DialogOwner };
         usageWindow.Closed += (_, _) => usageWindow = null;
         usageWindow.Show();
     }
@@ -208,7 +216,7 @@ public partial class AiSortingWindow : Window
         if (IsWorking || closed) return;
         try
         {
-            var dialog = new TaskRecoveryWindow(session.Tasks) { Owner = this };
+            var dialog = new TaskRecoveryWindow(session.Tasks) { Owner = DialogOwner };
             if (dialog.ShowDialog() != true || dialog.SelectedTaskId is not { } id) return;
             RestoreTask(id);
         }
@@ -276,6 +284,7 @@ public partial class AiSortingWindow : Window
             var estimate = session.Estimate(settings);
             TokenText.Text = estimate.Description;
             StatusText.Text = "正在生成排序方案…";
+            await usageRefreshTask.WaitAsync(cancellation.Token);
             var response = await session.RequestAsync(settings, estimate, cancellation.Token, progress);
             if (closed || ownerLifetime.IsCancellationRequested) return;
             RefreshConfiguration();
@@ -305,7 +314,7 @@ public partial class AiSortingWindow : Window
         {
             receiving = false;
             requestCancellation = null;
-            if (!closed) { RefreshUsage(); RefreshButtons(); }
+            if (!closed) { RefreshButtons(); await RefreshUsageAsync(); }
         }
     }
 
@@ -342,7 +351,7 @@ public partial class AiSortingWindow : Window
         var plan = selected.Plan!;
         var preview = new OrderPreviewWindow(new OrderComparison(new LoadOrder(plan.Before), new LoadOrder(plan.After)),
             "应用 自动排序", "确认后调整当前排序；点击主界面的保存排序才写入游戏。", "应用排序",
-            catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = this };
+            catalogue: editor.CurrentCatalogue, version: editor.CatalogueVersion) { Owner = DialogOwner };
         if (preview.ShowDialog() != true) return;
         try { ApplyResult(selected); }
         catch (Exception ex) when (IsExpectedError(ex))
@@ -360,13 +369,11 @@ public partial class AiSortingWindow : Window
 
     internal AiSortingOutcome? CurrentOutcome => outcome;
     internal TimeSpan WaitNoticeDelay { get; set; } = AiWaitNotice.DefaultDelay;
-    private void RefreshUsage()
+    private void Close_Click(object sender, RoutedEventArgs e)
     {
-        if (IsOfflineMode) { TokenText.Text = "本次离线排序：0 token（未调用 AI）。"; return; }
-        try { TokenText.Text += "\n" + session.UsageDescription(); }
-        catch (Exception ex) when (IsExpectedError(ex)) { TokenText.Text += "\n累计用量读取失败，记录已保留。"; }
+        if (returnToEditor is not null) returnToEditor();
+        else Close();
     }
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     protected override void OnClosing(CancelEventArgs e)
     {
@@ -382,9 +389,7 @@ public partial class AiSortingWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        closed = true;
-        requestCancellation?.Cancel();
-        editor.PropertyChanged -= Editor_Changed;
+        EndLifetime();
         base.OnClosed(e);
     }
 

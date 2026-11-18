@@ -33,7 +33,7 @@ public partial class AiSortingWindow
         try
         {
             logStore.SaveSettings(logStore.LoadSettings() with { AutoSave = AutoSaveLogsToggle.IsChecked == true });
-            LogStatusText.Text = AutoSaveLogsToggle.IsChecked == true ? "任务成功、失败或取消后自动保存 ZIP。" : "已关闭自动保存；仍可手动保存上次日志。";
+            LogStatusText.Text = AutoSaveLogsToggle.IsChecked == true ? "任务成功、失败或取消后自动保存 ZIP。" : "已关闭自动保存；成功、失败或取消均可导出本次排障日志。";
         }
         catch (Exception ex) when (IsExpectedError(ex)) { LoadLogSettings(); LogStatusText.Text = "设置未保存：" + ex.Message; }
     }
@@ -77,8 +77,13 @@ public partial class AiSortingWindow
                 return DiagnosticExportService.Export(dataDirectory, destination, run: run);
             });
             savedPath = result.Path;
-            if (!closed) LogStatusText.Text = $"已保存{(run is null ? "最近可用" : "上次排序")}日志：{result.Path}";
-            DiagnosticEventLog.Current?.Record("automatic-sorting", "logs-saved", $"files={result.Files}; bytes={result.Bytes}");
+            if (!closed) LogStatusText.Text = $"已保存{(run is null ? "最近可用" : "本次排障")}日志：{result.Path}"
+                + (result.OmissionCount == 0 ? "" : "\n" + result.IncompleteNotice)
+                + (result.RecoveredRecords == 0 ? "" : "\n" + result.RecoveryNotice);
+            DiagnosticEventLog.Current?.Record("automatic-sorting", "logs-saved", $"files={result.Files}; bytes={result.Bytes}; omissions={result.OmissionCount}; recovered={result.RecoveredRecords}");
+            if (!closed && result.OmissionCount > 0)
+                MessageDialog.Show(DialogOwner, result.IncompleteNotice + "\n\n已保存：" + result.Path,
+                    "诊断包未完整导出", MessageBoxButton.OK, MessageBoxImage.Warning);
             if (openFolder && !closed)
                 OpenLogFolder(directory);
         }
@@ -105,7 +110,7 @@ public partial class AiSortingWindow
         }
         catch (Exception ex) when (IsExpectedError(ex))
         {
-            if (!closed) LogStatusText.Text = "上次日志索引保存失败，排序结果不受影响：" + ex.Message;
+            if (!closed) LogStatusText.Text = "本次排障日志索引保存失败，排序结果不受影响：" + ex.Message;
             DiagnosticEventLog.Current?.Record("automatic-sorting", "log-index-failed", ex.GetType().Name);
         }
     }
@@ -139,7 +144,7 @@ public partial class AiSortingWindow
         try
         {
             var directory = logStore.ValidateDirectory(logStore.LoadSettings().Directory);
-            if (MessageDialog.Show(this, "删除全部可清理的排序日志（含上次日志），以及以下目录中的 RimWise 排序日志 ZIP？\n" + directory
+            if (MessageDialog.Show(DialogOwner, "删除全部可清理的排序日志（含上次日志），以及以下目录中的 RimWise 排序日志 ZIP？\n" + directory
                 + "\n待恢复任务、正在使用的记录、token 用量、设置和其他文件会保留。删除后无法撤销。",
                 "删除全部日志", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
             await DeleteAllLogsAsync(directory);

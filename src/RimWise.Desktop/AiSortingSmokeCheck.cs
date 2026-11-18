@@ -72,13 +72,22 @@ internal static class AiSortingSmokeCheck
         AiSortingWindow Open() { var w = new AiSortingWindow(vm, root, client: client, secrets: secrets) { Owner = main }; w.Show(); return w; }
         Reset();
         new AutomaticSortingPreferencesStore(UserStorage.DirectoryPath).AcknowledgeNotice();
-        main.AiSortingButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        var singleton = main.OwnedWindows.OfType<AiSortingWindow>().Single();
-        Assert(ReferenceEquals(singleton, main.OpenAiSorting()) && singleton.Title == "自动排序", "Main button did not open a single AI sorting window.");
-        singleton.Close();
-        checks.Add("main button opens independent singleton window");
+        main.AiSortingPageTab.IsChecked = true;
+        var singleton = main.OpenAiSorting();
+        Assert(ReferenceEquals(singleton, main.OpenAiSorting()) && main.AiSortingHost.Content is FrameworkElement
+            && !singleton.IsVisible && !main.OwnedWindows.OfType<AiSortingWindow>().Any(),
+            "Automatic sorting must reuse its embedded controller without opening another native window.");
+        main.ModsPageTab.IsChecked = true;
+        checks.Add("main tab reuses embedded sorting controller without another native window");
 
         var window = Open();
+        async Task WaitForRequest(int previousCalls, Task running)
+        {
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+            while (client.Calls == previousCalls && !running.IsCompleted && DateTimeOffset.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert(client.Calls == previousCalls + 1, "Synthetic request did not start: " + window.StatusText.Text);
+        }
         try
         {
             Assert(client.Calls == 0 && secrets.Reads == 0, "Opening window sent a request or read a key.");
@@ -1008,7 +1017,7 @@ internal static class AiSortingSmokeCheck
             while (!streaming.IsCompleted && !window.StatusText.Text.Contains("可能超时")
                 && DateTimeOffset.UtcNow < reminderDeadline) await Task.Delay(25);
             Assert(!streaming.IsCompleted && !sentToken.IsCancellationRequested && window.CancelButton.IsEnabled,
-                "Sorting reminder cancelled or completed the pending request.");
+                "Sorting reminder cancelled or completed the pending request: " + window.StatusText.Text);
             Assert(window.StatusText.Text.Contains("可能超时"), "Sorting reminder was not displayed.");
             sent!.ResponseProgress!.Report(new("真实合成回报片段"));
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
@@ -1027,7 +1036,9 @@ internal static class AiSortingSmokeCheck
             Reset();
             var pending = new TaskCompletionSource<AiClientResult>();
             client.Response = (_, _) => pending.Task;
+            var beforePending = client.Calls;
             var active = window.StartSortingAsync();
+            await WaitForRequest(beforePending, active);
             Assert(!window.PermissionBox.IsEnabled, "Running request allowed a permission mode change.");
             var count = client.Calls;
             await window.StartSortingAsync();
@@ -1039,14 +1050,18 @@ internal static class AiSortingSmokeCheck
             checks.Add("duplicate prevention and mid-request edits");
 
             Reset(); pending = new(); client.Response = (_, _) => pending.Task;
+            beforePending = client.Calls;
             active = window.StartSortingAsync();
+            await WaitForRequest(beforePending, active);
             store.Save(settings with { Model = "changed-mid-request" });
             pending.SetResult(GoodReply()); await active; Unchanged();
-            Assert(!window.ApplyButton.IsEnabled && window.StatusText.Text.Contains("设置已变化"), "Mid-request settings change was not invalidated.");
+            Assert(!window.ApplyButton.IsEnabled && window.StatusText.Text.Contains("设置已变化"), "Mid-request settings change was not invalidated: " + window.StatusText.Text);
             checks.Add("mid-request settings change invalidates response without extra request");
 
             Reset(); pending = new(); client.Response = (_, _) => pending.Task;
+            beforePending = client.Calls;
             active = window.StartSortingAsync();
+            await WaitForRequest(beforePending, active);
             window.CancelButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             pending.SetResult(GoodReply()); await active; Unchanged();
             Assert(!window.ApplyButton.IsEnabled && window.StatusText.Text.Contains("取消") && window.TokenText.Text.Contains("150"),
@@ -1262,7 +1277,9 @@ internal static class AiSortingSmokeCheck
             checks.Add("closing usage monitor cancels the outstanding read-only request");
 
             Reset(); pending = new(); client.Response = (_, _) => pending.Task;
+            beforePending = client.Calls;
             active = window.StartSortingAsync();
+            await WaitForRequest(beforePending, active);
             window.Close(); pending.SetResult(GoodReply()); await active; Unchanged();
             Assert(window.CurrentOutcome is null, "Closed window accepted late result.");
             checks.Add("closed window cannot display or apply late result");

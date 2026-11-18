@@ -13,22 +13,25 @@ public partial class MainWindow
 
     private void MainPage_Changed(object sender, RoutedEventArgs e)
     {
-        if (GameLogHost is null || MarketplaceHost is null || ModEditorFooter is null) return;
-        var page = MarketPageTab.IsChecked == true ? 2 : LogsPageTab.IsChecked == true ? 1 : 0;
-        if (page == 2 && !EnsureMarketplaceNotice())
+        if (AiSortingHost is null || GameLogHost is null || MarketplaceHost is null || ModEditorFooter is null) return;
+        var page = MarketPageTab.IsChecked == true ? 3 : LogsPageTab.IsChecked == true ? 2 : AiSortingPageTab.IsChecked == true ? 1 : 0;
+        if (page == 3 && !EnsureMarketplaceNotice())
         {
-            if (mainPageIndex == 1) LogsPageTab.IsChecked = true;
+            if (mainPageIndex == 2) LogsPageTab.IsChecked = true;
+            else if (mainPageIndex == 1) AiSortingPageTab.IsChecked = true;
             else ModsPageTab.IsChecked = true;
             return;
         }
-        var logs = page == 1;
+        var logs = page == 2;
         if (logs && gameLogPage is null)
             GameLogHost.Content = gameLogPage = new GameLogPage(LocateGameLogs, () => ViewModel.CurrentCatalogue);
-        if (page == 2) EnsureMarketplacePage();
+        if (page == 3) EnsureMarketplacePage();
+        if (page == 1) EnsureAiSortingPage();
         ModEditorBody.Visibility = ModEditorFooter.Visibility = page == 0 ? Visibility.Visible : Visibility.Collapsed;
+        AiSortingHost.Visibility = page == 1 ? Visibility.Visible : Visibility.Collapsed;
         GameLogHost.Visibility = logs ? Visibility.Visible : Visibility.Collapsed;
-        MarketplaceHost.Visibility = page == 2 ? Visibility.Visible : Visibility.Collapsed;
-        var target = page == 2 ? MarketplaceHost : logs ? (FrameworkElement)GameLogHost : ModEditorBody;
+        MarketplaceHost.Visibility = page == 3 ? Visibility.Visible : Visibility.Collapsed;
+        FrameworkElement target = page == 3 ? MarketplaceHost : logs ? GameLogHost : page == 1 ? AiSortingHost : ModEditorBody;
         if (IsLoaded && page != mainPageIndex) InterfaceMotion.SlidePage(target, fromRight: page > mainPageIndex);
         mainPageIndex = page;
     }

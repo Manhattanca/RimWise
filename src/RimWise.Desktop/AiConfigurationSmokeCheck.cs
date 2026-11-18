@@ -50,6 +50,21 @@ internal static class AiConfigurationSmokeCheck
                 && window.ModelListBox.Items.Count == 0, "Service switch retained old draft");
             await window.TestConnectionAsync(fetchModels: true);
             Assert(client.Key is null, "Saved secret leaked to another service");
+            Assert(window.ModelListBox.SelectedItem as string == "a-model" && window.ModelBox.Text == "a-model"
+                && window.ManualModelBox.IsChecked == false, "An empty model must default to the first returned model");
+            window.ModelListBox.SelectedItem = "z-model";
+            await window.TestConnectionAsync(fetchModels: true);
+            Assert(window.ModelBox.Text == "z-model" && window.ModelListBox.SelectedItem as string == "z-model",
+                "Fetching models replaced a valid user choice");
+            window.ModelBox.Text = "manual-deployment";
+            await window.TestConnectionAsync(fetchModels: true);
+            Assert(window.ModelBox.Text == "manual-deployment" && window.ManualModelBox.IsChecked == true,
+                "Fetching models discarded a manual deployment name");
+            client.Result = new(true, "空模型列表");
+            await window.TestConnectionAsync(fetchModels: true);
+            Assert(window.ModelBox.Text == "manual-deployment" && window.ManualModelBox.IsChecked == true,
+                "An empty model list erased the manual model");
+            client.Result = new(true, "连接与鉴权检查通过。") { Models = ["a-model", "z-model"] };
             try { await window.PersistSettingsAsync(); throw new InvalidOperationException("Changed service accepted old key"); }
             catch (ArgumentException) { }
             Assert(secrets.Read(original.SecretName) == "synthetic-saved-secret" && store.Load().Endpoint == original.Endpoint, "Rejected save mutated configuration");

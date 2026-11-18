@@ -49,6 +49,43 @@ public static class StoredEvidence
         return reader.ReadToEnd();
     }
 
+    // Only the explicit local diagnostic exporter may read all retained evidence.
+    // Other consumers retain their existing decompression limits. Pin the compressed
+    // or raw byte length so a live append cannot make export run indefinitely.
+    internal static Stream OpenExportSnapshot(string path, CancellationToken token)
+    {
+        path = ScopedPaths.Ordinary(Resolve(path), true);
+        var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var snapshot = new SnapshotStream(file, token);
+        return path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)
+            ? new GZipStream(snapshot, CompressionMode.Decompress) : snapshot;
+    }
+
+    private sealed class SnapshotStream(FileStream file, CancellationToken token) : Stream
+    {
+        private long remaining = file.Length;
+        public override bool CanRead => true;
+        public override bool CanWrite => false;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+        public override int Read(Span<byte> buffer)
+        {
+            token.ThrowIfCancellationRequested();
+            if (remaining == 0 || buffer.Length == 0) return 0;
+            var read = file.Read(buffer[..(int)Math.Min(buffer.Length, remaining)]);
+            if (read == 0) throw new IOException("导出期间日志被截短，请稍后重试。原诊断包未覆盖。");
+            remaining -= read;
+            return read;
+        }
+        protected override void Dispose(bool disposing) { if (disposing) file.Dispose(); base.Dispose(disposing); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     internal static void Compress(string path)
     {
         path = ScopedPaths.Ordinary(path, true);

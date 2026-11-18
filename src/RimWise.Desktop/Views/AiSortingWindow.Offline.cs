@@ -92,7 +92,7 @@ public partial class AiSortingWindow
         }
         if (closed || ownerLifetime.IsCancellationRequested || cancellation.IsCancellationRequested) return;
         if (OfflineResultNotice is { } notice) notice(message, succeeded);
-        else MessageDialog.Show(this, message, succeeded ? "离线排序完成" : "离线排序未完成",
+        else MessageDialog.Show(DialogOwner, message, succeeded ? "离线排序完成" : "离线排序未完成",
             MessageBoxButton.OK, succeeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 }

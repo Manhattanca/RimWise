@@ -109,7 +109,11 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         // An unrelated game or an ambiguous journal blocks a new test instead.
         await GameTestRecovery.StopInterruptedAsync(options, token);
         if (GameProcessService.IsAnyRunning()) return false;
-        if (options.UseFixedHelper) TestHelperMount.CleanInterrupted(options);
+        if (options.UseFixedHelper)
+        {
+            TestHelperMount.CleanInterrupted(options);
+            TestHelperMount.EnsureNoHelperRemnants(options.GameDirectory);
+        }
         return true;
     }
 

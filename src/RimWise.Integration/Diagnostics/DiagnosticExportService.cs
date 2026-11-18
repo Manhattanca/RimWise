@@ -9,13 +9,17 @@ using RimWise.Integration.Safety;
 namespace RimWise.Integration.Diagnostics;
 
 public sealed record DiagnosticExportResult(string Path, long Bytes, int Files, long ReportedTokens,
-    long ReservedTokens, int UnknownTasks);
+    long ReservedTokens, int UnknownTasks)
+{
+    public int OmissionCount { get; init; }
+    public int RecoveredRecords { get; init; }
+    public string RecoveryNotice => RecoveredRecords == 0 ? "" : $"已保留并脱敏恢复 {RecoveredRecords} 项残缺日志记录，详见诊断包恢复说明。";
+    public string IncompleteNotice => OmissionCount == 0 ? "" : $"有 {OmissionCount} 项内容未完整导出，诊断包中已保留遗漏说明。";
+}
 
 /// <summary>Positive allowlist: credentials, raw settings, saves, caches and recovery envelopes never enter the ZIP.</summary>
 public static class DiagnosticExportService
 {
-    private const long MaximumFileBytes = 32 * 1024 * 1024;
-    private const long MaximumArchiveBytes = 256 * 1024 * 1024;
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -23,7 +27,7 @@ public static class DiagnosticExportService
     };
     private static readonly HashSet<string> GameFiles = new(StringComparer.OrdinalIgnoreCase)
     {
-        "runtime-Player.log", "Player.log", "output_log.txt", "launch.json", "launch-failure.log", "result.json",
+        "runtime-Player.log", "Player.log", "output_log.txt", "stdout.log", "stderr.log", "launch.json", "launch-failure.log", "result.json",
         "session.json", "process.json", "finished.json", "recovered.json",
         "diagnostic-sources.json", "diagnostic-context.json", "ModsConfig.xml",
         "intended-ModsConfig.xml", "observed-ModsConfig.xml",
@@ -40,7 +44,7 @@ public static class DiagnosticExportService
             throw new IOException("请选择用户数据目录之外的导出位置。");
         // Fail closed if a stored key cannot be decrypted: do not export unchecked error text.
         var settings = new AiSettingsStore(root).Load();
-        var redactor = new DiagnosticRedactor(new LocalEncryptedSecretStore(root).ReadDiagnosticSecrets(settings.SecretName));
+        var redactor = DiagnosticRedactor.ForExport(new LocalEncryptedSecretStore(root).ReadDiagnosticSecrets(settings.SecretName), cancellationToken);
         var store = new AiTaskRecoveryStore(root);
         var taskSnapshot = store.InspectUsage().Where(t => run is null || run.TaskIds.Contains(t.Id)).ToArray();
         var deleted = store.InspectDeletedUsage().Where(t => run is null || run.TaskIds.Contains(t.Id)).ToArray();
@@ -52,32 +56,42 @@ public static class DiagnosticExportService
             + deleted.Where(t => t.UnknownUsage).Sum(t => (long)t.ReservedTokens));
         var unknown = tasks.Count(t => t.Checkpoint?.UnknownUsage == true) + deleted.Count(t => t.UnknownUsage);
         var entries = new List<object>();
-        var omissions = new List<object>();
+        var exclusions = new List<object>();
+        var recoveries = new List<object>();
+        var recoveredRecords = 0;
         var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        long total = 0;
         try
         {
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
             {
-                void Write(string name, string sanitized)
+                void WriteEntry(string name, Action<Stream> write)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var bytes = Encoding.UTF8.GetBytes(sanitized);
-                    if (name != "manifest.json" && (bytes.LongLength > MaximumFileBytes || total + bytes.LongLength > MaximumArchiveBytes - 1024 * 1024))
-                    { omissions.Add(new { file = redactor.Text(name), reason = "size-limit" }); return; }
-                    var entry = archive.CreateEntry(redactor.Text(name), CompressionLevel.Fastest);
+                    var safeName = redactor.Text(name);
+                    var entry = archive.CreateEntry(safeName, CompressionLevel.Fastest);
                     using var output = entry.Open();
-                    output.Write(bytes);
-                    total += bytes.LongLength;
-                    entries.Add(new { file = redactor.Text(name), uncompressedBytes = bytes.Length });
+                    using var counted = new DiagnosticEvidenceWriter.CountingStream(output);
+                    write(counted);
+                    entries.Add(new { file = safeName, uncompressedBytes = counted.Written });
                 }
+                void Write(string name, string sanitized) => WriteEntry(name, output =>
+                {
+                    using var writer = new StreamWriter(output, new UTF8Encoding(false), 65536, leaveOpen: true);
+                    writer.Write(sanitized);
+                });
                 void WriteObject(string name, object value) => Write(name, redactor.Json(JsonSerializer.Serialize(value, Json)));
                 try { WriteObject("test-storage.json", TestDataRetention.InspectStorage(root)); }
                 catch (Exception ex) when (ReadFailure(ex))
-                { omissions.Add(new { file = "test-storage.json", reason = ex.GetType().Name }); }
-                // Keep the totals available even if a long request history exceeds the per-file limit.
+                {
+                    // This is a derived disk-usage summary, not source evidence. A denied
+                    // cache/junction must not prevent exporting the safe diagnostic files.
+                    WriteObject("test-storage.json", new { unavailable = true, reason = ex.GetType().Name,
+                        detail = redactor.Text(ex.Message) });
+                    exclusions.Add(new { file = "test-storage.json", reason = "storage-summary-unavailable" });
+                }
+                // Keep a compact summary alongside the complete request history.
                 WriteObject("token-summary.json", new
                 {
                     reportedTokens = reported, unreportedEstimatedTokens = reserved, unknownUsageTasks = unknown,
@@ -110,10 +124,9 @@ public static class DiagnosticExportService
                 foreach (var task in tasks)
                     WriteObject("tasks/" + task.Id + ".json", task);
                 if (run is not null) WriteObject("automatic-run.json", run);
-                try { WriteObject("ai-audit.json", new AiAuditStore(root).Load().Where(a => InRun(a.Timestamp, run)).ToArray()); }
-                catch (Exception ex) when (ReadFailure(ex)) { omissions.Add(new { file = "ai-audit.json", reason = ex.GetType().Name }); }
+                WriteObject("ai-audit.json", new AiAuditStore(root).Load().Where(a => InRun(a.Timestamp, run)).ToArray());
 
-                foreach (var file in EvidenceFiles(root, omissions, redactor, run))
+                foreach (var file in EvidenceFiles(root, exclusions, redactor, run))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var logical = TestDataRetention.LogicalPath(file);
@@ -121,99 +134,85 @@ public static class DiagnosticExportService
                     try
                     {
                         ScopedPaths.Ordinary(file, true);
-                        var content = StoredEvidence.ReadText(file, (int)MaximumFileBytes);
-                        if (Path.GetExtension(logical).Equals(".json", StringComparison.OrdinalIgnoreCase))
-                            Write(relative, redactor.Json(content));
-                        else if (Path.GetExtension(logical).Equals(".jsonl", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var lines = new StringBuilder();
-                            var invalid = 0;
-                            foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                        WriteEntry(relative, output => DiagnosticEvidenceWriter.Write(file, logical, output, redactor,
+                            cancellationToken, (line, reason) =>
                             {
-                                try
-                                {
-                                    if (run is not null)
-                                    {
-                                        using var entry = JsonDocument.Parse(line);
-                                        if (!entry.RootElement.TryGetProperty("timestampUtc", out var time)
-                                            || !time.TryGetDateTimeOffset(out var timestamp) || !InRun(timestamp, run)) continue;
-                                    }
-                                    lines.AppendLine(redactor.Json(line));
-                                }
-                                catch (JsonException) { invalid++; }
-                            }
-                            if (invalid > 0) omissions.Add(new { file = redactor.Text(relative), reason = "incomplete-or-invalid-lines", count = invalid });
-                            Write(relative, lines.ToString());
-                        }
-                        else Write(relative, redactor.Text(content));
+                                recoveredRecords++;
+                                recoveries.Add(new { file = redactor.Text(relative), line, reason });
+                            }, run is null ? null : timestamp => InRun(timestamp, run)));
                     }
                     catch (Exception ex) when (ReadFailure(ex))
-                    { omissions.Add(new { file = redactor.Text(relative), reason = ex.GetType().Name }); }
+                    {
+                        // Only the temporary ZIP has been written. Never claim success
+                        // after discarding key evidence or overwrite the previous package.
+                        throw new IOException("诊断文件无法安全导出：" + redactor.Text(relative)
+                            + "。请检查文件是否可读或正在被清理后重试；原日志及已有诊断包未覆盖。错误类型：" + ex.GetType().Name, ex);
+                    }
                 }
                 Write("README.txt", "RimWise diagnostic export\nCompact English field names; original game errors and AI advice are preserved.\n"
                     + "Includes current order, latest validated task checkpoints, AI action audits, recent UI events and game test evidence.\n"
                     + "Token totals count each task once, including deleted-task receipts. Request records contain input, output, cache and reasoning usage when reported.\n"
                     + "Unknown usage remains an estimate. Other applications and provider wallet totals are not counted.\n"
                     + "No credential files, raw AI settings, raw HTTP traffic, save games or Mod binaries are exported. Known keys and credential fields are redacted.\n"
-                    + (run is null ? "Recent 20 UI logs and 10 game sessions. " : "Selected run sessions and UI time interval; task usage includes prior requests on resumed tasks. ")
-                    + "32 MiB per file and 256 MiB total before compression. See manifest omissions.\n"
+                    + (run is null ? "All retained UI logs and game sessions. " : "Selected run sessions and UI time interval; task usage includes prior requests on resumed tasks. ")
+                    + "No per-file or archive-size truncation. Files are snapshots at open time. Text/JSONL are processed record by record; one JSON document or long record still requires memory proportional to that record.\n"
+                    + "Malformed JSON is preserved as labelled sanitized records. See manifest recoveries and deliberate security exclusions. Unreadable evidence fails the export instead of being silently skipped.\n"
                     + "UI events before this feature was installed cannot be reconstructed. Paths and Mod names can remain; review before public sharing.\n");
                 WriteObject("manifest.json", new { format = "RimWiseDiagnostic/1", createdUtc = DateTimeOffset.UtcNow,
-                    maximumFileBytes = MaximumFileBytes, maximumArchiveBytes = MaximumArchiveBytes,
-                    entries = entries.ToArray(), omissions = omissions.ToArray() });
+                    maximumFileBytes = (long?)null, maximumArchiveBytes = (long?)null,
+                    entries = entries.ToArray(), omissions = Array.Empty<object>(), recoveries = recoveries.ToArray(), exclusions = exclusions.ToArray() });
             }
             cancellationToken.ThrowIfCancellationRequested();
             ScopedPaths.Ordinary(target);
             File.Move(temporary, target, overwrite: true); // Save dialog has already confirmed replacement.
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
-        return new(target, new FileInfo(target).Length, entries.Count, reported, reserved, unknown);
+        return new(target, new FileInfo(target).Length, entries.Count, reported, reserved, unknown) { RecoveredRecords = recoveredRecords };
     }
 
     private static bool InRun(DateTimeOffset timestamp, AutomaticLogRun? run) => run is null
         || timestamp >= run.StartedUtc && timestamp <= (run.EndedUtc ?? DateTimeOffset.UtcNow);
 
-    private static IEnumerable<string> EvidenceFiles(string root, List<object> omissions, DiagnosticRedactor redactor, AutomaticLogRun? run)
+    private static IEnumerable<string> EvidenceFiles(string root, List<object> exclusions, DiagnosticRedactor redactor, AutomaticLogRun? run)
     {
         var result = new List<string>();
+        bool Ordinary(string path)
+        {
+            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            {
+                exclusions.Add(new { file = redactor.Text(Path.GetRelativePath(root, path)), reason = "security-boundary-link" });
+                return false;
+            }
+            ScopedPaths.Ordinary(path, true);
+            return true;
+        }
         void Visit(string path, int depth)
         {
-            try
-            {
-                ScopedPaths.Ordinary(path);
-                foreach (var file in Directory.EnumerateFiles(path))
-                    if (IsGameEvidence(Path.GetFileName(TestDataRetention.LogicalPath(file)))) result.Add(file);
-                if (depth > 0) foreach (var directory in Directory.EnumerateDirectories(path)) Visit(directory, depth - 1);
-            }
-            catch (Exception ex) when (ReadFailure(ex))
-            { omissions.Add(new { file = redactor.Text(Path.GetRelativePath(root, path)), reason = ex.GetType().Name }); }
+            if (!Ordinary(path)) return;
+            foreach (var file in Directory.EnumerateFiles(path))
+                if (IsGameEvidence(Path.GetFileName(TestDataRetention.LogicalPath(file))) && Ordinary(file)) result.Add(file);
+            if (depth > 0) foreach (var directory in Directory.EnumerateDirectories(path)) Visit(directory, depth - 1);
         }
         foreach (var group in new[] { "Data/Diagnostics", "Data/GameTests" })
         {
-            try
-            {
-                var path = ScopedPaths.Child(root, group);
-                if (!Directory.Exists(path)) continue;
-                var ui = group.EndsWith("Diagnostics", StringComparison.Ordinal);
-                var candidates = (ui ? Directory.EnumerateFiles(path)
-                    .Where(p => (Path.GetFileName(p).StartsWith("ui-", StringComparison.Ordinal)
-                        && (p.EndsWith(".jsonl") || p.EndsWith(".jsonl.gz")))
-                        || (Path.GetFileName(p).StartsWith("crash-", StringComparison.Ordinal) && p.EndsWith(".json")))
-                    .Select(TestDataRetention.LogicalPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(StoredEvidence.Resolve)
-                    : Directory.EnumerateDirectories(path, "game-*"))
-                    .OrderByDescending(p => Path.GetFileName(p), StringComparer.Ordinal).ToArray();
-                // Different filename prefixes must not push every crash behind UI logs.
-                candidates = ui ? candidates.OrderByDescending(File.GetLastWriteTimeUtc).ToArray()
-                    : candidates.OrderByDescending(Directory.GetLastWriteTimeUtc).ToArray();
-                if (run is not null) candidates = candidates.Where(p => ui
-                    ? File.GetLastWriteTimeUtc(p) >= run.StartedUtc.UtcDateTime
-                    : run.Sessions.Contains(Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)).ToArray();
-                var limit = run is not null ? candidates.Length : ui ? 20 : 10;
-                if (candidates.Length > limit) omissions.Add(new { file = group, reason = "recent-session-limit", count = candidates.Length - limit });
-                foreach (var candidate in candidates.Take(limit))
-                    if (ui) result.Add(candidate); else Visit(candidate, 3);
-            }
-            catch (Exception ex) when (ReadFailure(ex)) { omissions.Add(new { file = group, reason = ex.GetType().Name }); }
+            var path = Path.Combine(root, group);
+            if (!Directory.Exists(path) || !Ordinary(path)) continue;
+            var ui = group.EndsWith("Diagnostics", StringComparison.Ordinal);
+            var candidates = (ui ? Directory.EnumerateFiles(path)
+                .Where(p => (Path.GetFileName(p).StartsWith("ui-", StringComparison.Ordinal)
+                    && (p.EndsWith(".jsonl") || p.EndsWith(".jsonl.gz")))
+                    || (Path.GetFileName(p).StartsWith("crash-", StringComparison.Ordinal) && p.EndsWith(".json")))
+                .Where(Ordinary).Select(TestDataRetention.LogicalPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(StoredEvidence.Resolve)
+                : Directory.EnumerateDirectories(path, "game-*").Where(Ordinary))
+                .OrderByDescending(p => Path.GetFileName(p), StringComparer.Ordinal).ToArray();
+            // Different filename prefixes must not push every crash behind UI logs.
+            candidates = ui ? candidates.OrderByDescending(File.GetLastWriteTimeUtc).ToArray()
+                : candidates.OrderByDescending(Directory.GetLastWriteTimeUtc).ToArray();
+            if (run is not null) candidates = candidates.Where(p => ui
+                ? File.GetLastWriteTimeUtc(p) >= run.StartedUtc.UtcDateTime
+                : run.Sessions.Contains(Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)).ToArray();
+            foreach (var candidate in candidates)
+                if (ui) result.Add(candidate); else Visit(candidate, 3);
         }
         return result.Select(TestDataRetention.LogicalPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(StoredEvidence.Resolve);
     }

@@ -17,6 +17,7 @@ public partial class AiSettingsWindow : Window
     private readonly AiPermissionLevel permissionLevel;
     private readonly string secretName;
     private readonly string savedEndpoint;
+    private string previousEndpoint = "";
     private bool ready;
     private bool updating;
     private bool hasSavedKey;
@@ -36,9 +37,10 @@ public partial class AiSettingsWindow : Window
         this.secrets = secrets;
         this.testClient = testClient;
         secretName = current.SecretName;
-        savedEndpoint = AiServicePresets.NormalizeAddress(current.Endpoint);
+        previousEndpoint = savedEndpoint = AiServicePresets.NormalizeAddress(current.Endpoint, current.CompleteBaseAddress);
         permissionLevel = current.PermissionLevel;
         EndpointBox.Text = current.Endpoint;
+        CompleteBaseAddressBox.IsChecked = current.CompleteBaseAddress;
         ModelBox.Text = current.Model;
         StreamingBox.IsChecked = current.StreamResponses;
         foreach (var preset in AiServicePresets.All) ProviderBox.Items.Add(new ComboBoxItem { Content = preset.Name });
@@ -54,7 +56,8 @@ public partial class AiSettingsWindow : Window
         Closing += (_, e) => { if (saving) { e.Cancel = true; StatusText.Text = "正在保存设置，请稍候。"; } };
     }
 
-    private bool UsesSavedEndpoint => string.Equals(AiServicePresets.NormalizeAddress(EndpointBox.Text), savedEndpoint, StringComparison.Ordinal);
+    private string ResolveAddress(string address) => AiServicePresets.NormalizeAddress(address, CompleteBaseAddressBox.IsChecked == true);
+    private bool UsesSavedEndpoint => ResolveAddress(EndpointBox.Text) == savedEndpoint;
 
     internal async Task LoadKeyStatusAsync()
     {
@@ -94,6 +97,13 @@ public partial class AiSettingsWindow : Window
         var preset = AiServicePresets.All[Math.Max(0, ProviderBox.SelectedIndex)];
         ServiceNote.Text = preset.Note.Length > 0 ? preset.Note : "使用 OpenAI 兼容接口；模型以当前账户可用列表为准。";
         EndpointPanel.Visibility = ProviderBox.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        try
+        {
+            var endpoint = (AiSettings.Default with { Endpoint = EndpointBox.Text,
+                CompleteBaseAddress = CompleteBaseAddressBox.IsChecked == true }).Normalize().Endpoint;
+            RequestAddressText.Text = endpoint.Length == 0 ? "" : "实际请求地址：" + endpoint;
+        }
+        catch (ArgumentException) { RequestAddressText.Text = "API 地址无效。"; }
         RefreshServiceSuggestion();
     }
 
@@ -123,14 +133,22 @@ public partial class AiSettingsWindow : Window
         RefreshService();
     }
 
-    private void Endpoint_Changed(object sender, TextChangedEventArgs e)
+    private void Endpoint_Changed(object sender, TextChangedEventArgs e) => RefreshAddressIdentity();
+    private void AddressMode_Changed(object sender, RoutedEventArgs e) => RefreshAddressIdentity();
+
+    private void RefreshAddressIdentity()
     {
         if (!ready || updating) return;
-        ApiKeyBox.Clear();
-        replacingKey = false;
-        ModelListBox.ItemsSource = null;
-        ModelBox.Clear();
-        ManualModelBox.IsChecked = true;
+        var endpoint = ResolveAddress(EndpointBox.Text);
+        if (endpoint != previousEndpoint)
+        {
+            ApiKeyBox.Clear();
+            replacingKey = false;
+            ModelListBox.ItemsSource = null;
+            ModelBox.Clear();
+            ManualModelBox.IsChecked = true;
+            previousEndpoint = endpoint;
+        }
         updating = true;
         ProviderBox.SelectedIndex = AiServicePresets.Find(EndpointBox.Text);
         updating = false;
@@ -141,22 +159,6 @@ public partial class AiSettingsWindow : Window
     private void Model_Changed(object sender, SelectionChangedEventArgs e)
     { if (ready && ModelListBox.SelectedItem is string model) ModelBox.Text = model; }
 
-    private void Endpoint_Completed(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
-    {
-        if (!ready || updating || testCancellation is not null || saving) return;
-        try
-        {
-            var endpoint = (AiSettings.Default with { Endpoint = EndpointBox.Text }).Normalize().Endpoint;
-            // Canonicalizing the same address must not clear an entered key or model.
-            updating = true;
-            EndpointBox.Text = endpoint;
-            ProviderBox.SelectedIndex = AiServicePresets.Find(endpoint);
-            RefreshService();
-            UpdateKeyStatus();
-        }
-        catch (ArgumentException ex) { StatusText.Text = ex.Message; }
-        finally { updating = false; }
-    }
     private void ManualModel_Changed(object sender, RoutedEventArgs e)
     {
         if (ModelBox is null || ModelListBox is null) return;
@@ -190,11 +192,7 @@ public partial class AiSettingsWindow : Window
         {
             var imported = AiConnectionImport.Parse(text);
             // A new host must never silently inherit the previous provider's saved secret.
-            var previousAddress = EndpointBox.Text.Trim();
-            try { previousAddress = (AiSettings.Default with { Endpoint = previousAddress }).Normalize().Endpoint; }
-            catch (ArgumentException) { /* A valid import may replace an invalid draft address. */ }
-            var changedAddress = imported.Endpoint is not null && !string.Equals(imported.Endpoint,
-                previousAddress, StringComparison.OrdinalIgnoreCase);
+            var changedAddress = imported.Endpoint is not null && ResolveAddress(imported.Endpoint) != ResolveAddress(EndpointBox.Text);
             if (changedAddress && imported.ApiKey is null)
             {
                 StatusText.Text = "连接信息更换了 API 地址但未包含密钥。请一并复制地址与密钥，或手动修改配置。";
@@ -204,6 +202,7 @@ public partial class AiSettingsWindow : Window
             if (imported.Endpoint is not null)
             {
                 EndpointBox.Text = imported.Endpoint;
+                previousEndpoint = ResolveAddress(imported.Endpoint);
                 ProviderBox.SelectedIndex = AiServicePresets.Find(imported.Endpoint);
             }
             if (changedAddress) ModelListBox.ItemsSource = null;
@@ -239,7 +238,8 @@ public partial class AiSettingsWindow : Window
             EndpointBox.Text,
             ModelBox.Text,
             permissionLevel,
-            secretName) { StreamResponses = StreamingBox.IsChecked == true }.Normalize();
+            secretName) { StreamResponses = StreamingBox.IsChecked == true,
+                CompleteBaseAddress = CompleteBaseAddressBox.IsChecked == true }.ValidateInput();
     }
 
     private async void Test_Click(object sender, RoutedEventArgs e)
@@ -330,7 +330,7 @@ public partial class AiSettingsWindow : Window
 
     private void SetEditingEnabled(bool enabled)
     {
-        foreach (var control in new Control[] { ProviderBox, EndpointBox, ModelBox, ModelListBox,
+        foreach (var control in new Control[] { ProviderBox, EndpointBox, CompleteBaseAddressBox, ModelBox, ModelListBox,
                      ApiKeyBox, ReplaceKeyButton, FetchModelsButton, PasteConnectionButton, SaveButton, ManualModelBox })
             control.IsEnabled = enabled;
     }

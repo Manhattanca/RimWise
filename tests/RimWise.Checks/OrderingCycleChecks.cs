@@ -17,10 +17,79 @@ internal static class OrderingCycleChecks
             "1.7", Original, Original, retained ?? [], []);
         MaintenanceResult Run(Session game, Client client, string? root = null, string? resume = null,
             MaintenanceLimits? limits = null, string[]? retained = null, CancellationToken token = default,
-            ModCatalogue? mods = null, IReadOnlyList<CustomOrderRule>? rules = null) =>
-            new LevelOneMaintenance(client, new(root ?? Root()), game, resume).RunAsync(Request(retained), mods ?? catalogue,
+            ModCatalogue? mods = null, IReadOnlyList<CustomOrderRule>? rules = null, bool ordinary = false) =>
+            new LevelOneMaintenance(client, new(root ?? Root()), game, resume, ordinary).RunAsync(Request(retained), mods ?? catalogue,
                 rules ?? Rules, limits ?? new(), null, token).GetAwaiter().GetResult();
 
+        StructuredAiResponse Swap() => new(1, "swap", [new("reorder", "cycle.b", 1, false, null, null)], []);
+        StructuredAiResponse Conflict() => new(1, "conflict", [], []) { Conflicts = [new(["cycle.a", "cycle.b"])] };
+        check("ordinary clean first run keeps original cycle without AI", () =>
+        {
+            var game = new Session(catalogue); var client = new Client();
+            var r = Run(game, client, ordinary: true);
+            Assert(r.Outcome == MaintenanceOutcome.Passed && client.Calls == 0 && game.Tested.Single().SequenceEqual(Original));
+        });
+        check("ordinary adding a prerequisite cannot conceal an unrelated cycle swap", () =>
+        {
+            var mods = new ModCatalogue([Mod("cycle.a"), Mod("cycle.b"), Mod("other.mod", ["dep.mod"]), Mod("dep.mod")]);
+            var game = new Session(mods) { Report = _ => Error("other.mod") };
+            var client = new Client { Reply = _ => new(1, "repair", [new("add", "dep.mod", 1, false, null, null),
+                new("reorder", "cycle.b", 2, false, null, null)], []) };
+            var r = Run(game, client, mods: mods, ordinary: true);
+            Assert(client.Calls == 1 && game.Tested.Single().SequenceEqual(Original) && r.Message.Contains("无关联"), r.Message);
+        });
+        check("ordinary blocker associates its verified owner only", () =>
+        {
+            var report = Error("cycle.b") with { LogContext = new([], [], false) { BlockingError = "fixture blocker" },
+                DiagnosticFacts = [new("GameTestBlockingFailure", "cycle.a"),new("GamePatchFailure", "cycle.b")] };
+            Assert(OrderingCycleTrials.Associated(report, catalogue, Original, Version, true).SequenceEqual(["cycle.a"]));
+            Assert(OrderingCycleTrials.Associated(report with {DiagnosticFacts = [new("GamePatchFailure", "cycle.b")]}, catalogue, Original, Version, true).Length == 0);
+        });
+        check("ordinary adding only a required prerequisite preserves unrelated cycle order", () =>
+        {
+            var mods = new ModCatalogue([Mod("cycle.a"), Mod("cycle.b"), Mod("other.mod", ["dep.mod"]), Mod("dep.mod")]);
+            var game = new Session(mods) { Report = ids => ids.Contains("dep.mod") ? new(true, []) : Error("other.mod") };
+            var client = new Client { Reply = _ => new(1, "repair", [new("add", "dep.mod", 1, false, null, null)], []) };
+            var r = Run(game, client, mods: mods, ordinary: true);
+            Assert(r.Outcome == MaintenanceOutcome.Passed && client.Calls == 1 && game.Tested.Last().Skip(1).SequenceEqual(Original), r.Message);
+        });
+        check("ordinary single cycle owner authorizes AI swap after unchanged first test", () =>
+        {
+            var game = new Session(catalogue) { Report = ids => ids[0] == "cycle.a" ? Error("cycle.a") : new(true, []) };
+            var client = new Client { Reply = _ => Swap() };
+            var r = Run(game, client, ordinary: true);
+            Assert(r.Outcome == MaintenanceOutcome.Passed && client.Calls == 1 && game.Tested.Count == 2
+                && game.Tested[0].SequenceEqual(Original) && game.Tested[1][0] == "cycle.b", r.Message);
+        });
+        check("ordinary unrelated red prevents AI swap of unrelated cycle", () =>
+        {
+            var game = new Session(catalogue) { Report = _ => Error("other.mod") };
+            var client = new Client { Reply = _ => Swap() };
+            var r = Run(game, client, ordinary: true);
+            Assert(client.Calls == 1 && game.Tested.Single().SequenceEqual(Original) && r.Message.Contains("无关联"), r.Message);
+        });
+        check("ordinary conflict without failed swap cannot exclude a member", () =>
+        {
+            var game = new Session(catalogue) { Report = _ => Error("cycle.a") };
+            var client = new Client { Reply = _ => Conflict() };
+            var r = Run(game, client, ordinary: true);
+            Assert(client.Calls == 1 && game.Tested.Single().SequenceEqual(Original) && r.TrialExclusions.Count == 0, r.Message);
+        });
+        check("ordinary unchanged red after isolated swap receives second AI analysis before reversible trial", () =>
+        {
+            var game = new Session(catalogue) { Report = ids => ids.Contains("cycle.a") ? Error("cycle.a") : new(true, []) };
+            var client = new Client { Reply = n => n == 1 ? Swap() : Conflict() };
+            var r = Run(game, client, ordinary: true);
+            Assert(r.Outcome == MaintenanceOutcome.Passed && client.Calls == 2 && game.Tested.Count == 3
+                && r.TrialExclusions.Single().SelectedId == "cycle.a" && game.Tested[2].Contains("cycle.b"), r.Message);
+        });
+        check("ordinary new failure after swap is analyzed but cannot justify removing previous owner", () =>
+        {
+            var game = new Session(catalogue) { Report = ids => Error(ids[0] == "cycle.a" ? "cycle.a" : "cycle.b") };
+            var client = new Client { Reply = n => n == 1 ? Swap() : Conflict() };
+            var r = Run(game, client, ordinary: true);
+            Assert(client.Calls == 2 && game.Tested.Count == 2 && r.TrialExclusions.Count == 0, r.Message);
+        });
         check("error-free cyclic order stays unchanged without AI or exclusions", () =>
         {
             var game = new Session(catalogue); var client = new Client();
@@ -134,9 +203,10 @@ internal static class OrderingCycleChecks
     private sealed class Client : IAiClient
     {
         internal int Calls;
+        internal Func<int, StructuredAiResponse> Reply = _ => new(1, "synthetic", [], []);
         public Task<AiConnectionResult> TestConnectionAsync(AiSettings settings, string? key, CancellationToken token) => throw new NotSupportedException();
         public Task<AiClientResult> GetSuggestionAsync(AiRequest request, CancellationToken token)
-        { Calls++; return Task.FromResult(new AiClientResult(true, "fixture", new(1, "synthetic", [], []), null) { Usage = new(100, 20, 120) }); }
+        { Calls++; return Task.FromResult(new AiClientResult(true, "fixture", Reply(Calls), null) { Usage = new(100, 20, 120) }); }
     }
 
     private sealed class Session(ModCatalogue catalogue) : ILevelOneGameSession, IMaintenanceTrialSession
@@ -154,7 +224,9 @@ internal static class OrderingCycleChecks
             allowed = TrialExclusionPlanning.Replay(catalogue, Original, [], Version, trials);
         public Task ApplyAsync(AiOrderPlan plan, CancellationToken token)
         {
-            Assert(plan.CanApply && plan.Before.SequenceEqual(current) && plan.After.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(allowed));
+            var required = AiOrderPlanner.DependencyClosure(current, catalogue, Version);
+            Assert(plan.CanApply && plan.Before.SequenceEqual(current) && allowed.All(plan.After.Contains)
+                && plan.After.Except(allowed).All(required.Contains));
             current = plan.After.ToArray(); return Task.CompletedTask;
         }
         public Task FinishAsync(bool accept, CancellationToken token)

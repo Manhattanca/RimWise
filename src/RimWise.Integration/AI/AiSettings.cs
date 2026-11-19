@@ -10,6 +10,7 @@ public sealed record AiSettings(
     string SecretName)
 {
     public bool StreamResponses { get; init; } = true;
+    public bool CompleteBaseAddress { get; init; } = true;
     public static AiSettings Default => new(
         1,
         true,
@@ -19,7 +20,8 @@ public sealed record AiSettings(
         AiPermissionLevel.Level1OrderAndRequiredDependencies,
         "RimWise/AiApiKey");
 
-    public AiSettings Normalize()
+    // Keep the editable address separate from the final HTTP request URL.
+    public AiSettings ValidateInput()
     {
         var endpoint = Endpoint.Trim();
         if (endpoint.Length > 2048) throw new ArgumentException("AI 地址过长。", nameof(Endpoint));
@@ -36,20 +38,25 @@ public sealed record AiSettings(
             if (uri.UserInfo.Length > 0) throw new ArgumentException("请在密钥栏填写凭据，不要放入 AI 地址。", nameof(Endpoint));
             if (uri.Query.Length > 0 || uri.Fragment.Length > 0)
                 throw new ArgumentException("API 地址不能包含查询参数或片段，请将凭据放入密钥栏。", nameof(Endpoint));
-            // Accept the base URLs commonly supplied by compatible providers as well as full endpoints.
-            var path = uri.AbsolutePath.TrimEnd('/');
-            var builder = new UriBuilder(uri) { Fragment = "" };
-            if (path.Length == 0) builder.Path = "/v1/chat/completions";
-            else if (path.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)) builder.Path = path + "/chat/completions";
-            else if (path.Equals("/api", StringComparison.OrdinalIgnoreCase)
-                || path.EndsWith("/compatible-mode", StringComparison.OrdinalIgnoreCase))
-                builder.Path = path + "/v1/chat/completions";
-            endpoint = builder.Uri.AbsoluteUri;
         }
         if (Model.Trim().Length > 200) throw new ArgumentException("模型名称过长。", nameof(Model));
         if (SecretName.Length is < 1 or > 256 || SecretName.Contains('\n') || SecretName.Contains('\r'))
             throw new ArgumentException("密钥名称无效。", nameof(SecretName));
         if (!Enum.IsDefined(PermissionLevel)) throw new ArgumentException("AI 权限级别无效。", nameof(PermissionLevel));
         return this with { Endpoint = endpoint, Model = Model.Trim(), SecretName = SecretName.Trim() };
+    }
+
+    public AiSettings Normalize()
+    {
+        var settings = ValidateInput();
+        if (settings.Endpoint.Length == 0) return settings;
+        var uri = new Uri(settings.Endpoint);
+        var path = uri.AbsolutePath.TrimEnd('/');
+        if (settings.CompleteBaseAddress && (uri.AbsolutePath == "/" || path.EndsWith("/v1", StringComparison.Ordinal)))
+        {
+            uri = new UriBuilder(uri)
+            { Path = uri.AbsolutePath == "/" ? "/v1/chat/completions" : path + "/chat/completions" }.Uri;
+        }
+        return settings with { Endpoint = uri.AbsoluteUri };
     }
 }

@@ -20,6 +20,8 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
     string[] OriginalOrder, string[] CurrentOrder, DateTimeOffset StartedUtc)
 {
     public AiAction[] Actions { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool TestOriginalFirst { get; init; }
     public string[][] SeenOrders { get; init; } = [];
     public int Attempts { get; init; }
     public int Requests { get; init; }
@@ -222,11 +224,12 @@ public sealed class AiTaskRecoveryStore
 
     public static string ContextHash(AiRequest request, string catalogueFingerprint)
     {
+        var settings = request.Settings.Normalize();
         var original = Convert.ToHexString(SHA256.HashData(
         // Presentation-only streaming preference must not invalidate older paid checkpoints.
-        JsonSerializer.SerializeToUtf8Bytes(new { Settings = new { request.Settings.SchemaVersion, request.Settings.Enabled,
-            request.Settings.Provider, request.Settings.Endpoint, request.Settings.Model,
-            request.Settings.PermissionLevel, request.Settings.SecretName }, request.GameVersion, request.CurrentOrder,
+        JsonSerializer.SerializeToUtf8Bytes(new { Settings = new { settings.SchemaVersion, settings.Enabled,
+            settings.Provider, settings.Endpoint, settings.Model,
+            settings.PermissionLevel, settings.SecretName }, request.GameVersion, request.CurrentOrder,
             request.InstalledMods, request.RetainedMods, request.DiagnosticFacts, request.ModRequirements,
             request.OrderRules, request.OutputTokenLimit, Catalogue = catalogueFingerprint }, Json)));
         // Preserve legacy paid checkpoints byte-for-byte when no database was used.

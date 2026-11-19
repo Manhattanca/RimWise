@@ -54,7 +54,7 @@ public sealed class AiConnectionImport
             if (!Uri.TryCreate(result.Endpoint, UriKind.Absolute, out var uri)
                 || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
                 throw new ArgumentException("地址无效或含有认证参数，请单独提供 API 地址和密钥。");
-            try { result.Endpoint = (AiSettings.Default with { Endpoint = result.Endpoint }).Normalize().Endpoint; }
+            try { result.Endpoint = (AiSettings.Default with { Endpoint = result.Endpoint }).ValidateInput().Endpoint; }
             catch (ArgumentException) { throw new ArgumentException("API 地址无效。远程地址需使用 HTTPS，本机地址可使用 HTTP。"); }
         }
         if (result.ApiKey is not null && (result.ApiKey.Length > 8192 || result.ApiKey.Any(char.IsWhiteSpace))) throw Invalid();

@@ -39,18 +39,22 @@ public static class AutomaticGameMaintenance
         OrdinaryGameTestOptions options, GamePaths paths, AiRequest request, ModCatalogue catalogue,
         IReadOnlyList<CustomOrderRule> rules, MaintenanceLimits limits, IProgress<MaintenanceProgress>? progress,
         IProgress<OrdinaryGameProgress>? gameProgress, CancellationToken token, string? resumeTaskId = null,
-        Func<DeclaredConflict, CancellationToken, Task<string[]?>>? chooseConflict = null, DatabaseSnapshot? database = null)
+        Func<DeclaredConflict, CancellationToken, Task<string[]?>>? chooseConflict = null, DatabaseSnapshot? database = null,
+        bool connectionAlreadyChecked = false)
     {
         if ((database?.Id ?? "") != request.DatabaseSnapshotId)
             throw new InvalidDataException("自动任务数据库快照不匹配。");
         InsertionScope.ValidateOrder(limits.InsertionBaselineJson, request.CurrentOrder);
-        progress?.Report(new(0, "正在校验 AI 连接与鉴权…", 0) { AwaitingAi = true });
-        var connection = await AiSortingPreflight.CheckAsync(client, request.Settings, request.ApiKey, token);
-        if (!connection.Succeeded)
-            return new(new(MaintenanceOutcome.Stopped, connection.Message, 0, 0, 0, false,
-                Array.AsReadOnly(request.CurrentOrder.ToArray()), true) { ReplyFailure = AiReplyFailure.ServiceFailure }, null, [])
-                { DatabaseSnapshotId = database?.Id ?? "" };
-        progress?.Report(new(0, "AI 连接与鉴权校验通过，正在准备自动排序…", 0));
+        if (!connectionAlreadyChecked)
+        {
+            progress?.Report(new(0, "正在校验 AI 连接与鉴权…", 0) { AwaitingAi = true });
+            var connection = await AiSortingPreflight.CheckAsync(client, request.Settings, request.ApiKey, token);
+            if (!connection.Succeeded)
+                return new(new(MaintenanceOutcome.Stopped, connection.Message, 0, 0, 0, false,
+                    Array.AsReadOnly(request.CurrentOrder.ToArray()), true) { ReplyFailure = AiReplyFailure.ServiceFailure }, null, [])
+                    { DatabaseSnapshotId = database?.Id ?? "" };
+            progress?.Report(new(0, "AI 连接与鉴权校验通过，正在准备自动排序…", 0));
+        }
         if (SteamGameLaunch.IsSteamInstallation(paths.GameDirectory))
         {
             progress?.Report(new(0, "正在检查 Steam 是否已启动并登录…", 0));
@@ -59,7 +63,7 @@ public static class AutomaticGameMaintenance
         }
         var session = new PreparedGameSession(options with { UseFixedHelper=true, WarnOnSlowStartup=true, MaximumSeconds=1800,
             CollectInsertionEvidence=limits.InsertionBaselineJson is not null },paths,catalogue,request,rules,progress,gameProgress,chooseConflict,database,limits);
-        var controller = new LevelOneMaintenance(client,estimator,session,resumeTaskId);
+        var controller = new LevelOneMaintenance(client,estimator,session,resumeTaskId, testOriginalFirst: limits.InsertionBaselineJson is null);
         var result = await controller.RunAsync(request,catalogue,rules,limits,progress,token);
         return new(result,session.Scan,session.Subscriptions) { DatabaseSnapshotId = database?.Id ?? "",
             PreparedOrder = session.PreparedOrder };
@@ -116,6 +120,19 @@ public static class AutomaticGameMaintenance
             AiTaskRecoveryStore.AiTaskLease task,CancellationToken token)
         {
             var currentCatalogue = catalogue;
+            if (task.Current.TestOriginalFirst)
+            {
+                ValidateInstallations(catalogue, request.CurrentOrder, options.Version);
+                preparedCatalogue = database?.WithRequiredDependencies(catalogue, request.CurrentOrder, options.Version) ?? catalogue;
+                var installed = AiOrderPlanner.ExpandRequiredOrder(request.CurrentOrder, preparedCatalogue, options.Version, allowMissing: true)
+                    .Where(id => preparedCatalogue.Resolve(id, options.Version).UniqueInstallation is not null).ToArray();
+                preparedRules = database?.Rules(preparedCatalogue, installed, options.Version, rules) ?? rules;
+                preparedOrder = request.CurrentOrder.ToArray();
+                inner = new(options, preparedCatalogue, preparedOrder, request.RetainedMods, preparedRules, gameProgress);
+                var evidenceCatalogue = new ModCatalogue(installed.Select(id => preparedCatalogue.Resolve(id, options.Version).UniqueInstallation!).ToArray());
+                return new(request with { InstalledMods = installed, OrderRules = preparedRules,
+                    ModRequirements = AiModRequirementFact.FromCatalogue(evidenceCatalogue, installed, options.Version) }, preparedCatalogue, preparedOrder) { Rules = preparedRules };
+            }
             progress?.Report(new(task.Current.Attempts,"正在核对模组声明的必要前置并查找下载来源（无需 AI）…",task.Current.ReportedTokens));
             var downloads = task.Current.RequiredDownloads.ToList();
             var required = AiOrderPlanner.ExpandRequiredOrder(request.CurrentOrder, currentCatalogue, options.Version, allowMissing: true);
@@ -224,7 +241,7 @@ public static class AutomaticGameMaintenance
             {
                 Schema=1, CallsAI=false, DatabaseSnapshotId=database?.Id ?? "", OriginalOrder=initial.CurrentOrder,
                 PreparedOrder=preparedOrder, AddedPrerequisites=preparedOrder.Except(initial.CurrentOrder,StringComparer.OrdinalIgnoreCase).ToArray(),
-                MetadataDependenciesChecked=true, DependencyReasons=dependencyReasons, TopologyValidated=true, RuleCount=preparedRules.Count,
+                MetadataDependenciesChecked=true, DependencyReasons=dependencyReasons, TopologyValidated=codePreparation is not null, RuleCount=preparedRules.Count,
                 DeferredOrderingRules=deferredRules, OriginalOrderAdjustments=originalOrderAdjustments,
                 LocalCodeAnalysis=codePreparation is null ? null : new
                 { codePreparation.Report.AssemblyCount, codePreparation.Report.CacheHits, codePreparation.Report.Limited,

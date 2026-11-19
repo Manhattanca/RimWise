@@ -164,7 +164,7 @@ public partial class AiSortingWindow : Window
                     && (needsConfiguration || session.ReadinessProblem is null));
         AutomaticButton.Content = IsOfflineMode ? "离线排序" : "自动排序并测试";
         AutomaticButton.ToolTip = IsOfflineMode ? "仅进行一次本地排序，不调用 AI、不下载模组、不启动游戏；完成后可在主界面保存或撤销。"
-            : "经 Steam 测试地图，必要时下载前置并调整重测；启动超过 30 分钟仅提醒，可继续等待或取消";
+            : "新任务先发一次不包含模组或日志的短请求校验模型，可能产生少量用量。通过后经 Steam 测试地图；启动超过 30 分钟时可继续等待或取消。";
         AiActionsPanel.Visibility = LimitPanel.Visibility = ConfirmRemovalToggle.Visibility = IsOfflineMode ? Visibility.Collapsed : Visibility.Visible;
         ResponseHeading.Text = IsOfflineMode ? "离线排序结果" : "AI 回报与每轮处理结果";
         OrderHeading.Text = IsOfflineMode ? "排序结果（未经游戏测试）" : "当前／最后测试顺序";

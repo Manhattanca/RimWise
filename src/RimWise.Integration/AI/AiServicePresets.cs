@@ -26,15 +26,14 @@ public static class AiServicePresets
 
     public static int Find(string endpoint)
     {
-        var normalized = NormalizeAddress(endpoint);
         for (var index = 1; index < All.Count; index++)
-            if (string.Equals(normalized, All[index].Endpoint, StringComparison.Ordinal)) return index;
+            if (string.Equals(endpoint.Trim(), All[index].Endpoint, StringComparison.Ordinal)) return index;
         return 0;
     }
 
-    public static string NormalizeAddress(string endpoint)
+    public static string NormalizeAddress(string endpoint, bool completeBaseAddress = true)
     {
-        try { return (AiSettings.Default with { Endpoint = endpoint }).Normalize().Endpoint.TrimEnd('/'); }
+        try { return (AiSettings.Default with { Endpoint = endpoint, CompleteBaseAddress = completeBaseAddress }).Normalize().Endpoint; }
         catch (ArgumentException) { return endpoint.Trim(); }
     }
 }

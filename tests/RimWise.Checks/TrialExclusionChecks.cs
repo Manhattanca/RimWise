@@ -323,8 +323,48 @@ internal static class TrialExclusionChecks
                 var client = new Client { Actions = [action] };
                 var result = Run(game, client);
                 Assert(result.Outcome == MaintenanceOutcome.Stopped && result.TrialExclusions.Count == 0
-                    && result.ReplyFailure == AiReplyFailure.InvalidStructure
+                    && result.ReplyFailure == AiReplyFailure.InvalidPlan && result.Message.Contains("不允许的动作")
                     && game.Tested.Count == 1 && client.Calls == 1 && result.OriginalRestored);
+            }
+        });
+        check("DeepSeek normalizes only the same unique active Workshop installation", () =>
+        {
+            string[] start = ["trial.a", "trial.b_steam", "trial.c"];
+            var workshop = Mod("trial.b") with { Source = ModSource.Workshop, WorkshopId = "123" };
+            var unique = new ModCatalogue([Mod("trial.a"), workshop, Mod("trial.c")]);
+            var collision = new ModCatalogue([.. unique.Installations, Mod("trial.b") with { Directory = Path.Combine(scratch, "second.b") }]);
+            var settings = AiSettings.Default with { Enabled = true, Endpoint = "https://relay.invalid/v1/chat/completions", Model = "deepseek-v4.1-flash" };
+            var request = Request() with { Settings = settings, ApiKey = "synthetic-key", CurrentOrder = start };
+            foreach (var (catalog, index, accepted, issue) in new[] {
+                (unique, 1, true, AiPlanIssue.None), (collision, 1, false, AiPlanIssue.Target), (unique, 0, false, AiPlanIssue.Position),
+                (new ModCatalogue([Mod("trial.a", ["trial.c"]), workshop, Mod("trial.c")]), 1, false, AiPlanIssue.Constraints) })
+            {
+                var order = issue == AiPlanIssue.Constraints ? new[] { "trial.c", "trial.a", "trial.b_steam" } : start;
+                request = request with { CurrentOrder = order };
+                var root = Root();
+                var game = new Session(catalog, order) { Report = ids => ids.SequenceEqual(order) ? Error("trial.a") : new(true, []) };
+                var proposed = issue == AiPlanIssue.Constraints ? "trial.a" : "trial.b";
+                var content = $$"""{"schemaVersion":"1","summary":"合成分析","actions":[{"kind":"reorder","packageId":"{{proposed}}","targetIndex":"{{index}}"}]}""";
+                using var handler = new ReplyHandler(_ => Envelope(content, "stop", 120));
+                using var http = new HttpClient(handler); using var client = new AiClient(http);
+                var result = new LevelOneMaintenance(client, new(root), game).RunAsync(request, catalog, [], new(), null, default).GetAwaiter().GetResult();
+                Assert(handler.Count == 1 && result.ReportedTokens == 120 && result.TrialExclusions.Count == 0,
+                    result.Message);
+                if (accepted)
+                {
+                    Assert(result.Outcome == MaintenanceOutcome.Passed && game.Accepted && game.Tested.Count == 2
+                        && game.Tested[1].SequenceEqual(["trial.b_steam", "trial.a", "trial.c"]), result.Message);
+                    continue;
+                }
+                Assert(result.Outcome == MaintenanceOutcome.Stopped && result.OriginalRestored && !game.Accepted
+                    && result.ReplyFailure == AiReplyFailure.InvalidPlan
+                    && game.Tested.Count == 1 && result.Message.Contains(AiReplyFailureText.Describe(AiReplyFailure.InvalidPlan, issue)), result.Message);
+                using (var task = new AiTaskRecoveryStore(root).Open(result.TaskId!))
+                    Assert(task.Current.Feedback?.PlanIssue == issue && !task.Current.MayApply && task.Current.Actions.Length == 0);
+                var resumedGame = new Session(catalog, order);
+                var resumed = new LevelOneMaintenance(client, new(root), resumedGame, result.TaskId).RunAsync(request, catalog, [], new(), null, default).GetAwaiter().GetResult();
+                Assert(resumed.ReplyFailure == AiReplyFailure.InvalidPlan && resumed.ReportedTokens == 120
+                    && resumedGame.Tested.Count == 0 && handler.Count == 1, resumed.Message);
             }
         });
         check("trial test limits cancellation and unknown usage restore without silent publication", () =>

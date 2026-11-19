@@ -12,14 +12,14 @@ public partial class AiSortingWindow
 {
     private async Task<AutomaticMaintenanceResult> RunWithCopyFallbackAsync(MaintenanceLimits limits,
         IProgress<MaintenanceProgress> progress, IProgress<OrdinaryGameProgress> gameProgress,
-        IProgress<AiResponseUpdate> responseProgress, CancellationToken token, string? resumeId)
+        IProgress<AiResponseUpdate> responseProgress, CancellationToken token, string? resumeId, string? checkedModelScope)
     {
         var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var attempts = 0; var tokens = 0; var requests = 0; var unknown = false;
         while (true)
         {
             var result = await automatic.RunAsync(gamePaths!, settings, limits, progress, gameProgress,
-                responseProgress, token, resumeId, ChooseConflictAsync, prepareSave, ConfirmTrialsAsync);
+                responseProgress, token, resumeId, ChooseConflictAsync, prepareSave, ConfirmTrialsAsync, checkedModelScope);
             var current = result.Maintenance;
             var combined = result with { Maintenance = current with
             {
@@ -27,7 +27,8 @@ public partial class AiSortingWindow
                 ReportedTokens = checked(tokens + current.ReportedTokens), HasUnknownUsage = unknown || current.HasUnknownUsage
             } };
             if (current.Outcome is not (MaintenanceOutcome.Failed or MaintenanceOutcome.Stopped)
-                || current.Attempts == 0 || !current.OriginalRestored || token.IsCancellationRequested) return combined;
+                || current.ReplyFailure != AiReplyFailure.None || current.Attempts == 0
+                || !current.OriginalRestored || token.IsCancellationRequested) return combined;
 
             // A different installation requires a new recovery context. Carry the remaining budget into
             // that new task; never replay a paid response or reset a limit after switching files.

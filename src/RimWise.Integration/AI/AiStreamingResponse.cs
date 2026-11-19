@@ -7,7 +7,7 @@ namespace RimWise.Integration.AI;
 public sealed record AiResponseUpdate(string ContentDelta = "", AiTokenUsage? Usage = null);
 
 /// <summary>Bounded SSE reader. A partial stream can report usage, but cannot authorize actions.</summary>
-internal sealed class AiStreamingResponse(IProgress<AiResponseUpdate>? progress)
+internal sealed class AiStreamingResponse(IProgress<AiResponseUpdate>? progress, bool modelProbe = false)
 {
     // Bound retained data, not total wire traffic: SSE repeats envelopes and may
     // carry many reasoning/keepalive events before the final answer and usage.
@@ -133,7 +133,7 @@ internal sealed class AiStreamingResponse(IProgress<AiResponseUpdate>? progress)
                 {
                     if (FinishReason is not null && FinishReason != reason.GetString()) truncated = true;
                     FinishReason = reason.GetString();
-                    if (FinishReason != "stop") truncated = true;
+                    if (FinishReason != "stop" && !(modelProbe && FinishReason == "length")) truncated = true;
                     finished = true;
                 }
             }

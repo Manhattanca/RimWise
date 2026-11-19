@@ -63,7 +63,7 @@ public partial class AiSortingWindow
         outcome=null;
         automaticResultShown=false;
         trialDecisionShown=false;
-        ResponseText.Text="正在校验 AI 连接；通过后准备自动排序，本轮结果会在此持续显示。\n"; SummaryText.Text="";
+        ResponseText.Text=resumeId is null ? "正在准备模型校验。\n" : "正在读取任务恢复记录。\n"; SummaryText.Text="";
         ShowDependencyReasons(null);
         ShowStartupFailure(null);
         AcceptedList.ItemsSource=null; RejectedList.ItemsSource=null;
@@ -87,6 +87,35 @@ public partial class AiSortingWindow
             await usageRefreshTask.WaitAsync(cancellation.Token);
             if (AiClient.ConfigurationProblem(settings.Normalize()) is { } configurationProblem)
                 throw new InvalidOperationException(configurationProblem);
+            var initialLimits = resumeId is null ? ReadMaintenanceLimits() : null;
+            var modelBudgetCharge = 0;
+            string? checkedModelScope = null;
+            runPrepared = true;
+            try
+            {
+                lastLogRun = new(logStarted, null, [], resumeId is null ? [] : [resumeId]);
+                logStore.SaveRun(lastLogRun);
+            }
+            catch (Exception ex) when (IsExpectedError(ex))
+            { DiagnosticEventLog.Current?.Record("automatic-sorting", "log-index-failed", ex.GetType().Name); }
+            if (initialLimits is not null)
+            {
+                StatusText.Text = "正在校验所选 AI 模型（一次短请求，可能产生用量）…";
+                var (check, charge, scope) = await Task.Run(() => automatic.CheckModelAsync(settings, initialLimits,
+                    cancellation.Token), cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+                DiagnosticEventLog.Current?.Record("automatic-sorting", "model-preflight", check.Message);
+                AppendAutomaticReport(check.Message + "\n");
+                if (!check.Succeeded)
+                {
+                    automaticResultShown = true;
+                    StatusText.Text = check.Message;
+                    MessageDialog.Show(DialogOwner, check.Message, "AI 校验失败，未开始排序", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                checkedModelScope = scope;
+                modelBudgetCharge = charge;
+            }
             var currentGameDirectory = gamePaths().GameDirectory;
             using (var game = await Task.Run(() => GameCloseConfirmation.Capture(currentGameDirectory), cancellation.Token))
             {
@@ -105,21 +134,13 @@ public partial class AiSortingWindow
                     await game.CloseAsync(cancellation.Token);
                 }
             }
-            runPrepared = true;
-            try
-            {
-                lastLogRun = new(logStarted, null, [], resumeId is null ? [] : [resumeId]);
-                logStore.SaveRun(lastLogRun);
-            }
-            catch (Exception ex) when (IsExpectedError(ex))
-            { DiagnosticEventLog.Current?.Record("automatic-sorting", "log-index-failed", ex.GetType().Name); }
             // Stop optional enrichment before the runner captures catalogue identity.
             if (prepareCatalogue is not null) await prepareCatalogue();
             cancellation.Token.ThrowIfCancellationRequested();
             if (!ResolveDuplicateInstallations(cancellation.Token))
             {
                 automaticResultShown = true;
-                StatusText.Text = "尚有重复安装未处理，已返回；当前排序保留，未启动游戏或请求 AI。";
+                StatusText.Text = "尚有重复安装未处理，已返回；当前排序保留，未启动测试或请求 AI 生成排序方案。";
                 return;
             }
             cancellation.Token.ThrowIfCancellationRequested();
@@ -138,8 +159,9 @@ public partial class AiSortingWindow
             }
             else
             {
-                limits=ReadMaintenanceLimits();
+                limits=initialLimits!;
                 sortingPreferences.SaveLimits(limits);
+                if (limits.TokenLimitEnabled) limits = limits with { TokenBudget = limits.TokenBudget - modelBudgetCharge };
                 if (PermissionBox.SelectedIndex == 0)
                 {
                     var picker = new InsertionPickerWindow(editor) { Owner = DialogOwner };
@@ -200,7 +222,7 @@ public partial class AiSortingWindow
                 if(p.Usage is { Valid:true } usage) TokenText.Text=$"本次服务已报告 {usage.Total:N0} token";
             });
             var result=await RunWithCopyFallbackAsync(limits, maintenanceProgress, gameProgress, responseProgress,
-                cancellation.Token, resumeId);
+                cancellation.Token, resumeId, checkedModelScope);
             receiving=false;
             if(closed) return;
             ShowAutomaticResult(result);
@@ -350,7 +372,7 @@ public partial class AiSortingWindow
         AppendAutomaticReport("\n任务结果：" + result.Maintenance.Message + "\n"
             + (result.Maintenance.Analysis is { Length: > 0 } finalAnalysis ? "AI 分析：" + finalAnalysis + "\n"
                 : result.Maintenance.Requests > 0 ? "本轮未收到可显示的 AI 最终分析；请查看上方各轮服务状态和本地试排除记录。\n"
-                : "本次未请求 AI，已按本地规则及测试结果处理。\n"));
+                : "本次未请求 AI 生成排序方案，已按本地规则及测试结果处理。\n"));
         var keptTrialMods = result.Maintenance.TrialDecisionRecorded && !result.Maintenance.TrialRemovalsApproved;
         AcceptedList.ItemsSource=(result.LastOrderKept || keptTrialMods || result.PreparationApplied ? editor.Rows.Select(r => r.PackageId) : result.Maintenance.LastAttemptedOrder)
             .Select((id,i)=>$"{i+1}. {ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id)}").ToArray();

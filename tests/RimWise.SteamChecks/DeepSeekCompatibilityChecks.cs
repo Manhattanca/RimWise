@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using RimWise.Core;
 using RimWise.Integration.AI;
 
 internal static class DeepSeekCompatibilityChecks
@@ -80,10 +81,70 @@ internal static class DeepSeekCompatibilityChecks
                 Assert(!reply.Succeeded && reply.Response is null && handler.Calls == 1);
             }
         });
+        check("Relay DeepSeek sorts with canonical quoted integers and unchanged wire parameters", () =>
+        {
+            const string answer = """{"schemaVersion":"1","actions":[{"kind":"reorder","packageId":"test.mod","targetIndex":"2"}]}""";
+            var (reply, handler, _) = Call("relay.invalid", "deepseek-v4.1-flash", Envelope(answer), false);
+            using var json = JsonDocument.Parse(handler.Payload!);
+            var body = json.RootElement;
+            Assert(reply.Succeeded && reply.Response?.Actions.Single().TargetIndex == 2 && reply.Usage?.Total == 30
+                && handler.Calls == 1 && body.GetProperty("max_tokens").GetInt32() == 16384
+                && !body.TryGetProperty("response_format", out _) && !body.TryGetProperty("reasoning_effort", out _));
+            var messages = body.GetProperty("messages").EnumerateArray().Select(m => m.GetProperty("content").GetString()!).ToArray();
+            Assert(messages[0].Contains("CurrentOrder") && !messages[0].Contains("reorder|add|remove")
+                && messages[^1].Contains("Focus reasoning") && messages[^1].Contains("\"targetIndex\":2"));
+            var (other, _, _) = Call("relay.invalid", "other-model", Envelope(answer), false);
+            Assert(!other.Succeeded && other.Failure == AiReplyFailure.InvalidStructure);
+        });
+        check("DeepSeek compatibility refuses ambiguous numbers, unknown or duplicate fields, and truncated proposals", () =>
+        {
+            foreach (var action in new[] { "\"targetIndex\":\"2.0\"", "\"targetIndex\":\"02\"", "\"targetIndex\":\"+2\"",
+                "\"targetIndex\":\"2147483648\"", "\"targetIndex\":\"2\",\"targetIndex\":3", "\"unexpected\":true" })
+            {
+                var (reply, handler, _) = Call("relay.invalid", "deepseek-v4.1-flash",
+                    Envelope("{\"actions\":[{\"kind\":\"reorder\",\"packageId\":\"test.mod\"," + action + "}]}"), false);
+                Assert(!reply.Succeeded && reply.Response is null && reply.Failure == AiReplyFailure.InvalidStructure
+                    && reply.Usage?.Total == 30 && handler.Calls == 1);
+            }
+            var (truncated, calls, _) = Call("relay.invalid", "deepseek-v4.1-flash",
+                Envelope("""{"actions":[{"kind":"reorder","packageId":"test.mod","targetIndex":"2"}]}""").Replace("\"stop\"", "\"length\""), false);
+            Assert(!truncated.Succeeded && truncated.Response is null && truncated.Failure == AiReplyFailure.OutputLimit
+                && truncated.Usage?.Total == 30 && calls.Calls == 1);
+        });
+        check("GPT keeps its request parameters and strict reply schema on OpenAI and compatible relays", () =>
+        {
+            const string answer = """{"schemaVersion":1,"actions":[{"kind":"reorder","packageId":"test.mod_steam","targetIndex":2}]}""";
+            foreach (var host in new[] { "api.openai.com", "relay.invalid", "api.siliconflow.cn" })
+            {
+                var (reply, handler, _) = Call(host, "gpt-6.2-sol", Envelope(answer), false);
+                using var json = JsonDocument.Parse(handler.Payload!);
+                var body = json.RootElement;
+                Assert(reply.Succeeded && reply.Response?.Actions.Single().TargetIndex == 2 && handler.Calls == 1
+                    && body.GetProperty("max_completion_tokens").GetInt32() == 16384
+                    && new[] { "max_tokens", "thinking_budget", "enable_thinking", "response_format", "reasoning_effort" }
+                        .All(field => !body.TryGetProperty(field, out _)));
+                Assert(!body.GetProperty("messages").EnumerateArray().Any(m => m.GetProperty("content").GetString()!.Contains("Focus reasoning")));
+                var (invalid, invalidHandler, _) = Call(host, "gpt-6.2-sol",
+                    Envelope(answer.Replace("\"targetIndex\":2", "\"targetIndex\":\"2\"")), false);
+                Assert(!invalid.Succeeded && invalid.Failure == AiReplyFailure.InvalidStructure && invalidHandler.Calls == 1);
+            }
+        });
+        check("Only DeepSeek model names get active Workshop alias normalization", () =>
+        {
+            var catalogue = new ModCatalogue([new("fixture", "fixture", ModSource.Workshop, "123",
+                new("Fixture", "", "test.mod", ["1.7"], "", ModRequirements.Empty, false), [])]);
+            var version = new GameVersion(1, 7);
+            string[] order = ["test.mod_steam"];
+            AiAction[] actions = [new("reorder", "test.mod", 1, false, null, null)];
+            Assert(AiChatCompatibility.NormalizePlanActions("deepseek-ai/DeepSeek-V4.1-Flash", actions, order, catalogue, version)
+                .Single().PackageId == "test.mod_steam");
+            foreach (var model in new[] { "gpt-6.2-sol", "relay/gpt-6.2-sol", "other-model" })
+                Assert(AiChatCompatibility.NormalizePlanActions(model, actions, order, catalogue, version).Single().PackageId == "test.mod");
+        });
     }
 
-    private static string Envelope() => JsonSerializer.Serialize(new { choices = new[] { new {
-        message = new { content = Answer, reasoning_content = "private-fixture-secret" }, finish_reason = "stop" } },
+    private static string Envelope(string answer = Answer) => JsonSerializer.Serialize(new { choices = new[] { new {
+        message = new { content = answer, reasoning_content = "private-fixture-secret" }, finish_reason = "stop" } },
         usage = new { prompt_tokens = 10, completion_tokens = 20, total_tokens = 30 } });
     private static (AiClientResult, Handler, Capture) Call(string host, string model, string body, bool stream,
         HttpStatusCode status = HttpStatusCode.OK, int limit = 16384)

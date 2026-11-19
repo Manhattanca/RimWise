@@ -52,6 +52,8 @@ public sealed record AiConnectionResult(bool Succeeded, string Message)
 public interface IAiClient
 {
     Task<AiConnectionResult> TestConnectionAsync(AiSettings settings, string? apiKey, CancellationToken cancellationToken);
+    Task<AiClientResult> ProbeModelAsync(AiRequest request, CancellationToken cancellationToken) =>
+        Task.FromResult(new AiClientResult(false, "当前客户端不支持模型调用校验。", null, null));
     Task<AiClientResult> GetSuggestionAsync(AiRequest request, CancellationToken cancellationToken);
 }
 
@@ -111,17 +113,8 @@ public sealed class AiClient : IAiClient, IDisposable
         IReadOnlyList<AiMessage> messages;
         try { messages = AiPrompt.Messages(request); }
         catch (ArgumentException) { return Refused("AI 上下文未通过信息边界检查，未发送请求。请检查模组标识及元数据。"); }
-        var payload = new Dictionary<string, object>
-        {
-            ["model"] = settings.Model,
-            ["messages"] = messages.Select(m => new { role = m.Role, content = m.Content }).ToArray()
-        };
-        AiChatCompatibility.Configure(payload, settings, request.OutputTokenLimit);
-        if (request.ResponseProgress is not null && settings.StreamResponses)
-        {
-            payload["stream"] = true;
-            payload["stream_options"] = new { include_usage = true };
-        }
+        var payload = ChatPayload(settings, messages, request.OutputTokenLimit,
+            request.ResponseProgress is not null && settings.StreamResponses);
         var result = await SendAsync(settings, request.ApiKey, payload, cancellationToken,
             progress: request.ResponseProgress, idsObserved: request.ProviderIdsObserved).ConfigureAwait(false);
         var usage = result.Usage ?? (result.Body is null ? null : AiTokenUsage.Read(result.Body));
@@ -139,15 +132,68 @@ public sealed class AiClient : IAiClient, IDisposable
             var content = AiFinalAnswer.Normalize(ExtractContent(result.Body!, out incomplete));
             publicContent = Trim(content);
             if (!result.Streamed) request.ResponseProgress?.Report(new(content));
-            var structured = StructuredAiResponse.Parse(content);
+            var structured = StructuredAiResponse.Parse(content,
+                allowQuotedIntegers: !request.LogDiagnosisOnly && AiChatCompatibility.IsDeepSeek(settings.Model));
             return new(true, "已收到结构化 AI 建议，尚未应用任何动作。", structured, Trim(content)) { Usage = usage, PublicContent = publicContent, ProviderIds = result.ProviderIds };
         }
         catch (JsonException) { return new(false, "AI 返回不是有效的 JSON。", null, null)
             { Usage = usage, PublicContent = publicContent, ProviderIds = result.ProviderIds, Failure = AiReplyFailure.InvalidJson }; }
-        catch (InvalidDataException ex) { return new(false, ex.Message, null, null)
+        catch (InvalidDataException ex) {
+            Diagnostics.DiagnosticEventLog.Current?.Record("ai-response", "structure-rejected", ex.Message);
+            return new(false, ex.Message, null, null)
             { Usage = usage, PublicContent = publicContent, ProviderIds = result.ProviderIds,
                 Failure = incomplete ? result.FinishReason == "length" ? AiReplyFailure.OutputLimit
                     : AiReplyFailure.IncompleteResponse : AiReplyFailure.InvalidStructure }; }
+    }
+
+    public async Task<AiClientResult> ProbeModelAsync(AiRequest request, CancellationToken cancellationToken)
+    {
+        Diagnostics.DiagnosticRedactor.RegisterSecret(request.ApiKey);
+        var settings = request.Settings.Normalize();
+        if (!settings.Enabled) return Refused("AI 未启用。");
+        if (ConfigurationProblem(settings) is { } problem) return Refused(problem);
+        var payload = ChatPayload(settings, [new("user", "Reply with the JSON object {\"ok\":true}.")],
+            AiSortingPreflight.ProbeOutputLimit, settings.StreamResponses);
+        var reply = await SendAsync(settings, request.ApiKey, payload, cancellationToken,
+            idsObserved: request.ProviderIdsObserved, modelProbe: true).ConfigureAwait(false);
+        var error = reply.Error;
+        if (error is null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(reply.Body!);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("error", out _) || !root.TryGetProperty("choices", out var choices)
+                    || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() != 1
+                    || !choices[0].TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException();
+                var content = AiChatCompatibility.Content(message);
+                // Reasoning models may use the short cap before returning visible text.
+                if (reply.FinishReason is not (null or "stop" or "length")
+                    || string.IsNullOrWhiteSpace(content) && reply.FinishReason != "length") throw new InvalidDataException();
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or InvalidDataException)
+            { error = "服务未返回有效的聊天回复，请核对实际请求地址、模型和接口兼容性。"; }
+        }
+        return new(error is null, error ?? "所选模型调用校验通过。", null, null)
+        { Usage = reply.Usage, ProviderIds = reply.ProviderIds, ServiceError = reply.ServiceError };
+    }
+
+    private static Dictionary<string, object> ChatPayload(AiSettings settings, IReadOnlyList<AiMessage> messages,
+        int? outputLimit, bool stream)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["model"] = settings.Model,
+            ["messages"] = messages.Select(m => new { role = m.Role, content = m.Content }).ToArray()
+        };
+        AiChatCompatibility.Configure(payload, settings, outputLimit);
+        if (stream)
+        {
+            payload["stream"] = true;
+            payload["stream_options"] = new { include_usage = true };
+        }
+        return payload;
     }
 
     private sealed record TransportReply(string? Body, string? Error, AiTokenUsage? Usage = null, bool Streamed = false)
@@ -159,9 +205,9 @@ public sealed class AiClient : IAiClient, IDisposable
 
     private async Task<TransportReply> SendAsync(AiSettings settings, string? apiKey, object? payload,
         CancellationToken token, Uri? endpoint = null, HttpMethod? method = null, IProgress<AiResponseUpdate>? progress = null,
-        Action<string[]>? idsObserved = null)
+        Action<string[]>? idsObserved = null, bool modelProbe = false)
     {
-        var streamed = new AiStreamingResponse(progress);
+        var streamed = new AiStreamingResponse(progress, modelProbe);
         string[] headerIds = [];
         int? status = null;
         TransportReply Reply(string? body, string? error, AiTokenUsage? usage = null, bool streaming = false,
@@ -173,7 +219,8 @@ public sealed class AiClient : IAiClient, IDisposable
         try
         {
             using var response = await SendWithRedirectsAsync(endpoint ?? new Uri(settings.Endpoint), apiKey,
-                payload is null ? null : JsonSerializer.Serialize(payload), method ?? HttpMethod.Post, token).ConfigureAwait(false);
+                payload is null ? null : JsonSerializer.Serialize(payload), method ?? HttpMethod.Post, token,
+                allowRedirects: !modelProbe).ConfigureAwait(false);
             status = (int)response.StatusCode;
             headerIds = new[] { "x-oneapi-request-id", "x-request-id", "request-id" }.SelectMany(name => response.Headers.TryGetValues(name, out var values)
                 ? values : []).Select(AiUsageRequest.SafeId).OfType<string>().Distinct().Take(6).ToArray();
@@ -251,7 +298,8 @@ public sealed class AiClient : IAiClient, IDisposable
         catch (JsonException) { return null; }
     }
 
-    private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri endpoint, string? apiKey, string? payload, HttpMethod method, CancellationToken token)
+    private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri endpoint, string? apiKey, string? payload,
+        HttpMethod method, CancellationToken token, bool allowRedirects)
     {
         var visited = new HashSet<string>(StringComparer.Ordinal) { endpoint.AbsoluteUri };
         for (var hop = 0; ; hop++)
@@ -266,6 +314,7 @@ public sealed class AiClient : IAiClient, IDisposable
             if (code is not (301 or 302 or 303 or 307 or 308)) return response;
             try
             {
+                if (!allowRedirects) throw new InvalidDataException($"AI 校验收到 HTTP {code} 重定向，未重发请求。请填写服务商提供的最终聊天接口地址。");
                 // Only 307/308 preserve POST semantics. Never forward credentials to a different origin.
                 if (method != HttpMethod.Get && code is not (307 or 308)) throw new InvalidDataException($"AI 服务返回 HTTP {code} 重定向，请填写完整的聊天接口地址（通常为 /v1/chat/completions）。");
                 var location = response.Headers.Location;

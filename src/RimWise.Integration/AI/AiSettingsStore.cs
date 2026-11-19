@@ -16,10 +16,10 @@ public sealed class AiSettingsStore(string applicationDirectory)
         if (stored.SchemaVersion != 1 || stored.Settings is null)
             throw new InvalidDataException("AI 配置版本不受支持。");
         // The former opt-in switch is retired; credentials still gate actual requests.
-        return (stored.Settings with { Enabled = true }).Normalize();
+        return (stored.Settings with { Enabled = true }).ValidateInput();
     }
 
-    public void Save(AiSettings settings) => file.Save(new StoredSettings(1, (settings with { Enabled = true }).Normalize()));
+    public void Save(AiSettings settings) => file.Save(new StoredSettings(1, (settings with { Enabled = true }).ValidateInput()));
 
     private sealed record StoredSettings(int SchemaVersion, AiSettings? Settings);
 }

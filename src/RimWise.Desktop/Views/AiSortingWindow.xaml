@@ -134,8 +134,7 @@
             </Grid>
             <WrapPanel Grid.Row="4" Margin="0,12,0,0">
                 <Button x:Name="AutomaticButton" Content="自动排序并测试" Click="Automatic_Click" Margin="0,6,10,0"
-                        Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}"
-                        ToolTip="经 Steam 测试地图，必要时下载前置并调整重测；启动超过 30 分钟仅提醒，可继续等待或取消" />
+                        Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}" />
                 <Button x:Name="CancelButton" Content="取消" Click="Cancel_Click" Margin="0,6,10,0" IsEnabled="False" />
                 <Button x:Name="ClearLogsButton" Content="清理历史日志" Click="ClearLogs_Click" Margin="0,6,10,0"
                         ToolTip="清除历史测试日志和缓存，保留上次排序日志、待恢复任务与 token 记录" />

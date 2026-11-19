@@ -171,17 +171,24 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         token.ThrowIfCancellationRequested();
         progress?.Report(new(LastReport.ProcessId, 0, LastReport.Logs.Sum(log => (long)log.Text.Length))
         { Phase = "diagnostics", StartupReady = LastReport.StartupObserved });
-        var logContext = DiagnosticLogContext.Create(LastReport, catalogue, order, token, options.Version);
-        // Only failed/error-bearing rounds need code context; successful yellow-only
-        // rounds never launch the decompiler or make an extra AI call.
-        if (!LastReport.MapSuccessVerified || LastReport.Logs.Any(log => log.Issues.Count > 0))
-            logContext = await DiagnosticCodeEvidence.EnrichAsync(logContext, catalogue, order, options.Version,
-                ScopedPaths.Child(options.TestRoot, "AnalysisCache"), token);
+        var completed = LastReport;
+        var startupTask = Task.Run(() => StartupLogDiagnostics.Create(completed, data), token);
+        var logsTask = Task.Run(async () =>
+        {
+            var logContext = DiagnosticLogContext.Create(completed, catalogue, order, token, options.Version);
+            if (!completed.MapSuccessVerified || completed.Logs.Any(log => log.Issues.Count > 0))
+                logContext = await DiagnosticCodeEvidence.EnrichAsync(logContext, catalogue, order, options.Version,
+                    ScopedPaths.Child(options.TestRoot, "AnalysisCache"), token);
+            return logContext;
+        }, token);
+        await Task.WhenAll(startupTask, logsTask);
+        var startup = await startupTask;
+        var context = await logsTask;
         // Save the exact sanitized selection for local review/replay; never save an API key or
         // authorize a second paid request just because the first diagnosis was inconclusive.
         OrdinaryGameRunner.WriteNew(ScopedPaths.Child(data, "diagnostic-context.json"), new
-        { Schema = 1, Startup = StartupLogDiagnostics.Create(LastReport, data).Context, Logs = logContext });
-        var feedback = CreateFeedback(LastReport, logContext, data);
+        { Schema = 1, Startup = startup.Context, Logs = context });
+        var feedback = CreateFeedback(completed, context, data, startup);
         return options.CollectInsertionEvidence ? feedback with { InsertionEvidence = CaptureInsertionEvidence(LastReport) } : feedback;
         }
         finally
@@ -195,13 +202,21 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         }
     }
 
-    internal static MaintenanceGameReport CreateFeedback(OrdinaryGameReport report, AiLogContext logContext, string data)
+    internal static MaintenanceGameReport CreateFeedback(OrdinaryGameReport report, AiLogContext logContext, string data, StartupFailureDetails? startup = null)
     {
-        var facts = GameTestDiagnostics.Project(report.Logs, logContext.Owners);
+        // A decompiled method identifies an installation, but only promote its owner when
+        // the symbol occurs in an actual error, not just a nearby warning excerpt.
+        var facts = GameTestDiagnostics.Project(report.Logs, logContext.Owners.Concat(logContext.Code.Select(c =>
+            new AiSymbolOwner(c.Method, c.PackageId, "assembly-type"))).ToArray());
         var errors = report.Logs.Where(log => !GameTestDiagnostics.IsHelperDiagnostic(log))
             .SelectMany(log => log.Issues).Select(issue => issue.Summary).Take(100).ToArray();
         if (report.StopReason == GameTestStopReason.ModsReset)
             errors = new[] { "游戏加载异常后自动重置了模组排序，本轮原始组合未通过测试。" }.Concat(errors).Take(100).ToArray();
+        if (!report.MapSuccessVerified && report.ProbeStage == "faction-failed")
+        {
+            startup ??= StartupLogDiagnostics.Create(report, data);
+            errors = new[] { startup.Observations.FirstOrDefault() ?? "派系验证失败。" }.Concat(errors).Take(100).ToArray();
+        }
         if (errors.Length == 0 && facts.Any(f => f.Code == "GameTestBlockingFailure"))
             errors = ["测试流程被包含模组调用的异常中断；异常链及本地归属见本轮日志。"];
         // The helper count includes explicitly approved non-blocking errors. Reconcile only
@@ -219,7 +234,7 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         return new(report.MapSuccessVerified, errors)
         {
             ErrorSignatures = MaintenanceErrorMemory.Capture(report),
-            StartupFailure = report.MapSuccessVerified ? null : StartupLogDiagnostics.Create(report, data),
+            StartupFailure = report.MapSuccessVerified ? null : startup ?? StartupLogDiagnostics.Create(report, data),
             DiagnosticFacts = facts,
             RuntimeContext = GameTestDiagnostics.ProjectWarnings(report.Logs, report.ProbeWarnings > 0),
             LogContext = logContext,

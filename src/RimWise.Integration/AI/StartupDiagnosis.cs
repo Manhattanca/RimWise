@@ -12,6 +12,7 @@ public sealed record AiStartupContext(string Stage, bool HasLog, bool CompleteCa
         "MissingMethod", "XmlParentMissing", "PatchFailure", "HarmonyFailure", "InitializationFailure",
         "UnhandledException", "SteamProcessNotObserved", "ProcessStartFailed", "NoMapSignal", "LogIncomplete",
         "MainMenuFailure", "NewGameConfigurationFailure", "WorldGenerationFailure", "FactionGenerationFailure", "MapGenerationFailure", "PawnTestFailure", "UnexpectedExit", "TestHelperFailure",
+        "MissingConfiguredFaction", "MissingRequiredFaction", "MissingPlayerOrFactions", "InvalidOrDuplicateFaction", "SettlementHasUnknownFaction",
         "ExceptionType", "StackMethod", "PatchTarget", "PatchOwner", "NativeModule", "NativeAccessViolation",
         "SourceAvailable", "SourceUnavailable", "XmlParent", "XmlDefinition", "XmlWorker", "ObservedGameVersion",
         "TesterDetectedLogErrors", "TesterStoppedProcess", "StoppedBeforeHelperReady", "MainMenuObserved", "FactionsObserved", "ModsResetAfterLoadFailure"];

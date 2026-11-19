@@ -10,16 +10,18 @@ public sealed record StructuredAiResponse(
 {
     public IReadOnlyList<AiConflictSuggestion> Conflicts { get; init; } = [];
     public AiStartupDiagnosis? StartupDiagnosis { get; init; }
-    public static StructuredAiResponse Parse(string json)
+    public static StructuredAiResponse Parse(string json) => Parse(json, allowQuotedIntegers: false);
+
+    internal static StructuredAiResponse Parse(string json, bool allowQuotedIntegers)
     {
         if (json.Length > 1024 * 1024) throw new InvalidDataException("AI 响应过大。");
         using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 16, CommentHandling = JsonCommentHandling.Disallow });
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("AI 响应必须是 JSON 对象。");
         ValidateFields(root, ["schemaVersion", "summary", "actions", "warnings", "conflicts", "startupDiagnosis"]);
-        if (root.TryGetProperty("schemaVersion", out var typedSchema) && (typedSchema.ValueKind != JsonValueKind.Number || !typedSchema.TryGetInt32(out _)))
+        var schema = 1;
+        if (root.TryGetProperty("schemaVersion", out var schemaProperty) && !TryReadInteger(schemaProperty, allowQuotedIntegers, out schema))
             throw new InvalidDataException("AI schemaVersion 类型无效。");
-        var schema = root.TryGetProperty("schemaVersion", out var schemaProperty) && schemaProperty.TryGetInt32(out var value) ? value : 1;
         if (schema != 1) throw new InvalidDataException("AI 响应版本不受支持。");
         var summary = root.TryGetProperty("summary", out var summaryProperty) && summaryProperty.ValueKind == JsonValueKind.String
             ? summaryProperty.GetString() ?? string.Empty : string.Empty;
@@ -35,7 +37,7 @@ public sealed record StructuredAiResponse(
                 actions.Add(new AiAction(
                     ReadString(item, "kind"),
                     ReadNullableString(item, "packageId"),
-                    ReadNullableInt(item, "targetIndex"),
+                    ReadNullableInt(item, "targetIndex", allowQuotedIntegers),
                     ReadBool(item, "requiredDependency"),
                     ReadNullableString(item, "targetPath"),
                     ReadNullableString(item, "reason")));
@@ -80,7 +82,7 @@ public sealed record StructuredAiResponse(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in element.EnumerateObject())
             if (!allowed.Contains(property.Name, StringComparer.Ordinal) || !seen.Add(property.Name))
-                throw new InvalidDataException("AI 响应包含未知或重复字段：" + property.Name);
+                throw new InvalidDataException("AI 响应包含未知或重复字段。");
     }
     private static string ReadString(JsonElement element, string name) => ReadNullableString(element, name) ?? string.Empty;
     private static string? ReadNullableString(JsonElement element, string name)
@@ -89,11 +91,22 @@ public sealed record StructuredAiResponse(
         if (value.ValueKind != JsonValueKind.String) throw new InvalidDataException("AI 字段类型无效：" + name);
         return value.GetString();
     }
-    private static int? ReadNullableInt(JsonElement element, string name)
+    private static int? ReadNullableInt(JsonElement element, string name, bool allowQuotedIntegers)
     {
         if (!element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
-        if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var result)) throw new InvalidDataException("AI 位置必须为整数。");
+        if (!TryReadInteger(value, allowQuotedIntegers, out var result)) throw new InvalidDataException("AI 位置必须为整数。");
         return result;
+    }
+    private static bool TryReadInteger(JsonElement value, bool allowQuotedIntegers, out int result)
+    {
+        if (value.ValueKind == JsonValueKind.Number) return value.TryGetInt32(out result);
+        result = 0;
+        if (!allowQuotedIntegers || value.ValueKind != JsonValueKind.String) return false;
+        // Accept only a round-trip spelling, not offsets, decimal rounding or loose coercion.
+        var text = value.GetString();
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        return text is { Length: > 0 and <= 11 } && int.TryParse(text, System.Globalization.NumberStyles.AllowLeadingSign, culture, out result)
+            && text == result.ToString(culture);
     }
     private static bool ReadBool(JsonElement element, string name)
     {

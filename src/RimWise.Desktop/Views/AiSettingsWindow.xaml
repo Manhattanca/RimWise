@@ -22,9 +22,11 @@
                 </TextBlock>
                 <StackPanel x:Name="EndpointPanel">
                     <TextBlock Text="API 地址" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
-                    <TextBox x:Name="EndpointBox" TextChanged="Endpoint_Changed" LostKeyboardFocus="Endpoint_Completed" Margin="0,0,0,6" ToolTip="支持基础地址或完整接口地址；自动补全根地址、/api、/v1 和 /compatible-mode，不改写其他自定义路径" />
-                    <TextBlock Text="基础地址会自动补全 /v1；已有 /v1 或完整接口不会重复添加。自定义接口路径按原样保留。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,12" />
+                    <TextBox x:Name="EndpointBox" TextChanged="Endpoint_Changed" Margin="0,0,0,6" ToolTip="只对域名根地址和以 /v1 结尾的基础地址补全请求路径；自定义接口请填写完整地址。" />
+                    <CheckBox x:Name="CompleteBaseAddressBox" Content="补全标准 API 基础地址" Checked="AddressMode_Changed" Unchecked="AddressMode_Changed"
+                              Margin="0,0,0,6" ToolTip="仅补全域名根地址或末段为 /v1 的地址。关闭后直接使用填写的路径。" />
                 </StackPanel>
+                <TextBlock x:Name="RequestAddressText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,12" />
                 <TextBlock Text="API 密钥" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
                 <DockPanel Margin="0,0,0,6">
                     <Button x:Name="ReplaceKeyButton" Content="更换密钥" Click="ReplaceKey_Click" DockPanel.Dock="Right" />
@@ -40,7 +42,7 @@
                     </Grid>
                 </DockPanel>
                 <CheckBox x:Name="ManualModelBox" Content="手动填写模型" Checked="ManualModel_Changed" Unchecked="ManualModel_Changed" Margin="0,0,0,12" />
-                <Button x:Name="TestConnectionButton" Content="测试 AI 连接" Click="Test_Click" HorizontalAlignment="Left" Margin="0,0,0,16" />
+                <Button x:Name="TestConnectionButton" Content="测试 AI 连接" Click="Test_Click" HorizontalAlignment="Left" Margin="0,0,0,16" ToolTip="只读检查模型列表，不产生模型生成用量。" />
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,10" />
                 <Expander x:Name="AdvancedOptions" Header="高级配置" FocusVisualStyle="{x:Null}"
                           Foreground="{DynamicResource TextBrush}" Margin="0,0,0,10">

@@ -30,9 +30,29 @@ internal static partial class StartupLogDiagnostics
     [GeneratedRegex(@"^(?:Version:[ \t]*|RimWorld[ \t]+)([0-9]{1,3}\.[0-9]{1,3}(?:\.[0-9]{1,8}){0,2})(?=[ \t\r\n]|$)", RegexOptions.Multiline)]
     private static partial Regex RuntimeVersions();
 
+    private static AiStartupEvidence? FactionFailure(string directory)
+    {
+        try
+        {
+            using var file = File.OpenRead(Safety.ScopedPaths.Child(directory, "workbench-factions.txt"));
+            if (file.Length is < 1 or > 256) return null;
+            var bytes = new byte[(int)file.Length];
+            file.ReadExactly(bytes);
+            var text = System.Text.Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF').TrimEnd('\r','\n');
+            if (text is "MissingPlayerOrFactions" or "InvalidOrDuplicateFaction" or "SettlementHasUnknownFaction") return new(text);
+            var parts = text.Split(' ');
+            return parts.Length == 2 && parts[0] is ("MissingConfiguredFaction" or "MissingRequiredFaction")
+                && parts[1].Length is > 0 and <= 160 && parts[1].All(c => char.IsAsciiLetterOrDigit(c) || c == '_')
+                ? new(parts[0], parts[1]) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     internal static StartupFailureDetails Create(OrdinaryGameReport report, string attemptDirectory)
     {
         var evidence = new List<AiStartupEvidence>();
+        var faction = report.ProbeStage == "faction-failed" ? FactionFailure(attemptDirectory) : null;
+        if (faction is not null) evidence.Add(faction);
         foreach (var log in report.Logs)
         {
             var source = log.Kind is "game-errors" or "crash" ? log.Kind : "startup";
@@ -111,6 +131,8 @@ internal static partial class StartupLogDiagnostics
             .Select(issue => DiagnosticLogContext.Sanitize(issue.Summary)
                 + (issue.RelatedMods.Length > 0 ? " [" + string.Join(", ", issue.RelatedMods.Take(4)) + "]" : ""))
             .Distinct().Take(4).Select(text => text.Length <= 800 ? text : text[..800] + "…").ToArray();
+        if (report.ProbeStage == "faction-failed") observations = observations.Prepend(faction?.Symbol is { Length: > 0 } symbol
+            ? "派系生成检查未找到足够的预期派系：" + symbol : "派系生成检查未通过。").Take(4).ToArray();
         return new(context, paths) { Observations = observations };
     }
 }

@@ -15,6 +15,8 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
     public bool ReplyReceived { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public AiReplyFailure ReplyFailure { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public AiPlanIssue PlanIssue { get; init; }
     public AiServiceError? ServiceError { get; init; }
     public string ContextHash { get; init; } = "";
     public StartupFailureDetails? StartupFailure { get; init; }
@@ -62,6 +64,7 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
         RuntimeContext?.CopyValidated();
         LogContext?.CopyValidated();
         if (!Enum.IsDefined(ReplyFailure) || ReplyFailure != AiReplyFailure.None && (!ReplyReceived || task.MayApply)
+            || !Enum.IsDefined(PlanIssue) || PlanIssue != AiPlanIssue.None && ReplyFailure != AiReplyFailure.InvalidPlan
             || Analysis is { Length: > 10000 } || LogPaths is null || LogPaths.Length > 10
             || LogPaths.Any(p => string.IsNullOrWhiteSpace(p) || p.Length > 32768 || p.Any(char.IsControl) || !Path.IsPathFullyQualified(p)))
             throw new InvalidDataException("运行诊断记录无效。");

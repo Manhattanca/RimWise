@@ -80,6 +80,11 @@ public static class AiUsageTracking
     internal static async Task<AiClientResult> SendAsync(AiTaskRecoveryStore.AiTaskLease task, IAiClient client,
         AiRequest request, CancellationToken token,
         Func<AiTaskCheckpoint, AiClientResult, AiTaskCheckpoint>? commitResult)
+        => await TrackAsync(task, client.GetSuggestionAsync, request, token, commitResult).ConfigureAwait(false);
+
+    internal static async Task<AiClientResult> TrackAsync(AiTaskRecoveryStore.AiTaskLease task,
+        Func<AiRequest, CancellationToken, Task<AiClientResult>> send, AiRequest request, CancellationToken token,
+        Func<AiTaskCheckpoint, AiClientResult, AiTaskCheckpoint>? commitResult)
     {
         token.ThrowIfCancellationRequested();
         var evidence = new AiUsageRequest(Guid.NewGuid().ToString("N"),
@@ -89,7 +94,7 @@ public static class AiUsageTracking
         AiClientResult? result = null;
         try
         {
-            return result = await client.GetSuggestionAsync(request with { ProviderIdsObserved = ids =>
+            return result = await send(request with { ProviderIdsObserved = ids =>
             {
                 evidence = evidence with { ProviderIds = ids.ToArray() };
                 task.Save(task.Current with { UsageRequests = task.Current.UsageRequests.Select(r => r.Id == evidence.Id ? evidence : r).ToArray() });

@@ -1,5 +1,6 @@
 #if DEBUG
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -14,6 +15,7 @@ using RimWise.Desktop.Views;
 using RimWise.Formats;
 using RimWise.Integration.AI;
 using RimWise.Integration.Configuration;
+using RimWise.Integration.Diagnostics;
 using RimWise.Integration.Scanning;
 
 namespace RimWise.Desktop;
@@ -49,8 +51,8 @@ internal static class MainPanelWorkflowSmokeCheck
             ("https://synthetic.invalid/", "https://synthetic.invalid/v1/chat/completions"),
             ("https://synthetic.invalid/v1/", "https://synthetic.invalid/v1/chat/completions"),
             ("https://synthetic.invalid/proxy/v1", "https://synthetic.invalid/proxy/v1/chat/completions"),
-            ("https://synthetic.invalid/api/", "https://synthetic.invalid/api/v1/chat/completions"),
-            ("https://synthetic.invalid/compatible-mode/", "https://synthetic.invalid/compatible-mode/v1/chat/completions"),
+            ("https://synthetic.invalid/api/", "https://synthetic.invalid/api/"),
+            ("https://synthetic.invalid/compatible-mode/", "https://synthetic.invalid/compatible-mode/"),
             ("https://synthetic.invalid/v1/chat/completions", "https://synthetic.invalid/v1/chat/completions"),
             ("https://synthetic.invalid/custom/generate", "https://synthetic.invalid/custom/generate"),
             ("https://synthetic.invalid/v1beta/openai/chat/completions", "https://synthetic.invalid/v1beta/openai/chat/completions"),
@@ -71,22 +73,40 @@ internal static class MainPanelWorkflowSmokeCheck
         await AiConfigurationSmokeCheck.Run(main, output);
         checks.Add("AI 配置既有检查及默认模型、有效选择、手动模型、空列表保护通过");
         var addressRoot = Path.Combine(output, "地址补全");
-        var settingsWindow = new AiSettingsWindow(AiSettings.Default with { Endpoint = "" }, new(addressRoot), new Secrets()) { Owner = main };
+        var settingsStore = new AiSettingsStore(addressRoot);
+        var addressSecrets = new Secrets();
+        var settingsWindow = new AiSettingsWindow(AiSettings.Default with { Endpoint = "https://synthetic.invalid/v1/chat/completions" },
+            settingsStore, addressSecrets) { Owner = main };
         settingsWindow.Show();
         try
         {
-            settingsWindow.EndpointBox.Text = "https://synthetic.invalid/";
             settingsWindow.ApiKeyBox.Password = "synthetic-entered-key";
             settingsWindow.ModelBox.Text = "manual-model";
+            settingsWindow.EndpointBox.Text = "https://synthetic.invalid/";
             settingsWindow.EndpointBox.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, Environment.TickCount,
                 settingsWindow.EndpointBox, settingsWindow.ModelBox) { RoutedEvent = Keyboard.LostKeyboardFocusEvent });
-            Check(settingsWindow.EndpointBox.Text == "https://synthetic.invalid/v1/chat/completions"
+            Check(settingsWindow.EndpointBox.Text == "https://synthetic.invalid/"
+                && settingsWindow.RequestAddressText.Text == "实际请求地址：https://synthetic.invalid/v1/chat/completions"
                 && settingsWindow.ApiKeyBox.Password == "synthetic-entered-key" && settingsWindow.ModelBox.Text == "manual-model",
-                "地址失焦补全不清空输入密钥和模型");
+                "删后缀及失焦不写回地址，等效修改保留输入密钥和模型");
+            await settingsWindow.PersistSettingsAsync();
+            var reopened = new AiSettingsWindow(settingsStore.Load(), settingsStore, addressSecrets) { Owner = main };
+            try
+            {
+                Check(reopened.EndpointBox.Text == "https://synthetic.invalid/", "保存重开不恢复已删后缀");
+                reopened.CompleteBaseAddressBox.IsChecked = false;
+                Check(reopened.RequestAddressText.Text == "实际请求地址：https://synthetic.invalid/", "关闭补全后实际请求不附加路径");
+                reopened.ApiKeyBox.Password = "synthetic-exact-key";
+                reopened.ModelBox.Text = "exact-model";
+                await reopened.PersistSettingsAsync();
+                Check(settingsStore.Load() is { CompleteBaseAddress: false, Endpoint: "https://synthetic.invalid/" }, "保存精确地址选项");
+            }
+            finally { reopened.Close(); }
         }
         finally { settingsWindow.Close(); }
 
         main.LoadSample(); main.ViewModel.MarkExported();
+        await CheckModelFailure(main, output, Check);
         var original = main.ViewModel.Rows.Select(row => row.PackageId).ToArray();
         new AutomaticSortingPreferencesStore(UserStorage.DirectoryPath).AcknowledgeNotice();
         main.AiSortingPageTab.IsChecked = true;
@@ -187,6 +207,45 @@ internal static class MainPanelWorkflowSmokeCheck
             "快速往返页签后自动排序动画归位，与游戏日志共用滑动动画且不弹出排序窗口");
         main.ViewModel.MarkExported();
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new { passed = checks.Count, checks }));
+    }
+
+    private static async Task CheckModelFailure(MainWindow main, string output, Action<bool, string> check)
+    {
+        var root = Path.Combine(output, "模型校验", "profile");
+        new AiSettingsStore(root).Save(AiSettings.Default with { Model = "synthetic-model" });
+        var vm = new MainViewModel();
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(
+            "<ModsConfigData><version>1.7</version><activeMods><li>fixture.mod</li></activeMods></ModsConfigData>"));
+        vm.Load(new ModsConfigXmlFormat().Read(input), Path.Combine(root, "ModsConfig.xml"));
+        vm.ApplyScan(new(new(null, "", ""), new GameVersion(1, 7), new ModCatalogue([]), []), observeActivity: false);
+        var client = new Client();
+        var pathsReads = 0;
+        var original = vm.Rows.Select(row => row.PackageId).ToArray();
+        var panel = new AiSortingWindow(vm, root, client: client, secrets: new Secrets(),
+            gamePaths: () => { pathsReads++; throw new InvalidOperationException("未通过校验却访问游戏路径"); }) { Owner = main };
+        panel.Show();
+        var shown = false;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+        timer.Tick += (_, _) =>
+        {
+            if (panel.OwnedWindows.OfType<MessageDialogWindow>().FirstOrDefault() is not { } notice) return;
+            shown |= notice.Title == "AI 校验失败，未开始排序" && notice.MessageText.Text.Contains("HTTP 403");
+            notice.Close();
+        };
+        timer.Start();
+        try
+        {
+            await panel.StartAutomaticAsync();
+            check(shown && pathsReads == 0 && client.Probes == 1 && client.Calls == 0 && !panel.IsWorking
+                && original.SequenceEqual(vm.Rows.Select(row => row.PackageId)) && !File.Exists(Path.Combine(root, "ModsConfig.xml")),
+                "模型 403 立即中文提示，不访问游戏路径或修改排序");
+            var logs = new AutomaticSortingLogStore(root);
+            check(logs.LoadLastRun() is { EndedUtc: not null, Sessions.Length: 0, TaskIds.Length: 1 }, "失败仍保留本次零轮日志与用量记录");
+            await panel.SaveLastLogsAsync(openFolder: false);
+            using var zip = ZipFile.OpenRead(Directory.GetFiles(logs.DefaultDirectory, "RimWise-sorting-*.zip").Single());
+            check(zip.GetEntry("manifest.json") is not null, "零轮失败仍可导出诊断包");
+        }
+        finally { timer.Stop(); panel.Close(); }
     }
 
     private static async Task CheckEmbeddedLifecycle(MainWindow main, string output, Action<bool, string> check)
@@ -366,7 +425,9 @@ internal static class MainPanelWorkflowSmokeCheck
     }
     private sealed class Client : IAiClient
     {
-        internal int Calls;
+        internal int Calls, Probes;
+        public Task<AiClientResult> ProbeModelAsync(AiRequest request, CancellationToken token)
+        { Probes++; return Task.FromResult(new AiClientResult(false, "AI 服务拒绝请求（HTTP 403）。", null, null)); }
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<AiConnectionResult> TestConnectionAsync(AiSettings settings, string? key, CancellationToken token)
             => Task.FromResult(new AiConnectionResult(true, "合成连接通过"));

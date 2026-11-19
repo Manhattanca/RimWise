@@ -6,13 +6,21 @@ namespace RimWise.Integration.AI;
 /// so resuming or changing unrelated rows cannot repeat a previously tested group order.</summary>
 internal static class OrderingCycleTrials
 {
+    internal static bool Changed(string[] group, IReadOnlyList<string> before, IReadOnlyList<string> after)
+    {
+        var members = group.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return !before.Where(members.Contains).SequenceEqual(after.Where(members.Contains), StringComparer.OrdinalIgnoreCase);
+    }
     internal static string[] Associated(MaintenanceGameReport report, ModCatalogue catalogue,
-        IReadOnlyList<string> order, GameVersion version)
+        IReadOnlyList<string> order, GameVersion version, bool includeVerifiedBlocker = false)
     {
         if (!report.CanDiagnose || report.Errors.Count == 0
-            || report.StartupFailure?.Context.EnvironmentFailure == true
-            || MaintenanceFailureSignature.Blocker(report) is not null) return [];
-        var packages = report.DiagnosticFacts.Where(f => RuntimeConflictEvidence.IsDiagnosticCode(f.Code))
+            || report.StartupFailure?.Context.EnvironmentFailure == true) return [];
+        var hasBlocker = MaintenanceFailureSignature.Blocker(report) is not null;
+        if (hasBlocker && !includeVerifiedBlocker) return [];
+        var packages = hasBlocker ? report.DiagnosticFacts.Where(f => f.Code == "GameTestBlockingFailure")
+            .Select(f => f.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : report.DiagnosticFacts.Where(f => RuntimeConflictEvidence.IsDiagnosticCode(f.Code))
             .Select(f => f.PackageId).Concat(report.LogContext?.Files.Where(f => f.OrderIndex > 0)
                 .Select(f => f.PackageId) ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return order.Where(id => packages.Contains(id)

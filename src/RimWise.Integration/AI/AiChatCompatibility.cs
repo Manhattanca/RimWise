@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using RimWise.Core;
 
 namespace RimWise.Integration.AI;
 
@@ -83,4 +84,24 @@ internal static class AiChatCompatibility
             or "insufficient_system_resource" or "aborted" or "error" => reason,
         _ => "other"
     };
+
+    internal static IReadOnlyList<AiAction> NormalizePlanActions(string model, IReadOnlyList<AiAction> actions,
+        IReadOnlyList<string> order, ModCatalogue catalogue, GameVersion? version)
+    {
+        if (!IsDeepSeek(model) || actions.Count == 0 || version is null) return actions;
+        var active = order.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        ILookup<ModInstallation, string>? byInstallation = null;
+        return actions.Select(action =>
+        {
+            // DeepSeek may copy a raw metadata PackageId instead of the order identifier.
+            // Only reconcile a move if both names resolve to the same unique active copy.
+            if (action.NormalizedKind is not ("move" or "reorder") || action.PackageId?.Trim() is not { } id
+                || !AiModIdentifier.IsValid(id) || active.Contains(id) || catalogue.FindPackage(id) is not { Count: 1 } matches)
+                return action;
+            byInstallation ??= order.Select(key => (key, mod: catalogue.Resolve(key, version).UniqueInstallation))
+                .Where(match => match.mod is not null).ToLookup(match => match.mod!, match => match.key);
+            var aliases = byInstallation[matches[0]].Take(2).ToArray();
+            return aliases.Length == 1 ? action with { PackageId = aliases[0] } : action;
+        }).ToArray();
+    }
 }

@@ -11,6 +11,7 @@ public sealed class AiOrderPlan
     public string Fingerprint { get; }
     public IReadOnlyList<string> Rejected { get; }
     public IReadOnlyList<string> Notices { get; }
+    internal AiPlanIssue Issue { get; init; }
     // Only the validated planner can mint plans; callers cannot mutate the approved result.
     internal AiOrderPlan(string[] before, string[] after, string fingerprint, string[] rejected, string[] notices)
     {
@@ -143,6 +144,12 @@ public static class AiOrderPlanner
         var current = order.ToList();
         var rejected = new List<string>();
         var notices = new List<string>();
+        var issue = AiPlanIssue.None;
+        void Reject(AiPlanIssue kind, string reason)
+        {
+            if (issue == AiPlanIssue.None) issue = kind;
+            rejected.Add(reason);
+        }
         if (!Enum.IsDefined(level)) rejected.Add("权限级别无效。");
         if (version is null) rejected.Add("游戏版本未知，请先确认目标版本。");
         if (order.Count > 20000 || order.Distinct(StringComparer.OrdinalIgnoreCase).Count() != order.Count)
@@ -159,46 +166,47 @@ public static class AiOrderPlanner
         foreach (var action in list.Take(500))
         {
             var id = action.PackageId?.Trim() ?? "";
-            if (id.Length is 0 or > AiModIdentifier.MaximumLength || id.Any(char.IsControl)) { rejected.Add("动作的模组标识无效。"); continue; }
-            if (action.TargetPath is { Length: > 0 }) { rejected.Add($"排序动作不得指定文件路径：{id}"); continue; }
+            if (id.Length is 0 or > AiModIdentifier.MaximumLength || id.Any(char.IsControl)) { Reject(AiPlanIssue.Action, "动作的模组标识无效。"); continue; }
+            if (action.TargetPath is { Length: > 0 }) { Reject(AiPlanIssue.Action, $"排序动作不得指定文件路径：{id}"); continue; }
             var index = current.FindIndex(item => item.Equals(id, StringComparison.OrdinalIgnoreCase));
             switch (action.NormalizedKind)
             {
                 case "move": case "reorder":
-                    if (index < 0 || action.TargetIndex is null or < 1 || action.TargetIndex > current.Count)
-                    { rejected.Add($"无效的排序位置：{id}"); break; }
+                    if (index < 0) { Reject(AiPlanIssue.Target, $"排序动作目标不在当前排序中：{id}"); break; }
+                    if (action.TargetIndex is null or < 1 || action.TargetIndex > current.Count)
+                    { Reject(AiPlanIssue.Position, $"无效的排序位置：{id}"); break; }
                     var existingId = current[index];
                     current.RemoveAt(index); current.Insert(action.TargetIndex.Value - 1, existingId);
                     break;
                 case "add": case "addmod":
-                    if (index >= 0) { rejected.Add($"模组已启用：{id}"); break; }
-                    if (Resolve(id) is null) { rejected.Add($"需要先安装或解决多份安装：{id}"); break; }
+                    if (index >= 0) { Reject(AiPlanIssue.Action, $"模组已启用：{id}"); break; }
+                    if (Resolve(id) is null) { Reject(AiPlanIssue.Target, $"需要先安装或解决多份安装：{id}"); break; }
                     if (level == AiPermissionLevel.Level1OrderAndRequiredDependencies && !required.Contains(id) && !required.Contains(Resolve(id)!.PackageId))
-                    { rejected.Add($"元数据未证实这是必要前置：{id}"); break; }
+                    { Reject(AiPlanIssue.Dependency, $"元数据未证实这是必要前置：{id}"); break; }
                     if (action.TargetIndex is < 1 || action.TargetIndex > current.Count + 1)
-                    { rejected.Add($"新增位置无效：{id}"); break; }
+                    { Reject(AiPlanIssue.Position, $"新增位置无效：{id}"); break; }
                     current.Insert((action.TargetIndex ?? (current.Count + 1)) - 1, id);
                     notices.Add($"加入排序：{id}（安装文件不变）");
                     break;
                 case "remove": case "removemod":
                     if (level == AiPermissionLevel.Level1OrderAndRequiredDependencies || protectedIds.Contains(id)
                         || (Resolve(id) is { } protectedMod && protectedDirectories.Contains(protectedMod.Directory)))
-                    { rejected.Add($"等级或保留依赖保护禁止移出：{id}"); break; }
+                    { Reject(AiPlanIssue.Action, $"等级或保留依赖保护禁止移出：{id}"); break; }
                     if (index < 0) { rejected.Add($"模组未启用：{id}"); break; }
                     current.RemoveAt(index); notices.Add($"移出排序：{id}（安装文件保留）");
                     break;
-                default: rejected.Add($"排序执行器不接受此动作：{action.Kind}"); break;
+                default: Reject(AiPlanIssue.Action, $"排序执行器不接受此动作：{action.Kind}"); break;
             }
         }
         foreach (var id in original.Where(protectedIds.Contains))
-            if (!current.Contains(id, StringComparer.OrdinalIgnoreCase)) rejected.Add($"受保护内容缺失：{id}");
+            if (!current.Contains(id, StringComparer.OrdinalIgnoreCase)) Reject(AiPlanIssue.Constraints, $"受保护内容缺失：{id}");
         var activePackages = current.Select(id => Resolve(id)?.PackageId ?? id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var id in current)
         {
             var mod = Resolve(id);
-            if (mod is null) { rejected.Add($"模组未安装或安装不唯一：{id}"); continue; }
+            if (mod is null) { Reject(AiPlanIssue.Target, $"模组未安装或安装不唯一：{id}"); continue; }
             foreach (var dep in mod?.Metadata?.Requirements.Dependencies ?? [])
-                if (!activePackages.Contains(dep.PackageId)) rejected.Add($"{id} 缺少启用的前置：{dep.PackageId}");
+                if (!activePackages.Contains(dep.PackageId)) Reject(AiPlanIssue.Dependency, $"{id} 缺少启用的前置：{dep.PackageId}");
         }
         if (current.Select(id => Resolve(id)?.Directory ?? id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != current.Count)
             rejected.Add("排序含同一安装的重复标识。");
@@ -210,11 +218,12 @@ public static class AiOrderPlanner
             var verified = new LoadOrderSorter().Validate(catalogue, current, version, version, rules, deferAdvisoryCycles: true);
             notices.AddRange(verified.Diagnostics.Where(d => d.Code is "OrderingCycleDeferred" or "InsertionOrderAdjusted")
                 .Select(d => d.Message).Distinct());
-            if (!verified.Complete) rejected.Add(verified.FailureReason ?? "无法验证 AI 排序结果。");
-            else if (verified.Changed) rejected.Add("AI 排序仍违反必要前置、模组声明或自定义规则的先后关系，请重新生成建议。");
+            if (!verified.Complete) Reject(AiPlanIssue.Constraints, verified.FailureReason ?? "无法验证 AI 排序结果。");
+            else if (verified.Changed) Reject(AiPlanIssue.Constraints, "AI 排序仍违反必要前置、模组声明或自定义规则的先后关系，请重新生成建议。");
         }
         return new(original, rejected.Count == 0 ? current.ToArray() : original,
-            Fingerprint(original, catalogue, retained, rules, version), rejected.Distinct().ToArray(), notices.ToArray());
+            Fingerprint(original, catalogue, retained, rules, version), rejected.Distinct().ToArray(), notices.ToArray())
+        { Issue = rejected.Count > 0 && issue == AiPlanIssue.None ? AiPlanIssue.Constraints : issue };
 
         ModInstallation? Resolve(string id) => catalogue.Resolve(id, version).UniqueInstallation;
         ModInstallation? ResolveDependency(string id) => Resolve(id) ?? (catalogue.FindPackage(id) is { Count: 1 } candidates ? candidates[0] : null);

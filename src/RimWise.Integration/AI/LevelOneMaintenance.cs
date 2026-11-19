@@ -120,13 +120,14 @@ public sealed class LevelOneMaintenance
     private readonly ILevelOneGameSession? session;
     private readonly AiTaskRecoveryStore tasks;
     private readonly string? resumeTaskId;
+    private readonly bool testOriginalFirst;
     private int active;
 
     public LevelOneMaintenance(IAiClient client, AiTokenEstimator estimator) : this(client, estimator, null) { }
     internal LevelOneMaintenance(IAiClient client, AiTokenEstimator estimator, ILevelOneGameSession? session,
-        string? resumeTaskId = null)
-        => (this.client, this.estimator, this.session, tasks, this.resumeTaskId) =
-            (client, estimator, session, new(estimator.ApplicationDirectory), resumeTaskId);
+        string? resumeTaskId = null, bool testOriginalFirst = false)
+        => (this.client, this.estimator, this.session, tasks, this.resumeTaskId, this.testOriginalFirst) =
+            (client, estimator, session, new(estimator.ApplicationDirectory), resumeTaskId, testOriginalFirst);
 
     public async Task<MaintenanceResult> RunAsync(AiRequest request, ModCatalogue catalogue,
         IReadOnlyList<CustomOrderRule> rules, MaintenanceLimits limits,
@@ -166,6 +167,10 @@ public sealed class LevelOneMaintenance
         ConflictRemovalApproval[] approvals = [];
         TrialExclusion[] trials = [];
         IReadOnlyList<string[]> cycleGroups = [];
+        string[] associated = [];
+        string[] lastSwappedOwners = [];
+        string? lastSwapFailure = null;
+        bool cyclePlanBlocked = false;
         StartupFailureDetails? startupFailure = null;
         var replyFailure = AiReplyFailure.None;
         string? analysis = null;
@@ -195,7 +200,7 @@ public sealed class LevelOneMaintenance
                 AiOrderPlanner.Fingerprint(request.CurrentOrder, catalogue, request.RetainedMods, rules, GameVersion.Parse(request.GameVersion)));
             if (resumeTaskId is null)
                 recoveryTask = tasks.Create(new(AiTaskKind.Maintenance, AiTaskPhase.Prepared, contextHash,
-                    current, current, DateTimeOffset.UtcNow) { Limits = limits, DatabaseSnapshotId = request.DatabaseSnapshotId,
+                    current, current, DateTimeOffset.UtcNow) { Limits = limits, TestOriginalFirst = testOriginalFirst, DatabaseSnapshotId = request.DatabaseSnapshotId,
                     DeadlineUtc = DateTimeOffset.MaxValue, SeenOrders = [current], InitialMissingIds = initiallyMissing });
             else
             {
@@ -213,6 +218,8 @@ public sealed class LevelOneMaintenance
                 unknownReserve = saved.ReservedTokens;
                 if (saved.HasUnresolvedRequest)
                     return Result(MaintenanceOutcome.RecoveryRequired, "上次请求未确认完成；已保留记录，不自动重发该请求。");
+                if (saved.TestOriginalFirst != testOriginalFirst)
+                    return Result(MaintenanceOutcome.RecoveryRequired, "此任务使用旧版排障策略。原记录和用量已保留，不会重发请求；请新建任务以原排序进行首轮测试。");
                 var savedPass = saved.Feedback is { Passed: true };
                 if (AttemptLimitReached(saved.Attempts) && saved.Feedback is null
                     || limits.TokenLimitReached((long)spent + unknownReserve) && !savedPass)
@@ -237,7 +244,7 @@ public sealed class LevelOneMaintenance
             string[]? initialOrder = null;
             if (preparation is not null)
             {
-                Report("正在补全必要前置并完成初始排序…");
+                Report(testOriginalFirst ? "正在准备按当前顺序测试，不改动模组及顺序…" : "正在补全必要前置并完成初始排序…");
                 var prepared = await preparation.PrepareAsync(request, catalogue, recoveryTask, deadline.Token);
                 approvals = recoveryTask.Current.ConflictApprovals;
                 request = prepared.Request;
@@ -250,7 +257,7 @@ public sealed class LevelOneMaintenance
                     || approvals.SelectMany(a => a.RemovedIds).Any(id => current.Contains(id, StringComparer.OrdinalIgnoreCase)))
                     initialOrder = prepared.InitialOrder.ToArray();
             }
-            if (GameVersion.Parse(request.GameVersion) is { } cycleVersion)
+            if (!testOriginalFirst && GameVersion.Parse(request.GameVersion) is { } cycleVersion)
             {
                 var cycleOrder = DeclaredConflictResolution.Replay(catalogue,
                     AiOrderPlanner.ExpandRequiredOrder(request.CurrentOrder, catalogue, cycleVersion, allowMissing: true),
@@ -368,7 +375,7 @@ public sealed class LevelOneMaintenance
                     passed = true;
                     break;
                 }
-                if (MaintenanceFailureSignature.KnownNonOrderableRuntimeFailure(report) is { } runtimeFailure)
+                if (!testOriginalFirst && MaintenanceFailureSignature.KnownNonOrderableRuntimeFailure(report) is { } runtimeFailure)
                 {
                     nonOrderableBlockerDetected = true;
                     nonOrderableBlockerSummary = runtimeFailure;
@@ -397,18 +404,18 @@ public sealed class LevelOneMaintenance
                 }
                 if (nonOrderableBlockerDetected)
                 { Stop("已针对明确的运行时阻断完成一次定向复测，但仍有其他未解决错误；按安全边界不再请求 AI 或排除其他模组。原排序已恢复，请先更新或处理阻断模组及剩余兼容问题。"); break; }
-                if (startupFailure is null && ((!report.StartupVerified && !report.CanDiagnose) || report.Errors.Count == 0))
+                if (startupFailure is null && ((!testOriginalFirst && !report.StartupVerified && !report.CanDiagnose) || report.Errors.Count == 0))
                 { Stop("游戏未完成启动验证，不能将空日志判定为通过。"); break; }
-                if (GameVersion.Parse(request.GameVersion) is { } cycleVersionForReport)
+                if (!testOriginalFirst && GameVersion.Parse(request.GameVersion) is { } cycleVersionForReport)
                 {
-                    var associated = OrderingCycleTrials.Associated(report, catalogue, current, cycleVersionForReport);
-                    var related = OrderingCycleTrials.Related(cycleGroups, current, associated);
+                    var legacyOwners = OrderingCycleTrials.Associated(report, catalogue, current, cycleVersionForReport);
+                    var related = OrderingCycleTrials.Related(cycleGroups, current, legacyOwners);
                     if (related.Count > 0)
                     {
                         if (AttemptLimitReached(attempts))
                         { Stop("循环组出现关联红字，但测试次数已用尽；未应用无法复测的换位或试排除。"); break; }
                         var swapped = false;
-                        foreach (var candidate in OrderingCycleTrials.Swaps(related, current, associated, seen, deadline.Token))
+                        foreach (var candidate in OrderingCycleTrials.Swaps(related, current, legacyOwners, seen, deadline.Token))
                         {
                             var swapPlan = AiOrderPlanner.PreparedOrder(current, candidate, catalogue, request.RetainedMods,
                                 cycleVersionForReport, rules, []);
@@ -436,7 +443,7 @@ public sealed class LevelOneMaintenance
                     }
                 }
                 var failureFingerprint = MaintenanceFailureSignature.Create(report);
-                if (recoveryTask.Current.Feedback is not { ReplyReceived: true }
+                if (!testOriginalFirst && recoveryTask.Current.Feedback is not { ReplyReceived: true }
                     && MaintenanceErrorMemory.Covered(report, recoveryTask.Current.DiagnosedErrors))
                 {
                     // Reuse analysis only after a trial actually removed an observed error.
@@ -453,7 +460,7 @@ public sealed class LevelOneMaintenance
                     Stop("复测仍有已分析的错误，未找到进一步有效且满足保护规则的调整；已停止重复请求并保留日志。剩余红字尚未解决。");
                     break;
                 }
-                if (recoveryTask.Current.Feedback is not { ReplyReceived: true } && failureFingerprint is not null
+                if (!testOriginalFirst && recoveryTask.Current.Feedback is not { ReplyReceived: true } && failureFingerprint is not null
                     && recoveryTask.Current.DiagnosedFailures.Contains(failureFingerprint, StringComparer.Ordinal))
                 {
                     // One failed reorder may still justify a locally evidenced exclusion. A failed
@@ -471,6 +478,12 @@ public sealed class LevelOneMaintenance
                     break;
                 }
                 // Even the final failed launch deserves a diagnosis, but cannot authorize an untestable change.
+                if (testOriginalFirst && GameVersion.Parse(request.GameVersion) is { } graphVersion)
+                {
+                    cycleGroups = new LoadOrderSorter().Sort(catalogue, current, graphVersion, graphVersion, rules,
+                        deferAdvisoryCycles: true).DeferredCycles;
+                    associated = OrderingCycleTrials.Associated(report, catalogue, current, graphVersion, includeVerifiedBlocker: true);
+                }
                 request = request with
                 {
                     CurrentOrder = current,
@@ -479,7 +492,8 @@ public sealed class LevelOneMaintenance
                     LogContext = report.LogContext,
                     Diagnostics = baseDiagnostics.Concat(report.Errors.Take(100)).ToArray(),
                     DiagnosticFacts = baseFacts.Concat(report.DiagnosticFacts.Count > 0 ? report.DiagnosticFacts.Take(100)
-                        : report.Errors.Count > 0 ? [new AiDiagnosticFact("GameLogError", "")] : []).ToArray()
+                        : report.Errors.Count > 0 ? [new AiDiagnosticFact("GameLogError", "")] : [])
+                        .Concat(testOriginalFirst ? cycleGroups.SelectMany(g => g).Select(id => new AiDiagnosticFact("OrderingCycleDeferred", id)) : []).Distinct().ToArray()
                 };
                 var outputLimit = AiOutputBudget.Next(limits, recoveryTask.Current.LastRequestOutputLimit,
                     recoveryTask.Current.OutputBudgetExhausted);
@@ -503,8 +517,9 @@ public sealed class LevelOneMaintenance
                 Save(AiTaskPhase.RequestPending);
                 progress?.Report(new(attempts, startupFailure is null ? "本轮检测到报错，正在等待 AI 分析并调整排序…"
                     : "本轮测试未通过，正在等待 AI 分析失败阶段和当轮日志线索…",spent) { AwaitingAi=true });
+                AiOrderPlan? plan = null;
                 var reply = await AiUsageTracking.SendAsync(recoveryTask, client, request, deadline.Token,
-                    (checkpoint, response) => CommitReply(checkpoint, response, report));
+                    (checkpoint, response) => CommitReply(checkpoint, response, report, out plan));
                 requestInFlight = false;
                 spent = recoveryTask.Current.ReportedTokens;
                 unknown = recoveryTask.Current.UnknownUsage;
@@ -518,8 +533,7 @@ public sealed class LevelOneMaintenance
                     ? BoundedAnalysis(liveResponse) : recoveryTask.Current.Feedback?.Analysis;
                 var replyText = replyFailure == AiReplyFailure.None && reply.Succeeded && reply.Response is { } displayResponse
                     ? BoundedAnalysis(displayResponse)
-                    : (replyFailure == AiReplyFailure.OutputLimit ? AiReplyFailureText.Describe(replyFailure)
-                        : reply.ServiceError?.DisplayText ?? AiReplyFailureText.Describe(replyFailure))
+                    : ReplyFailureDescription()
                         + "\n已停止自动排序，不再进行本地换位、试排除或后续请求。请检查 AI 设置及错误原因后重新开始。";
                 progress?.Report(new(attempts, replyFailure == AiReplyFailure.None
                     ? "已收到 AI 响应，正在校验。" : "AI 返回错误，已停止自动排序。", spent)
@@ -534,6 +548,10 @@ public sealed class LevelOneMaintenance
                     Stop(AiErrorStop());
                     break;
                 }
+                if (testOriginalFirst && !SafeToAct(report))
+                { Stop("已完成 AI 分析；当前证据不允许通过排序调整或移出模组，原排序及日志已保留。"); break; }
+                if (cyclePlanBlocked)
+                { Stop("AI 方案改变了与本轮红字无关联的循环组内顺序；未执行该方案，也未移出模组。"); break; }
                 if (startupFailure is not null)
                 {
                     if (!AllowsStartupActions(report, reply.Response))
@@ -548,16 +566,21 @@ public sealed class LevelOneMaintenance
                 }
                 if (AttemptLimitReached(attempt))
                 { Stop("本轮报错已完成分析，但测试次数已用尽；未应用无法复测的调整。"); break; }
-                var plan = AiOrderPlanner.Plan(reply.Response.Actions, AiPermissionLevel.Level1OrderAndRequiredDependencies,
-                    current, catalogue, request.RetainedMods, GameVersion.Parse(request.GameVersion), rules);
+                if (plan is null) throw new InvalidOperationException("AI 排序方案未完成校验。");
+                if (testOriginalFirst && !plan.CanApply && reply.Response.Actions.Count == 0
+                    && failureFingerprint is not null && failureFingerprint == lastSwapFailure && lastSwappedOwners.Length > 0)
+                {
+                    var suggested = reply.Response.Conflicts.SelectMany(c => c.PackageIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var eligible = lastSwappedOwners.Intersect(associated, StringComparer.OrdinalIgnoreCase).Where(suggested.Contains).ToArray();
+                    if (eligible.Length > 0 && await TryTrialAsync(report, eligible))
+                    { lastSwapFailure = null; lastSwappedOwners = []; continue; }
+                }
                 // Prefer a new valid reorder; otherwise try a locally associated, reversible exclusion.
                 // Only explicit player choices can publish those removals to their personal order.
-                if (plan.Rejected.Count > 0)
-                { replyFailure = AiReplyFailure.InvalidStructure; Stop(AiErrorStop()); break; }
                 if ((!plan.CanApply || seen.Any(o => o.SequenceEqual(plan.After, StringComparer.OrdinalIgnoreCase)))
                     && await TryTrialAsync(report)) continue;
                 if (!plan.CanApply && reply.Response.Actions.Count == 0 && reply.Response.Conflicts.Count > 0
-                    && trials.Length == 0 && session is not IMaintenanceTrialSession
+                    && !testOriginalFirst && trials.Length == 0 && session is not IMaintenanceTrialSession
                     && session is IMaintenanceConflictResolver conflicts)
                 {
                     var selectedPlan = await conflicts.ResolveAsync(reply.Response, report, current, recoveryTask, deadline.Token);
@@ -573,11 +596,21 @@ public sealed class LevelOneMaintenance
                         continue;
                     }
                 }
-                if (!plan.CanApply) { Stop(plan.Rejected.Count > 0 ? "AI 建议未通过权限或排序校验。" : "AI 未提出有效调整。"); break; }
+                if (!plan.CanApply) { Stop("AI 未提出有效调整。"); break; }
                 if (seen.Any(order => order.SequenceEqual(plan.After, StringComparer.OrdinalIgnoreCase)))
                 { Stop("检测到重复排序，已停止循环重试。"); break; }
                 Save(AiTaskPhase.Applying);
                 await session.ApplyAsync(plan, deadline.Token);
+                if (testOriginalFirst)
+                {
+                    // Only a retest of an isolated within-group reorder can justify escalation.
+                    var changedGroup = cycleGroups.FirstOrDefault(g => OrderingCycleTrials.Changed(g, current, plan.After));
+                    var members = changedGroup?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var isolated = members is not null && current.Length == plan.After.Count && current.Zip(plan.After)
+                        .All(p => p.First == p.Second || members.Contains(p.First) && members.Contains(p.Second));
+                    lastSwappedOwners = isolated ? associated.Where(members!.Contains).ToArray() : [];
+                    lastSwapFailure = isolated ? failureFingerprint : null;
+                }
                 current = plan.After.ToArray();
                 seen.Add(current);
                 Save(AiTaskPhase.Paused, clearFeedback: true);
@@ -666,28 +699,51 @@ public sealed class LevelOneMaintenance
                 .Distinct().ToArray());
             return AiOrderPlanner.Fingerprint(current, testedCatalogue, request.RetainedMods, rules, version);
         }
-        AiTaskCheckpoint CommitReply(AiTaskCheckpoint checkpoint, AiClientResult reply, MaintenanceGameReport report)
+        AiTaskCheckpoint CommitReply(AiTaskCheckpoint checkpoint, AiClientResult reply, MaintenanceGameReport report, out AiOrderPlan? plan)
         {
             var usage = reply.Usage is { Valid: true } validUsage ? validUsage : null;
             var nextSpent = checked(checkpoint.ReportedTokens + (usage?.Total ?? 0));
             var nextReserve = checked(unknownReserve + (usage is null ? pendingReserve : 0));
-            var plan = reply.Succeeded && reply.Response is { } response
-                ? AiOrderPlanner.Plan(response.Actions, AiPermissionLevel.Level1OrderAndRequiredDependencies,
-                    current, catalogue, request.RetainedMods, GameVersion.Parse(request.GameVersion), rules) : null;
-            var canApply = plan is { CanApply: true } && reply.Failure == AiReplyFailure.None && reply.ServiceError is null
+            var version = GameVersion.Parse(request.GameVersion);
+            var actions = reply.Succeeded && reply.Response is { } response && reply.Failure == AiReplyFailure.None && reply.ServiceError is null
+                ? AiChatCompatibility.NormalizePlanActions(request.Settings.Model, response.Actions, current, catalogue, version) : null;
+            var validated = actions is null ? null : AiOrderPlanner.Plan(actions, AiPermissionLevel.Level1OrderAndRequiredDependencies,
+                current, catalogue, request.RetainedMods, version, rules);
+            plan = validated;
+            cyclePlanBlocked = false;
+            if (testOriginalFirst && validated is { CanApply: true })
+            {
+                IEnumerable<string[]> groups = cycleGroups;
+                // Adding a missing prerequisite can reveal a cycle the incomplete graph could not inspect.
+                if (current.Length != validated.After.Count)
+                {
+                    var previous = current.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var updated = new LoadOrderSorter().Validate(catalogue, validated.After, version, version, rules,
+                        deferAdvisoryCycles: true).DeferredCycles;
+                    groups = groups.Concat(updated.Select(g => g.Where(previous.Contains).ToArray()));
+                }
+                cyclePlanBlocked = groups.Any(g => OrderingCycleTrials.Changed(g, current, validated.After)
+                    && !g.Intersect(associated, StringComparer.OrdinalIgnoreCase).Any());
+            }
+            var canApply = validated is { CanApply: true }
+                && (!testOriginalFirst || SafeToAct(report) && !cyclePlanBlocked)
                 && !limits.TokenLimitReached((long)nextSpent + nextReserve) && (usage is null || usage.Output <= request.OutputTokenLimit)
                 && AllowsStartupActions(report, reply.Response!)
                 && report.Errors.Count > 0
                 && !AttemptLimitReached(attempts)
-                && !seen.Any(order => order.SequenceEqual(plan.After, StringComparer.OrdinalIgnoreCase));
+                && !seen.Any(order => order.SequenceEqual(validated.After, StringComparer.OrdinalIgnoreCase));
             RuntimeConflictEvidence? conflict = null;
-            if (session is not IMaintenanceTrialSession && plan is { CanApply: false }
+            if (!testOriginalFirst && session is not IMaintenanceTrialSession && validated is { CanApply: false, Rejected.Count: 0 }
                 && reply.Response is { Actions.Count: 0 } conflicts && AllowsStartupActions(report, conflicts)
                 && !AttemptLimitReached(attempts)
-                && GameVersion.Parse(request.GameVersion) is { } version && session is IMaintenanceConflictResolver)
+                && version is not null && session is IMaintenanceConflictResolver)
                 conflict = conflicts.Conflicts.Select(c => RuntimeConflictResolution.FromReport(c, report,
                     catalogue, current, request.RetainedMods, version)?.RuntimeEvidence).FirstOrDefault(c => c is not null);
             var signature = MaintenanceFailureSignature.Create(report);
+            var failureKind = reply.ServiceError is not null ? AiReplyFailure.ServiceFailure
+                : reply.Failure != AiReplyFailure.None ? reply.Failure
+                : actions is null ? AiReplyFailure.Unspecified
+                : validated is { Rejected.Count: > 0 } && !(testOriginalFirst && actions.Count == 0) ? AiReplyFailure.InvalidPlan : AiReplyFailure.None;
             return checkpoint with { Phase = AiTaskPhase.ReplySaved, ReportedTokens = nextSpent,
                 DiagnosedFailures = signature is null ? checkpoint.DiagnosedFailures
                     : checkpoint.DiagnosedFailures.Append(signature).Distinct(StringComparer.Ordinal).ToArray(),
@@ -698,18 +754,15 @@ public sealed class LevelOneMaintenance
                 UnknownUsage = unknown || usage is null, ReservedTokens = nextReserve, LastUsage = usage,
                 Feedback = checkpoint.Feedback! with { ReplyReceived = true,
                     ServiceError = reply.ServiceError?.CopyValidated(),
-                    ReplyFailure = reply.ServiceError is not null ? AiReplyFailure.ServiceFailure
-                        : reply.Failure != AiReplyFailure.None ? reply.Failure
-                        : !reply.Succeeded || reply.Response is null
-                        ? reply.Failure == AiReplyFailure.None ? AiReplyFailure.Unspecified : reply.Failure
-                        : plan is { Rejected.Count: > 0 } ? AiReplyFailure.InvalidStructure : AiReplyFailure.None,
+                    ReplyFailure = failureKind,
+                    PlanIssue = failureKind == AiReplyFailure.InvalidPlan ? validated?.Issue ?? AiPlanIssue.None : AiPlanIssue.None,
                     // Display-only summary survives a recovery checkpoint; execution still
                     // requires separately validated actions and technical evidence.
                     Analysis = reply.Succeeded && reply.Response is { } text
                         ? BoundedAnalysis(text) : null,
                     StartupFailure = report.StartupFailure is { } failure ? failure with
                     { Diagnosis = reply.Succeeded ? reply.Response?.StartupDiagnosis?.CopyValidated() : null } : null }, MayApply = canApply,
-                Actions = canApply ? reply.Response!.Actions.Select(a => a with { TargetPath = null, Reason = null }).ToArray() : [],
+                Actions = canApply ? actions!.Select(a => a with { TargetPath = null, Reason = null }).ToArray() : [],
                 PendingConflict = conflict?.Copy() };
         }
         void Save(AiTaskPhase phase,
@@ -728,8 +781,9 @@ public sealed class LevelOneMaintenance
         }
         void Stop(string text) { outcome = MaintenanceOutcome.Stopped; message = text
             + (trialStopReason is null ? "" : "\n" + trialStopReason); }
-        string ReplyFailureDescription() => recoveryTask?.Current.Feedback?.ServiceError?.DisplayText
-            ?? AiReplyFailureText.Describe(replyFailure);
+        string ReplyFailureDescription() => (replyFailure == AiReplyFailure.OutputLimit ? null
+            : recoveryTask?.Current.Feedback?.ServiceError?.DisplayText)
+            ?? AiReplyFailureText.Describe(replyFailure, recoveryTask?.Current.Feedback?.PlanIssue ?? AiPlanIssue.None);
         string AiErrorStop() => ReplyFailureDescription()
             + (recoveryTask?.Current.LastUsage?.Output > (recoveryTask?.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest)
                 ? " 服务未遵守输出上限。" : "")
@@ -738,6 +792,7 @@ public sealed class LevelOneMaintenance
         {
             deadline.Token.ThrowIfCancellationRequested();
             trialStopReason = null;
+            if (testOriginalFirst && cycleMembers is null) return false;
             if (session is not IMaintenanceTrialSession trialSession || AttemptLimitReached(attempts)
                 || recoveryTask is null || requestInFlight || GameVersion.Parse(request.GameVersion) is not { } version)
             {
@@ -750,10 +805,12 @@ public sealed class LevelOneMaintenance
             AiOrderPlan? plan = null;
             foreach (var candidate in candidates)
             {
+                if (testOriginalFirst && (candidate.RemovedIds.Length != 1 || !cycleMembers!.Contains(candidate.SelectedId, StringComparer.OrdinalIgnoreCase))) continue;
                 var remaining = current.Except(candidate.RemovedIds, StringComparer.OrdinalIgnoreCase).ToArray();
-                var sorted = new LoadOrderSorter().Sort(catalogue, remaining, version, version, rules, deferAdvisoryCycles: true);
+                var sorted = testOriginalFirst ? new LoadOrderSorter().Validate(catalogue, remaining, version, version, rules, deferAdvisoryCycles: true)
+                    : new LoadOrderSorter().Sort(catalogue, remaining, version, version, rules, deferAdvisoryCycles: true);
                 if (!sorted.Complete) continue;
-                var proposed = TrialExclusionPlanning.Plan(current, sorted.Order, catalogue, request.RetainedMods, version, rules, [candidate]);
+                var proposed = TrialExclusionPlanning.Plan(current, testOriginalFirst ? remaining : sorted.Order, catalogue, request.RetainedMods, version, rules, [candidate]);
                 if (!proposed.CanApply || seen.Any(o => o.SequenceEqual(proposed.After, StringComparer.OrdinalIgnoreCase))) continue;
                 trial = candidate; plan = proposed; break;
             }
@@ -802,6 +859,9 @@ public sealed class LevelOneMaintenance
                     ExistingErrorsOnly = existingErrorsOnly, Analysis = analysis, HasWarnings = hasWarnings,
                     HasVulkanConfigurationWarning = hasVulkanConfigurationWarning, LogPaths = logPaths };
     }
+
+    private static bool SafeToAct(MaintenanceGameReport report) => report.CanDiagnose
+        && MaintenanceFailureSignature.KnownNonOrderableRuntimeFailure(report) is null;
 
     private static bool AllowsStartupActions(MaintenanceGameReport report, StructuredAiResponse response) =>
         report.StartupFailure is null || report.CanDiagnose && report.StartupFailure.Context.CanAdjustOrder

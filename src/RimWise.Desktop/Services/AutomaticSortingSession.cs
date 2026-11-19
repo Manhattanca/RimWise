@@ -22,12 +22,28 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         GamePaths Paths, long Revision, ModCatalogue Catalogue, DatabaseSnapshot? Database,
         Action? SaveOrder, MaintenanceResult Result, bool ConfirmModRemoval);
 
+    internal async Task<(AiConnectionResult Result, int BudgetCharge, string Scope)> CheckModelAsync(
+        AiSettings settings, MaintenanceLimits limits, CancellationToken token)
+    {
+        using var ownedClient = client is null ? new AiClient() : null;
+        var key = sorting.Secrets.Read(settings.SecretName);
+        var (result, charge) = await AiSortingPreflight.CheckModelAsync(client ?? ownedClient!, settings, key, sorting.Tasks,
+            limits, token).ConfigureAwait(false);
+        return (result, charge, result.Succeeded ? ModelScope(settings, key) : "");
+    }
+
+    private static string ModelScope(AiSettings settings, string? key)
+    {
+        var resolved = settings.Normalize();
+        return AiUsageRequest.Hash($"{resolved.Endpoint}\n{resolved.StreamResponses}\n{resolved.Model}\n{key}");
+    }
+
     internal async Task<AutomaticMaintenanceResult> RunAsync(Func<GamePaths> getPaths, AiSettings settings,
         MaintenanceLimits limits, IProgress<MaintenanceProgress> progress, IProgress<OrdinaryGameProgress> gameProgress,
         IProgress<AiResponseUpdate> responseProgress, CancellationToken token, string? resumeId = null,
         Func<DeclaredConflict, CancellationToken, Task<string[]?>>? chooseConflict = null,
         Func<Action>? prepareSave = null,
-        Func<MaintenanceResult, CancellationToken, Task<bool>>? confirmTrials = null)
+        Func<MaintenanceResult, CancellationToken, Task<bool>>? confirmTrials = null, string? checkedModelScope = null)
     {
         stoppedOrder = null;
         if (AiClient.ConfigurationProblem(settings.Normalize()) is { } configurationProblem)
@@ -39,6 +55,8 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         var rules=InsertionScope.Rules(editor.CustomRules, limits.InsertionBaselineJson).ToArray();
         var request=AiSortingSession.CreateRequest(editor,settings,sorting.Secrets.Read(settings.SecretName))
             with { ResponseProgress=responseProgress, OutputTokenLimit=limits.OutputTokensPerRequest };
+        if (checkedModelScope is not null && checkedModelScope != ModelScope(request.Settings, request.ApiKey))
+            throw new InvalidOperationException("AI 设置或密钥在校验后发生变化，已停止。请重新开始排序。");
         request = request with { OrderRules = rules, RetainedMods = request.RetainedMods
             .Concat(InsertionScope.Read(limits.InsertionBaselineJson)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
         if (resumeId is null) InsertionScope.ValidateOrder(limits.InsertionBaselineJson, request.CurrentOrder);
@@ -112,7 +130,8 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
                 }
             }
             return await AutomaticGameMaintenance.RunAsync(client??ownedClient!,new(directory),options,paths,request,
-                catalogue,rules,limits,progress,gameProgress,token,resumeId,chooseConflict,database);
+                catalogue,rules,limits,progress,gameProgress,token,resumeId,chooseConflict,database,
+                connectionAlreadyChecked: checkedModelScope is not null || resumeId is not null);
         },token);
         if (result.Maintenance is { Outcome: MaintenanceOutcome.Passed, TrialExclusions.Count: > 0,
                 TrialRemovalsApproved: false, TrialDecisionRecorded: false })
@@ -301,6 +320,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
             || sorting.SettingsStore.Load() != settings || getPaths() != paths
             || result.DatabaseSnapshotId != (database?.Id ?? "") || request.DatabaseSnapshotId != (database?.Id ?? "")) return result;
         // An unsuccessful experiment never publishes removals from the original editor.
+        if (request.CurrentOrder.SequenceEqual(result.PreparedOrder, StringComparer.OrdinalIgnoreCase)) return result;
         if (request.CurrentOrder.Except(result.PreparedOrder, StringComparer.OrdinalIgnoreCase).Any()) return result;
         InsertionScope.ValidateOrder(result.Maintenance.InsertionBaselineJson, result.PreparedOrder);
         var active = result.Scan?.Catalogue ?? catalogue;

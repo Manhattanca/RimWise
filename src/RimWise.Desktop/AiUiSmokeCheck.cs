@@ -55,7 +55,7 @@ internal static class AiUiSmokeCheck
             Assert(settings.FindName("NetworkBox") is null, "Network checkbox still exists.");
             Assert((string)settings.TestConnectionButton.Content == "测试 AI 连接", "Connection test button missing.");
             Assert(settings.ImportConnection("{\"url\":\"https://example.invalid\",\"key\":\"synthetic-import-secret\",\"model\":\"sample-model\"}"), "Connection import failed.");
-            Assert(settings.ApiKeyBox.Password == "synthetic-import-secret" && settings.EndpointBox.Text == "https://example.invalid/v1/chat/completions"
+            Assert(settings.ApiKeyBox.Password == "synthetic-import-secret" && settings.EndpointBox.Text == "https://example.invalid"
                 && client.Count == 0 && !File.Exists(store.SettingsPath), "Import sent request or saved prematurely.");
             var importedAddress = settings.EndpointBox.Text;
             Assert(!settings.ImportConnection("{\"url\":\"https://other.invalid\"}") && settings.EndpointBox.Text == importedAddress,

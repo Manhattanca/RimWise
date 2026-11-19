@@ -1438,9 +1438,9 @@ internal static class AiSortingSmokeCheck
             var cancel = CancelDuplicateDialogAsync();
             await automatic.StartAutomaticAsync();
             await cancel;
-            Assert(observed && !automatic.IsWorking && client.Calls == 0 && secrets.Reads == 0
+            Assert(observed && !automatic.IsWorking && client.Calls == 0 && client.ProbeCalls == 1
                 && expected.SequenceEqual(vm.Rows.Select(row => row.PackageId)), "Preflight cancel changed order or sent request.");
-            checks.Add("automatic sorting shows duplicate names, sources and paths before secret access; cancel preserves order");
+            checks.Add("after one model check, automatic sorting shows duplicate names, sources and paths; cancel preserves order");
 
             var remaining = await automatic.RefreshDuplicateInstallationsAsync(CancellationToken.None);
             Assert(remaining.Count == 1 && expected.SequenceEqual(vm.Rows.Select(row => row.PackageId)), "Refresh lost duplicates or order.");
@@ -1675,13 +1675,15 @@ internal static class AiSortingSmokeCheck
     }
     private sealed class FakeClient : IAiClient
     {
-        internal int Calls, ConnectionCalls;
+        internal int Calls, ConnectionCalls, ProbeCalls;
         internal AiConnectionResult Connection = new(true, "合成连接正常");
         internal required Func<AiRequest, CancellationToken, Task<AiClientResult>> Response;
         public Task<AiClientResult> GetSuggestionAsync(AiRequest request, CancellationToken cancellationToken)
         { Calls++; return Response(request, cancellationToken); }
         public Task<AiConnectionResult> TestConnectionAsync(AiSettings settings, string? apiKey, CancellationToken cancellationToken)
         { ConnectionCalls++; return Task.FromResult(Connection); }
+        public Task<AiClientResult> ProbeModelAsync(AiRequest request, CancellationToken cancellationToken)
+        { ProbeCalls++; return Task.FromResult(new AiClientResult(Connection.Succeeded, Connection.Message, null, null) { Usage = new(10, 5, 15) }); }
     }
 }
 #endif

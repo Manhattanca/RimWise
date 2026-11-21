@@ -1,4 +1,4 @@
-﻿<Window x:Class="RimWise.Desktop.Views.MarketplaceMyOrdersWindow"
+<Window x:Class="RimWise.Desktop.Views.MarketplaceMyOrdersWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Style="{StaticResource {x:Type Window}}" Title="我的排序与草稿" Width="760" Height="660"
@@ -7,7 +7,7 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel Margin="0,0,0,16">
             <TextBlock Text="我的排序与草稿" FontSize="24" FontWeight="SemiBold"/>
-            <TextBlock Text="本地草稿可随时继续编辑；登录后显示你在当前市场目录中已上架的排序。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,0"/>
+            <TextBlock Text="本地草稿可随时继续编辑；登录后显示你的已发布排序与投稿状态。待审核内容不能直接修改。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,0"/>
         </StackPanel>
         <Grid Grid.Row="1">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -19,7 +19,17 @@
             </ContextMenu></ListBox.ContextMenu>
             <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="8">
                 <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                <TextBlock Text="{Binding Id}" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0"/>
+                <TextBlock Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0">
+                    <TextBlock.Style><Style TargetType="TextBlock">
+                        <Setter Property="Text" Value="{Binding Id}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding PublicationState}" Value="pending"><Setter Property="Text" Value="等待审核，通过后显示排序标识"/></DataTrigger>
+                            <DataTrigger Binding="{Binding PublicationState}" Value="draft"><Setter Property="Text" Value="服务器草稿，提交审核通过后显示排序标识"/></DataTrigger>
+                            <DataTrigger Binding="{Binding PublicationState}" Value="rejected"><Setter Property="Text" Value="投稿已退回"/></DataTrigger>
+                        </Style.Triggers>
+                    </Style></TextBlock.Style>
+                </TextBlock>
+                <TextBlock Text="{Binding RejectionReason}" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}"/>
                 <TextBlock Text="{Binding Version, StringFormat=排序版本 {0}}" Foreground="{DynamicResource MutedBrush}"/>
             </StackPanel></DataTemplate></ListBox.ItemTemplate>
         </ListBox>

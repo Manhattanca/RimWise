@@ -38,6 +38,14 @@
 
 
 `dotnet/extensions`（.NET Foundation、Microsoft 及贡献者，https://github.com/dotnet/extensions），Microsoft.Extensions.AI.Abstractions 10.5.2，作为 MCP SDK 的传递依赖使用，MIT。许可见 `../packaging/licenses/dotnet-AI-Abstractions-LICENSE.txt`，完整上游声明见 `../packaging/licenses/dotnet-AI-Abstractions-THIRD-PARTY-NOTICES.txt`。
+## 排序市场服务端图片验证组件（不随桌面测试版引入）
+
+服务端 `tools/RimWise.LocalMarket` 使用以下固定版本，许可随独立服务包的 `licenses/` 分发，不将本机开发文件或账号数据放入服务发布目录：
+
+- `mono/SkiaSharp`：SkiaSharp 与 SkiaSharp.NativeAssets.Linux.NoDependencies **4.156.2**，MIT；使用 Skia 的 BSD 许可及原生包原始第三方声明。用于受限尺寸 PNG/JPEG 完整解码校验及像素重编码去除原始元数据，不作病毒库查杀或自动违规内容识别。PNG 重建精度为 RGBA8，JPEG 质量 98 并非数学无损。文件为 `tools/RimWise.LocalMarket/licenses/SkiaSharp-MIT.txt`、`Skia-BSD.txt`、`SkiaSharp-THIRD-PARTY-NOTICES.txt`；第三方声明直接取自固定版本 Linux NativeAssets NuGet 包，不将上游 MIT LICENSE 冒充完整声明。
+- `BitMiracle/libjpeg.net`：BitMiracle.LibJpeg.NET **1.5.324**，保留完整 BSD 类许可及 JPEG Group 声明，文件 `tools/RimWise.LocalMarket/licenses/LibJpeg.NET-license.txt`。用于严格读取 JPEG 扫描行，拒绝宽松解码器可能容忍的截断或不完整图像。
+- 自包含服务保留实际部署 .NET Runtime 原包的 `LICENSE.TXT` 和 `THIRD-PARTY-NOTICES.TXT`，分别复制为 `tools/RimWise.LocalMarket/licenses/dotnet-runtime-LICENSE.txt`、`dotnet-runtime-THIRD-PARTY-NOTICES.txt`。
+
 ## 安装包组件
 
 EXE 安装包使用 Inno Setup 6.7.4（Jordan Russell、Martijn Laan，https://jrsoftware.org/），许可见 `licenses/Inno-Setup-LICENSE.txt`。简体中文消息采用 jrsoftware/issrc 随附的 ChineseSimplified.isl，维护者 Zhenghan Yang (Kira)，保留文件内署名。安装界面仅使用简体中文。

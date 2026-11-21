@@ -4,6 +4,11 @@
              Foreground="{DynamicResource TextBrush}" Background="{DynamicResource PageBrush}"
              Focusable="False" IsTabStop="False" FocusVisualStyle="{x:Null}">
     <UserControl.Resources>
+        <Style x:Key="MarketPrimaryAction" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}"/>
+        </Style>
         <Style x:Key="SectionLabel" TargetType="TextBlock">
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Margin" Value="0,22,0,8"/>
@@ -43,17 +48,19 @@
         </Grid.RowDefinitions>
         <DockPanel Margin="0,0,0,16">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button x:Name="PublishButton" Content="发布当前排序" Click="Publish_Click" AutomationProperties.Name="发布当前排序"/>
+                <Button x:Name="PublishFileButton" Content="发布其他排序文件" Click="PublishFile_Click" Style="{StaticResource MarketPrimaryAction}"
+                        AutomationProperties.Name="发布其他排序文件" ToolTip="选择其他排序文件用于发布，不会导入、替换或保存当前使用的排序。"/>
+                <Button x:Name="PublishButton" Content="发布当前使用排序" Click="Publish_Click" Style="{StaticResource MarketPrimaryAction}"
+                        AutomationProperties.Name="发布当前使用排序"/>
                 <Button x:Name="MyOrdersButton" Content="我的排序与草稿" Click="MyOrders_Click"/>
                 <Button x:Name="AuthorMenuButton" Content="未登录 ▾" Click="AuthorMenu_Click"/>
-                <Popup x:Name="AuthorPopup" PlacementTarget="{Binding ElementName=AuthorMenuButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
-                    <Border Width="320" Padding="16" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="5">
+                <Popup x:Name="AuthorPopup" PlacementTarget="{Binding ElementName=AuthorMenuButton}" Placement="Custom" StaysOpen="False" AllowsTransparency="True">
+                    <Border Width="216" Padding="12" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="5">
                         <StackPanel>
                             <TextBlock x:Name="AuthorStatus" Text="登录后可提交和更新自己发布的排序。" TextWrapping="Wrap"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                <Button x:Name="LoginButton" Content="登录 GitHub" Click="Login_Click"/>
-                                <Button x:Name="LogoutButton" Content="退出登录" Click="Logout_Click"/>
-                            </StackPanel>
+                            <Button x:Name="LoginButton" Content="登录 / 注册" Click="Login_Click" Margin="0,8,0,0" Padding="10,5"/>
+                            <Button x:Name="ManageAccountButton" Content="账号设置" Click="ManageAccount_Click" Margin="0,8,0,0" Padding="10,5" Visibility="Collapsed"/>
+                            <Button x:Name="LogoutButton" Content="退出登录" Click="Logout_Click" Margin="0,4,0,0" Padding="10,5" Visibility="Collapsed"/>
                         </StackPanel>
                     </Border>
                 </Popup>
@@ -68,7 +75,7 @@
         <Grid Grid.Row="1" Margin="0,0,0,12">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <Grid>
-                <TextBox x:Name="SearchBox" TextChanged="Search_Changed" MaxLength="200" Padding="35,9,12,9"
+                <TextBox x:Name="SearchBox" Style="{StaticResource SearchInput}" TextChanged="Search_Changed" MaxLength="200" Padding="35,0,12,0"
                          AutomationProperties.Name="搜索排序、作者或游戏版本" ToolTip="在已加载的排序中搜索标题、作者、简介或游戏版本"/>
                 <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" Margin="12,0,0,0" VerticalAlignment="Center"
                            Foreground="{DynamicResource MutedBrush}" IsHitTestVisible="False"/>
@@ -98,7 +105,7 @@
                             </Border>
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="{Binding Entry.Title}" TextWrapping="Wrap" FontSize="15" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding Entry.Author}" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding Entry.DisplayAuthor}" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
                                 <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" MaxHeight="42" LineHeight="21" Margin="0,9,0,10" Foreground="{DynamicResource MutedBrush}"/>
                                 <TextBlock Text="{Binding VersionLabel}" Foreground="{DynamicResource LinkBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </StackPanel>
@@ -128,7 +135,7 @@
                                     <StackPanel x:Name="VersionPickerPanel" Grid.Column="1" Width="155" Margin="16,0,0,0" Visibility="Collapsed">
                                         <TextBlock Text="排序版本" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6"/>
                                         <ComboBox x:Name="VersionPicker" DisplayMemberPath="Version" SelectionChanged="Version_Selected" MaxDropDownHeight="260" AutomationProperties.Name="选择排序版本"/>
-                                        <TextBlock Text="默认最新版，可选择旧版" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                        <TextBlock Text="默认下载最新版" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock x:Name="DetailAuthor" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
@@ -164,7 +171,7 @@
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button x:Name="DownloadButton" Content="下载排序并另存为" Click="Download_Click" IsEnabled="False" Padding="12,8"/>
                                 <Button x:Name="UseButton" Content="下载排序并使用" Click="Use_Click" IsEnabled="False" Padding="12,8"
-                                        Background="{DynamicResource AccentBrush}" BorderBrush="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}"/>
+                                        Style="{StaticResource MarketPrimaryAction}"/>
                             </StackPanel>
                         </Border>
                     </Grid>

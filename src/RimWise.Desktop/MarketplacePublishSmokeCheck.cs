@@ -135,65 +135,37 @@ public static class MarketplacePublishSmokeCheck
             unrefreshed.ViewModel.MarkExported();
             unrefreshed.Close();
 
-            var sourceRoot = Path.Combine(output, "publish-sources 中文 [路径]");
-            var sourceAbout = Path.Combine(sourceRoot, "123456", "About");
-            Directory.CreateDirectory(sourceAbout);
-            File.WriteAllText(Path.Combine(sourceAbout, "About.xml"),
-                "<ModMetaData><name>Fixture</name><packageId>example.fixture</packageId><supportedVersions><li>1.7</li></supportedVersions></ModMetaData>");
-            var sourcePaths = new GamePaths { WorkshopDirectory = sourceRoot, TargetVersionOverride = "1.7" };
-            var prepared = await MainWindow.PrepareMarketplacePublicationAsync(unrefreshedDraft, sourcePaths, CancellationToken.None);
-            Check(prepared.Mods[1].WorkshopId == "123456" && prepared.Mods.Select(mod => mod.PackageId).SequenceEqual(unrefreshedDraft.Mods.Select(mod => mod.PackageId))
-                && unrefreshedDraft.Mods[1].WorkshopId is null,
-                "On-demand publication verification resolves installed Workshop identity without refresh or modifying captured draft order");
-            File.WriteAllText(Path.Combine(sourceAbout, "About.xml"), "<ModMetaData><name>Other</name><packageId>example.other</packageId></ModMetaData>");
-            var sourceRejected = false;
-            try { await MainWindow.PrepareMarketplacePublicationAsync(unrefreshedDraft, sourcePaths, CancellationToken.None); }
-            catch (InvalidDataException) { sourceRejected = true; }
-            Check(sourceRejected, "Unresolved or changed installed identity cannot become a publishable manifest");
+            await CheckFilePublishingAsync(window, output, checks);
 
-            var verifyCount = 0;
             var verifiedSaves = 0;
             var verifiedSubmissions = 0;
-            var verificationFailure = false;
+            MarketplaceManifest? submittedUnrefreshed = null;
             var verification = Show(new MarketplacePublishActions
             {
-                ClientId = "synthetic-client",
-                ClientSecretConfigured = true,
-                LoginAsync = (_, _, _) => Task.FromResult(new GitHubMarketplaceUser("FixtureAuthor", null)),
-                SubmitAsync = (_, _, _) => { verifiedSubmissions++; return Task.FromResult(new MarketplaceSubmission(12,
+                InitialUser = new("FixtureAuthor", null),
+                LoginAsync = (_, _, _) => throw new InvalidOperationException("Unexpected login callback"),
+                SubmitAsync = (draft, _, _) => { verifiedSubmissions++; submittedUnrefreshed = draft; return Task.FromResult(new MarketplaceSubmission(12,
                     new Uri("https://github.com/Manhattanca/RimWise-Marketplace/pull/12"), "fixture", "fixture.json", new string('a', 64))); },
-                PrepareDraftAsync = (draft, token) =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    verifyCount++;
-                    return verificationFailure ? Task.FromException<MarketplaceManifest>(new InvalidDataException("合成来源核对失败"))
-                        : Task.FromResult(draft with { Mods = prepared.Mods });
-                },
                 SaveDraft = draft => { verifiedSaves++; saved = draft; },
                 Logout = () => { }, OpenTrustedLink = _ => { }
             }, unrefreshedDraft);
-            Check(verifyCount == 0 && verification.TitleBox.IsEnabled,
-                "Opening publication editor never triggers source verification or blocks editing");
+            Check(verification.TitleBox.IsEnabled,
+                "Opening publication editor never scans installed mods or blocks editing");
             verification.TitleBox.Text = "未刷新时填写的草稿";
             verification.DescriptionBox.Text = "未刷新时填写的排序简介。";
             await Task.Delay(1000);
             Check(verifiedSaves == 0, "Editing and waiting beyond the former debounce interval never writes a draft");
             verification.SaveDraftButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-            Check(verifyCount == 0 && verifiedSaves == 1,
-                "Saving a draft never scans sources, checks remote identifiers or requires login");
-            verificationFailure = true;
+            Check(verifiedSaves == 1,
+                "Saving a draft never scans installed workshop sources or requires login");
             await verification.SaveLocalDraftAsync();
-            Check(verifyCount == 0 && verifiedSaves == 2 && verification.TitleBox.Text == "未刷新时填写的草稿"
-                && verification.SaveDraftButton.IsEnabled, "Local save remains available when source verification would fail");
-            await verification.LoginAsync();
+            Check(verifiedSaves == 2 && verification.TitleBox.Text == "未刷新时填写的草稿"
+                && verification.SaveDraftButton.IsEnabled, "Local save remains available without a mod catalogue");
             await verification.SubmitAsync();
-            Check(verifyCount == 1 && verifiedSubmissions == 0 && verification.SubmissionPanel.Visibility == Visibility.Collapsed,
-                "Failed source verification blocks remote submission while preserving authenticated author and draft");
-            verificationFailure = false;
-            await verification.SubmitAsync();
-            Check(verifyCount == 2 && verifiedSubmissions == 1 && verification.SubmissionPanel.Visibility == Visibility.Visible,
-                "Unrefreshed draft can submit after automatic source verification without manual refresh");
-            Check(verifiedSaves == 2, "Login, failed verification and successful submission never save a draft automatically");
+            Check(verifiedSubmissions == 1 && verification.SubmissionPanel.Visibility == Visibility.Visible
+                && submittedUnrefreshed?.Mods.SequenceEqual(unrefreshedDraft.Mods) == true,
+                "Unrefreshed order submits unchanged without local Workshop source verification");
+            Check(verifiedSaves == 2, "Successful submission never saves a draft automatically");
             verification.TitleBox.Text = "关闭前的未保存修改";
             verification.Close();
             await Task.Delay(800);
@@ -239,14 +211,13 @@ public static class MarketplacePublishSmokeCheck
                 SubmitAsync = (draft, _, _) => { collisionOrder.Add("submit"); collisionSubmission = draft; return Task.FromResult(new MarketplaceSubmission(13,
                     new Uri("https://github.com/Manhattanca/RimWise-Marketplace/pull/13"), "fixture", "fixture.json", new string('a', 64))); },
                 LoadMarketplaceIdsAsync = _ => { collisionOrder.Add("check"); return Task.FromResult<IReadOnlyList<string>>(["taken-id"]); },
-                PrepareDraftAsync = (draft, _) => { collisionOrder.Add("prepare"); return Task.FromResult(draft); },
                 Logout = () => { }, OpenTrustedLink = _ => { }
             }, snapshot with { Id = "taken-id" });
             await collisionCheck.SubmitAsync();
             Check(collisionSubmission is not null && collisionSubmission.Id != "taken-id"
                 && collisionCheck.Draft.Id == collisionSubmission.Id && !collisionCheck.PublishedIdPanel.IsVisible
-                && collisionOrder.SequenceEqual(["check", "prepare", "submit"]),
-                "A market-index collision regenerates the internal identifier before verification and submission");
+                && collisionOrder.SequenceEqual(["check", "submit"]),
+                "A market-index collision regenerates the internal identifier before submission without source verification");
             collisionCheck.Close();
 
             var restored = Show(SignedOutActions(), snapshot with { Id = "fresh-random-id" });
@@ -496,7 +467,7 @@ public static class MarketplacePublishSmokeCheck
             using (var updateClient = new MarketplaceClient(handler: new ManifestHandler(snapshot with { Author = "FixtureAuthor" })))
             {
                 var update = await MainWindow.LoadMarketplaceUpdateAsync(deletionEntry, updateClient, CancellationToken.None);
-                Check(update.Mods.SequenceEqual(snapshot.Mods) && update.Id == snapshot.Id && update.Version == "1.0.1"
+                Check(update.Mods.SequenceEqual(snapshot.Mods) && update.Id == snapshot.Id && update.Version == "1.1"
                     && update.ReleaseNotes.Length == 0, "Published modification loads its validated original snapshot and a new version with optional empty notes");
             }
             store.DeleteToken();
@@ -509,6 +480,127 @@ public static class MarketplacePublishSmokeCheck
                 if (dialog.IsVisible) dialog.Close();
             }
         }
+    }
+
+    private static async Task CheckFilePublishingAsync(MainWindow owner, string output, List<string> checks)
+    {
+        void Check(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException(message);
+            checks.Add(message);
+        }
+        var main = new MainWindow(initializePaths: false);
+        try
+        {
+            main.LoadSample();
+            main.ViewModel.SelectedRow = main.ViewModel.Rows.Last();
+            main.ViewModel.MoveUpCommand.Execute(null);
+            main.ViewModel.MoveUpCommand.Execute(null);
+            main.ViewModel.UndoCommand.Execute(null);
+            main.ViewModel.SearchText = "保留搜索";
+            main.ViewModel.IsScanning = main.ViewModel.IsShowingCache = true;
+            var codec = new OrderFileCodec();
+            var before = codec.Write(main.ViewModel.CreateOrderFile(), OrderFileFormat.ModsConfigXml);
+            var revision = main.ViewModel.ContentRevision;
+            var source = main.ViewModel.SourceLabel;
+            var dirty = main.ViewModel.HasChanges;
+            var undo = main.ViewModel.UndoCommand.CanExecute(null);
+            var redo = main.ViewModel.RedoCommand.CanExecute(null);
+            Check(dirty && undo && redo, "文件发布隔离验收使用有未保存修改且包含撤销/取消撤销历史的当前排序。");
+            var path = Path.Combine(output, "其他排序文件.rml");
+            var xml = "<savedModList><meta><gameVersion>1.6.4633</gameVersion>"
+                + "<modIds><li>ludeon.rimworld</li><li>example.z</li><li>ludeon.rimworld.biotech</li><li>example.a</li></modIds>"
+                + "<modSteamIds><li>0</li><li>123456</li><li>0</li><li>234567</li></modSteamIds></meta>"
+                + "<modList><ids><li>ludeon.rimworld</li><li>example.z</li><li>ludeon.rimworld.biotech</li><li>example.a</li></ids></modList></savedModList>";
+            await File.WriteAllTextAsync(path, xml, Encoding.UTF8);
+            var original = await File.ReadAllBytesAsync(path);
+            bool Unchanged() => codec.Write(main.ViewModel.CreateOrderFile(), OrderFileFormat.ModsConfigXml).SequenceEqual(before)
+                && main.ViewModel.ContentRevision == revision && main.ViewModel.SourceLabel == source
+                && main.ViewModel.HasChanges == dirty && main.ViewModel.SearchText == "保留搜索"
+                && main.ViewModel.UndoCommand.CanExecute(null) == undo && main.ViewModel.RedoCommand.CanExecute(null) == redo;
+            var draft = await main.LoadMarketplaceFileDraftAsync(path, CancellationToken.None);
+            Check(draft.Mods.Select(mod => mod.PackageId).SequenceEqual(new[]
+                { "ludeon.rimworld", "example.z", "ludeon.rimworld.biotech", "example.a" })
+                && draft.Mods[1].WorkshopId == "123456" && draft.Mods[3].WorkshopId == "234567"
+                && draft.GameVersion == "1.6" && draft.RequiredDlc.SequenceEqual(["ludeon.rimworld.biotech"])
+                && draft.Title == "其他排序文件" && draft.Version == "1.0",
+                "其他排序文件独立读取原顺序、工坊编号、DLC及自身游戏版本，不套用当前游戏版本或当前清单。");
+            Check(Unchanged() && (await File.ReadAllBytesAsync(path)).SequenceEqual(original),
+                "读取其他排序文件不导入、不排序、不保存游戏配置，不改变当前清单、来源、搜索、修改状态及撤销历史。");
+            var saves = 0;
+            MarketplaceManifest? submitted = null;
+            MarketplacePublishWindow Editor() => new(draft, new MarketplacePublishActions
+            {
+                InitialUser = new("FixtureAuthor", null), SnapshotLabel = "文件排序快照 · 其他排序文件.rml（不会修改当前排序）",
+                LoginAsync = (_, _, _) => throw new InvalidOperationException("Unexpected login"),
+                SubmitAsync = (manifest, _, _) =>
+                {
+                    submitted = manifest;
+                    return Task.FromResult(new MarketplaceSubmission(17,
+                        new Uri("https://github.com/Manhattanca/RimWise-Marketplace/pull/17"), "fixture", "fixture.json", new string('a', 64)));
+                },
+                SaveDraft = _ => saves++, Logout = () => { }, OpenTrustedLink = _ => { }
+            }) { Owner = owner };
+            var cancelled = Editor();
+            cancelled.Show();
+            cancelled.DescriptionBox.Text = "关闭后不提交";
+            cancelled.Close();
+            Check(saves == 0 && submitted is null && Unchanged(), "关闭其他文件发布编辑器不会自动保存草稿或替换当前排序。");
+            var editor = Editor();
+            try
+            {
+                editor.Show();
+                Check(editor.SnapshotSummary.Text.Contains("其他排序文件.rml") && editor.SnapshotSummary.Text.Contains("不会修改当前排序"),
+                    "文件读取成功后进入简介编辑器，明确显示独立文件快照来源。");
+                await Idle(editor);
+                PrototypeSmokeCheck.SavePreview(editor, Path.Combine(output, "market-publish-other-file.png"));
+                editor.DescriptionBox.Text = "其他文件的发布简介";
+                await editor.SubmitAsync();
+                Check(submitted is not null && submitted.Mods.SequenceEqual(draft.Mods)
+                    && submitted.Description == "其他文件的发布简介" && Unchanged() && saves == 0,
+                    "其他文件投稿发送所选文件快照和编辑后的简介，不发送当前清单、不自动保存草稿。");
+            }
+            finally { editor.Close(); }
+            foreach (var format in new[] { OrderFileFormat.ModsConfigXml, OrderFileFormat.RimSortJson, OrderFileFormat.ModListXml })
+            {
+                var another = Path.Combine(output, "publish-other-" + format + ".data");
+                await File.WriteAllBytesAsync(another, codec.Write(new OrderFileService().Read(path), format));
+                var converted = await main.LoadMarketplaceFileDraftAsync(another, CancellationToken.None);
+                Check(converted.Mods.Select(mod => mod.PackageId).SequenceEqual(draft.Mods.Select(mod => mod.PackageId)) && Unchanged(),
+                    $"其他文件发布按内容识别 {format}，不依赖扩展名，不导入当前清单。");
+            }
+            var unknownVersion = Path.Combine(output, "publish-no-version.xml");
+            await File.WriteAllTextAsync(unknownVersion, "<ModList><modIds><li>ludeon.rimworld</li><li>example.a</li></modIds></ModList>");
+            Check((await main.LoadMarketplaceFileDraftAsync(unknownVersion, CancellationToken.None)).GameVersion == "" && Unchanged(),
+                "其他文件未声明游戏版本时留给发布者选择，不冒用当前排序版本。");
+            foreach (var invalid in new[] { "MZ harmless non-image fixture", "<ModsConfigData><activeMods>",
+                "<!DOCTYPE x [<!ENTITY value SYSTEM 'file:///not-read'>]><ModsConfigData><activeMods>&value;</activeMods></ModsConfigData>",
+                "<ModsConfigData><activeMods/></ModsConfigData>" })
+            {
+                var bad = Path.Combine(output, "publish-invalid.data");
+                await File.WriteAllTextAsync(bad, invalid);
+                var rejected = false;
+                try { await main.LoadMarketplaceFileDraftAsync(bad, CancellationToken.None); }
+                catch (Exception ex) when (ex is InvalidDataException or System.Xml.XmlException or ArgumentException) { rejected = true; }
+                Check(rejected && Unchanged(), "非排序、损坏、DTD或空清单拒绝进入文件发布编辑，不影响当前排序。");
+            }
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            var cancelledRead = false;
+            try { await main.LoadMarketplaceFileDraftAsync(path, cancellation.Token); }
+            catch (OperationCanceledException) { cancelledRead = true; }
+            Check(cancelledRead && Unchanged() && (await File.ReadAllBytesAsync(path)).SequenceEqual(original),
+                "取消文件读取不更改所选原文件或当前排序。");
+            var empty = new MainWindow(initializePaths: false);
+            try
+            {
+                var standalone = await empty.LoadMarketplaceFileDraftAsync(path, CancellationToken.None);
+                Check(!empty.ViewModel.HasDocument && standalone.Mods.SequenceEqual(draft.Mods),
+                    "没有载入当前排序时也可发布其他排序文件，无需先导入或刷新。");
+            }
+            finally { empty.Close(); }
+        }
+        finally { main.ViewModel.MarkExported(); main.Close(); }
     }
 
     private sealed class ManifestHandler(MarketplaceManifest manifest) : System.Net.Http.HttpMessageHandler

@@ -1,126 +1,223 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using RimWise.Integration.Marketplace;
 
 namespace RimWise.MarketplaceReview;
 
 internal static class ReviewSelfTest
 {
-    private static readonly string Head = new('a',40), Base = new('b',40), Merge = new('c',40);
     internal static async Task<int> Run(string directory)
     {
-        Directory.CreateDirectory(directory); File.Delete(Path.Combine(directory,"failure.txt")); var checks=new List<string>();
-        void Check(bool value,string name){if(!value)throw new InvalidOperationException(name);checks.Add(name);}
+        Directory.CreateDirectory(directory);
+        File.Delete(Path.Combine(directory, "failure.txt"));
+        var checks = new List<string>();
+        void Check(bool value, string name)
+        {
+            if (!value) throw new InvalidOperationException(name);
+            checks.Add(name);
+        }
+
         try
         {
-            // Render only this app's own isolated UI. Never read user credentials or enable startup here.
-            using(var window=new ReviewWindow(false,selfTest:true))
+            using (var window = new ReviewWindow(false, selfTest: true))
             {
-                using var sampleBitmap = new System.Drawing.Bitmap(240, 140);
-                using (var g = System.Drawing.Graphics.FromImage(sampleBitmap)) { g.Clear(System.Drawing.Color.FromArgb(33,77,80)); g.DrawString("RimWise",new System.Drawing.Font("Segoe UI",22),System.Drawing.Brushes.White,45,45); }
-                using var imageStream = new MemoryStream(); sampleBitmap.Save(imageStream,System.Drawing.Imaging.ImageFormat.Png);
-                var image=MarketplaceImages.Prepare("Manhattanca","synthetic-review","1.0.0",0,imageStream.ToArray());
-                window.PreviewForChecks(new(Pull(),"标题：合成排序审核示例\r\n发布者：Manhattanca\r\n游戏版本：1.7 / 1.6\r\n\r\n简介：\r\n这里展示作者填写的简介，以纯文本显示。\r\n\r\n更新日志：\r\n本示例只供界面验证，没有真实投稿。",[],[new(image.Image,image.Content)],true,"这是隔离测试示例，没有连接 GitHub 或修改真实 PR。"));
-                window.Show();window.PerformLayout();using var bitmap=new System.Drawing.Bitmap(window.Width,window.Height);
-                window.DrawToBitmap(bitmap,new System.Drawing.Rectangle(0,0,window.Width,window.Height));bitmap.Save(Path.Combine(directory,"review-window.png"));
-                Check(window.Text.Contains("审核助手"),"Chinese themed independent review window creates without credentials or network");window.Hide();
+                window.Show();
+                window.PerformLayout();
+                using var bitmap = new System.Drawing.Bitmap(window.Width, window.Height);
+                window.DrawToBitmap(bitmap, new System.Drawing.Rectangle(0, 0, window.Width, window.Height));
+                bitmap.Save(Path.Combine(directory, "review-window.png"));
+                Check(window.Text.Contains("审核助手"), "Chinese review UI renders without login or network");
+                var item = new MarketReviewItem(new string('1', 32), null, "1.0", "测试排序名称", "测试昵称", "hidden_username", "pending",
+                    new string('a', 64), "", "1.7", string.Concat(Enumerable.Repeat("这是一段用于审核的长简介。", 100)), "", null, "", 2, []);
+                var pictures = new List<ReviewImage>();
+                for (var index = 0; index < 3; index++)
+                {
+                    using var picture = new System.Drawing.Bitmap(700, 400);
+                    using var graphics = System.Drawing.Graphics.FromImage(picture);
+                    graphics.Clear(System.Drawing.Color.FromArgb(35 + index * 30, 105, 110));
+                    graphics.DrawString("排序展示图片 " + (index + 1), window.Font, System.Drawing.Brushes.White, 35, 35);
+                    using var data = new MemoryStream(); picture.Save(data, System.Drawing.Imaging.ImageFormat.Png);
+                    pictures.Add(new(data.ToArray()));
+                }
+                for (var i = 0; i < 8; i++) window.PreviewForChecks(new(item, "完整辅助信息", pictures, true, ""));
+                Check(window.ContentVisibleForChecks, "Review name description and image area are independently visible");
+                window.DrawToBitmap(bitmap, new System.Drawing.Rectangle(0, 0, window.Width, window.Height));
+                bitmap.Save(Path.Combine(directory, "review-content-three-images.png"));
+                window.PreviewForChecks(new(item with { Description = "" }, "辅助信息", [], true, ""));
+                Check(window.ContentVisibleForChecks, "Optional empty description and images have explicit placeholders");
+                foreach (bool approve in new[] { true, false })
+                {
+                    var afterDecision = new Server(failAfterDecision: true);
+                    using var decisionApi = new ReviewApi(afterDecision, new Uri("https://market.example/"));
+                    var viewed = await decisionApi.InspectAsync((await decisionApi.ListAsync(default)).Single(), default);
+                    using var decisionWindow = new ReviewWindow(false, selfTest: true, testApi: decisionApi);
+                    decisionWindow.Show(); decisionWindow.PreviewForChecks(viewed);
+                    await decisionWindow.DecideForChecksAsync(viewed, approve);
+                    Check(afterDecision.Decisions == 1 && decisionWindow.StatusForChecks.Contains("服务器已确认")
+                        && decisionWindow.StatusForChecks.Contains("无需重复提交"),
+                        approve ? "Committed approval remains successful when refresh fails" : "Committed rejection remains successful when refresh fails");
+                    decisionWindow.Hide();
+                }
+
+                window.Hide();
             }
+
             SynchronizationContext.SetSynchronizationContext(null);
-            var checkedAt=new DateTimeOffset(2026,11,17,0,0,0,TimeSpan.Zero);
-            var settings=new ReviewSettings{LastCheckUtc=checkedAt};
-            Check(settings.NextCheckUtc-settings.LastCheckUtc.Value==TimeSpan.FromMinutes(1),"Polling interval is exactly one minute");
-            Check(checkedAt.AddSeconds(59)<settings.NextCheckUtc,"No background polling at fifty-nine seconds");
-            Check(checkedAt.AddSeconds(60)>=settings.NextCheckUtc,"Automatic polling is due at sixty seconds");
-            Check(ReviewSettings.StartupCommand().EndsWith("\" --background"),"Startup command quotes exact executable and uses background mode");
-            var state=new NotificationState();var first=Pull();Check(state.Update([first]).Count==1,"New PR notifies once");Check(state.Update([first]).Count==0,"Unchanged PR does not notify again");Check(state.Update([first with{Sha=Merge}]).Count==1,"New PR head notifies again");
-            foreach(var mode in new[]{"success","head-changed","base-changed","final-head-changed","final-base-changed","draft","closed","failed-check","queued-check","running-check","missing-check","fake-app","foreign-workflow","old-base-proof","merge-rejected","cancelled"})
+            var checkedAt = new DateTimeOffset(2026, 11, 17, 0, 0, 0, TimeSpan.Zero);
+            var settings = new ReviewSettings { LastCheckUtc = checkedAt };
+            Check(settings.NextCheckUtc - checkedAt == TimeSpan.FromMinutes(1), "Server polling interval is one minute");
+            Check(checkedAt.AddSeconds(59) < settings.NextCheckUtc, "Automatic API polling remains paused before the interval");
+            Check(checkedAt.AddSeconds(60) >= settings.NextCheckUtc, "Automatic API polling becomes due after one minute");
+            Check(ReviewSettings.StartupCommand().EndsWith("\" --background"), "Startup command uses the quoted local executable");
+
+            var server = new Server();
+            using var api = new ReviewApi(server, new Uri("https://market.example/"));
+            var displayName = await api.LoginAsync("reviewer", "synthetic-password", CancellationToken.None);
+            Check(displayName == "审核员", "Login accepts an authenticated market reviewer");
+            var items = await api.ListAsync(CancellationToken.None);
+            Check(items.Count == 1 && items[0].State == "pending", "Review list contains only pending market submissions");
+            var snapshot = await api.InspectAsync(items[0], CancellationToken.None);
+            Check(snapshot.Supported && snapshot.Text.Contains("合成排序") && snapshot.Images.Count == 0,
+                "Submission metadata is rendered as text without executing it");
+            await api.DecideAsync(snapshot, approve: true, "", CancellationToken.None);
+            Check(server.Decisions == 1 && server.LastDecision?.Approve == true,
+                "Approval is submitted to the market server after rechecking the revision");
+            Check(server.Requests.All(uri => uri.Host == "market.example"), "Credentials and review requests stay on the configured HTTPS origin");
+            var notifications = new NotificationState();
+            Check(notifications.Update(items).Count == 1 && notifications.Update(items).Count == 0
+                && notifications.Update([items[0] with { ReviewToken = new string('b', 64) }]).Count == 1,
+                "Notifications track full submission changes without repeated unchanged alerts");
+
+            foreach (var broken in new[] { false, true })
             {
-                var server=new Server(mode);using var api=new ReviewApi(server);api.SetToken("synthetic-test-token");
-                var snapshot=new ReviewSnapshot(Pull(),"合成文本",[],[],true,"");using var cancel=new CancellationTokenSource();if(mode=="cancelled")cancel.Cancel();
-                bool succeeded=false;try{await api.MergeAsync(snapshot,cancel.Token);succeeded=true;}catch(Exception ex)when(ex is InvalidOperationException or OperationCanceledException){if(mode=="success")throw new InvalidOperationException("Expected merge failed",ex);}
-                Check(succeeded==(mode=="success"),"Merge gate: "+mode);
-                Check(server.Writes==(mode is "success" or "merge-rejected"?1:0),"No unauthorized merge write: "+mode);
-                if(mode=="success")Check(server.MergeSha==Head,"Merge request pins reviewed head SHA");
+                var imageServer = new Server(withImage: true, tamperedImage: broken);
+                using var imageApi = new ReviewApi(imageServer, new Uri("https://market.example/"));
+                await imageApi.LoginAsync("reviewer", "synthetic-password", default);
+                var imageSnapshot = await imageApi.InspectAsync((await imageApi.ListAsync(default)).Single(), default);
+                Check(imageSnapshot.Supported != broken && imageSnapshot.Images.Count == (broken ? 0 : 1),
+                    broken ? "Tampered image disables approval without executing content" : "Image bytes are read and verified against their advertised digest");
+                await imageApi.DecideAsync(imageSnapshot, approve: false, "请修改图片或说明", default);
+                Check(imageServer.LastDecision?.Approve == false, "Reviewer can return a submission including one with broken images");
+                await imageApi.LogoutAsync(default);
+                Check(imageServer.Requests.Last().AbsolutePath == "/api/logout", "Logout revokes the server session on demand");
             }
-            foreach(var pair in new[]{("success",""),("queued-check","正在等待或运行"),("running-check","正在等待或运行"),("failed-check","未通过或已取消"),("missing-check","尚未找到"),("old-base-proof","未证明当前主分支"),("fake-app","尚未找到"),("foreign-workflow","尚未找到")})
+
+            using (var nonAdmin = new ReviewApi(new Server(admin: false), new Uri("https://market.example/")))
             {
-                var server=new Server(pair.Item1);using var api=new ReviewApi(server);api.SetToken("synthetic-test-token");
-                string message="";try{await api.CheckReadinessAsync(Pull(),CancellationToken.None);}catch(InvalidOperationException ex){message=ex.Message;}
-                Check(pair.Item2.Length==0?message.Length==0:message.Contains(pair.Item2),"Readiness reports actual check state: "+pair.Item1);
-                Check(server.Writes==0,"Readiness never merges or reruns workflows: "+pair.Item1);
+                bool rejected = false;
+                try { await nonAdmin.LoginAsync("reviewer", "synthetic-password", CancellationToken.None); }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("没有审核权限")) { rejected = true; }
+                Check(rejected, "Non-reviewer accounts cannot enter the review workflow");
             }
-            foreach(var mode in new[]{"inspect","tampered-image","extra-file","wrong-author","removal","removal-other-user","removal-partial","removal-extra","removal-stale"})
+
+            var staleServer = new Server(stale: true);
+            using (var staleApi = new ReviewApi(staleServer, new Uri("https://market.example/")))
             {
-                var server=new Server(mode);using var api=new ReviewApi(server);api.SetToken("synthetic-test-token");
-                bool accepted=false;try{var snapshot=await api.InspectAsync(7,CancellationToken.None);accepted=snapshot.Supported;if(accepted)Check(mode.StartsWith("removal")?snapshot.IsRemoval&&snapshot.Images.Count==0:snapshot.Images.Count==1,"Inspection reads the correct publication or removal scope");}catch(Exception ex)when(ex is MarketplaceException or InvalidDataException or InvalidOperationException){}
-                Check(accepted==(mode is "inspect" or "removal" or "removal-partial"),"Pinned image or author removal inspection: "+mode);Check(server.Writes==0,"Inspect is read-only: "+mode);
+                await staleApi.LoginAsync("reviewer", "synthetic-password", CancellationToken.None);
+                var staleItem = (await staleApi.ListAsync(CancellationToken.None)).Single();
+                var stale = await staleApi.InspectAsync(staleItem, CancellationToken.None);
+                bool rejected = false;
+                try { await staleApi.DecideAsync(stale, approve: true, "", CancellationToken.None); }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("已变化")) { rejected = true; }
+                Check(rejected && staleServer.Decisions == 0, "Changed submissions cannot be approved from a stale review snapshot");
             }
-            using(var handler=new Server("inspect"))using(var api=new ReviewApi(handler))
-            {api.SetToken("synthetic-test-token");var identity=await api.IdentityAsync(CancellationToken.None);Check(identity=="Manhattanca","Maintainer identity requires repository push permission");var pulls=await api.ListAsync(CancellationToken.None);Check(pulls.Count==1,"Poll reads open main-branch PR list only");}
-            using(var server=new Server("removal"))using(var api=new ReviewApi(server))
-            {
-                api.SetToken("synthetic-test-token");var removal=await api.InspectAsync(7,CancellationToken.None);
-                await api.MergeAsync(removal,CancellationToken.None);
-                Check(server.Writes==1&&server.MergeSha==Head&&server.MergeTitle=="作者本人下架排序 #7",
-                    "Reviewer can merge a verified author removal with the exact head and correct removal action");
-            }
-            await File.WriteAllTextAsync(Path.Combine(directory,"result.json"),JsonSerializer.Serialize(new{Passed=checks.Count,Checks=checks},new JsonSerializerOptions{WriteIndented=true}));return 0;
+
+            await File.WriteAllTextAsync(Path.Combine(directory, "result.json"),
+                JsonSerializer.Serialize(new { Passed = checks.Count, Checks = checks }, new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
         }
-        catch(Exception ex){await File.WriteAllTextAsync(Path.Combine(directory,"failure.txt"),ex.ToString());return 1;}
+        catch (Exception ex)
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory, "failure.txt"), ex.ToString());
+            return 1;
+        }
     }
-    private static ReviewPull Pull()=>new(7,"合成排序","Manhattanca","",Head,ReviewApi.Repository,Base,"main",false,DateTimeOffset.UtcNow) {AuthorId=123};
-    private sealed class Server(string mode):HttpMessageHandler
+
+    private sealed class Server(bool admin = true, bool stale = false, bool withImage = false, bool tamperedImage = false, bool failAfterDecision = false) : HttpMessageHandler
     {
-        internal int Writes;internal string? MergeSha;internal string? MergeTitle;
-        private int gets;
-        private readonly byte[] image=Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
-        private MarketplaceManifest Manifest()
+        private const string SubmissionId = "11111111111141118111111111111111";
+        private const string Digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        private const string ImageId = "22222222222242228222222222222222";
+        private readonly byte[] image = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+        internal readonly List<Uri> Requests = [];
+        internal int Decisions;
+        internal Decision? LastDecision;
+        private bool approved;
+        private int reviewReads;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var author=mode=="wrong-author"?"another":"Manhattanca";
-            return new MarketplaceManifest(1,"synthetic-review","1.0.0","合成排序",author,"<script>只是纯文本</script>","1.7",[],null,[new("ludeon.rimworld",null)])
-                {Images=[MarketplaceImages.Prepare(author,"synthetic-review","1.0.0",0,image).Image]};
+            cancellationToken.ThrowIfCancellationRequested();
+            var uri = request.RequestUri!;
+            Requests.Add(uri);
+            object? body = null;
+            if (request.Content is not null)
+            {
+                var bytes = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+                if (bytes.Length > 16 * 1024) throw new InvalidOperationException("Review request body exceeded the mock limit.");
+                body = JsonSerializer.Deserialize<JsonElement>(bytes);
+            }
+
+            if (uri.AbsolutePath == "/api/csrf" && request.Method == HttpMethod.Get)
+                return Json(new { token = "synthetic-csrf-token" });
+            if (uri.AbsolutePath == "/api/login" && request.Method == HttpMethod.Post)
+            {
+                CheckCsrf(request);
+                return NoContent();
+            }
+            if (uri.AbsolutePath == "/api/me" && request.Method == HttpMethod.Get)
+                return Json(new { username = "reviewer", nickname = "审核员", admin });
+            if (uri.AbsolutePath == "/api/review" && request.Method == HttpMethod.Get)
+            {
+                if (failAfterDecision && Decisions > 0) throw new HttpRequestException("Synthetic refresh failure");
+                return Json(approved ? Array.Empty<object>() : new[] { Item(stale && ++reviewReads >= 3 ? new string('b', 64) : Digest) });
+            }
+            if (uri.AbsolutePath == "/api/images/" + ImageId)
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(tamperedImage ? new byte[] { 1, 2, 3 } : image) };
+            if (uri.AbsolutePath == "/api/review/" + SubmissionId && request.Method == HttpMethod.Post)
+            {
+                CheckCsrf(request);
+                if (stale) return Error(HttpStatusCode.Conflict, "投稿状态或内容已变化，请刷新并重新查看后再审核。");
+                var payload = (JsonElement)body!;
+                var decision = new Decision(payload.GetProperty("approve").GetBoolean(), payload.GetProperty("reason").GetString() ?? "");
+                if (!decision.Approve && string.IsNullOrWhiteSpace(decision.Reason)) return Error(HttpStatusCode.BadRequest, "请填写退回原因。");
+                LastDecision = decision;
+                Decisions++;
+                approved = decision.Approve;
+                return NoContent();
+            }
+            if (uri.AbsolutePath == "/api/logout" && request.Method == HttpMethod.Post)
+            {
+                CheckCsrf(request);
+                return NoContent();
+            }
+            throw new InvalidOperationException("Unexpected mock market API request: " + request.Method + " " + uri.AbsolutePath);
         }
-        private object PullJson()=>new{number=7,title="合成排序",body="",user=new{login="Manhattanca",id=123L},state=mode=="closed"?"closed":"open",draft=mode=="draft",updated_at=DateTimeOffset.UtcNow,
-            head=new{sha=mode=="head-changed"||(mode is "final-head-changed" or "removal-stale")&&gets>1?Merge:Head,repo=new{full_name=ReviewApi.Repository}},@base=new{sha=mode=="base-changed"||mode=="final-base-changed"&&gets>1?Merge:Base,@ref="main",repo=new{full_name=ReviewApi.Repository}},merge_commit_sha=Merge};
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken)
+
+        private object Item(string sha) => new
         {
-            cancellationToken.ThrowIfCancellationRequested();var uri=request.RequestUri!;object response;
-            if(uri.Host=="raw.githubusercontent.com")
+            id = SubmissionId, listingId = (string?)null, version = "1.0.0", state = "pending", sha256 = Digest, reviewToken = sha,
+            author = "排序作者", ownerUsername = "author", reason = "", metadata = new
             {
-                if(request.Headers.Authorization is not null)throw new InvalidOperationException("Credentials leaked to raw host");
-                var bytes=uri.AbsolutePath.EndsWith(".json")?MarketplaceJson.SerializeManifest(Manifest()):image.ToArray();
-                if(mode=="tampered-image"&&!uri.AbsolutePath.EndsWith(".json"))bytes[30]^=1;
-                return new HttpResponseMessage(HttpStatusCode.OK){Content=new ByteArrayContent(bytes),RequestMessage=request};
-            }
-            var path=uri.AbsolutePath;
-            if(path=="/user")response=new{login="Manhattanca"};
-            else if(path=="/repos/"+ReviewApi.Repository)response=new{permissions=new{push=true}};
-            else if(path.EndsWith("/pulls/7")){gets++;response=PullJson();}
-            else if(path.EndsWith("/pulls/1/files"))response=new[]{new{filename=MarketplaceJson.GetManifestPath("Manhattanca","synthetic-review","1.0.0"),status="added"}};
-            else if(path.EndsWith("/commits"))response=new[]{new{sha=Merge}};
-            else if(path.EndsWith("/commits/"+Merge+"/pulls"))response=new[]{new{number=1,merged_at="2026-11-01T00:00:00Z",user=new{id=mode=="removal-other-user"?456:123},@base=new{@ref="main",repo=new{full_name=ReviewApi.Repository}}}};
-            else if(path.Contains("/git/trees/"))
-            {
-                var paths=new List<object>{new{path=MarketplaceJson.GetManifestPath("Manhattanca","synthetic-review","1.0.0"),type="blob"}};
-                if(mode=="removal-partial")paths.Add(new{path=MarketplaceJson.GetManifestPath("Manhattanca","synthetic-review","1.0.1"),type="blob"});
-                response=new{truncated=false,tree=paths};
-            }
-            else if(path.EndsWith("/files"))
-            {
-                var m=Manifest();var status=mode.StartsWith("removal")?"removed":"added";var paths=new List<object>{new{filename=MarketplaceJson.GetManifestPath(m.Author,m.Id,m.Version),status},new{filename=m.Images[0].Path,status}};
-                if(mode is "extra-file" or "removal-extra")paths.Add(new{filename=".github/workflows/evil.yml",status});response=paths;
-            }
-            else if(path.EndsWith("/pulls"))response=new[]{PullJson()};
-            else if(path.EndsWith("/check-runs")&&mode=="missing-check")response=new{total_count=0,check_runs=Array.Empty<object>()};
-            else if(path.EndsWith("/check-runs"))response=new{total_count=1,check_runs=new[]{new{name="validate-submission",status=mode=="queued-check"?"queued":mode=="running-check"?"in_progress":"completed",conclusion=mode is "queued-check" or "running-check"?null:mode=="failed-check"?"failure":"success",head_sha=Head,
-                app=new{id=mode=="fake-app"?1:15368,slug="github-actions"},check_suite=new{id=99L},details_url="https://github.com/Manhattanca/RimWise-Marketplace/actions/runs/123/job/456"}}};
-            else if(path.EndsWith("/actions/runs/123"))response=new{path=mode=="foreign-workflow"?".github/workflows/foreign.yml":".github/workflows/marketplace.yml",@event="pull_request",head_sha=Head,check_suite_id=99L,repository=new{full_name=ReviewApi.Repository},pull_requests=Array.Empty<object>()};
-            else if(path.EndsWith("/jobs"))response=new{total_count=1,jobs=new[]{new{name="validate-submission",conclusion="success",steps=new[]{new{name="Validate data with the trusted base-branch tool (base "+(mode=="old-base-proof"?Merge:Base)+")",status="completed",conclusion="success"}}}}};
-            else if(path.EndsWith("/merge"))
-            {Writes++;using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));MergeSha=body.RootElement.GetProperty("sha").GetString();MergeTitle=body.RootElement.GetProperty("commit_title").GetString();response=new{merged=mode!="merge-rejected"};}
-            else throw new InvalidOperationException("Unexpected mock request "+uri);
-            return new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(response),Encoding.UTF8,"application/json"),RequestMessage=request};
+                title = "合成排序", description = "仅用于审核助手隔离测试。", gameVersions = "1.7", dlc = "",
+                workshopId = (string?)null, releaseNotes = "", modCount = 1
+            }, images = withImage ? new[] { new { id = ImageId, mime = "image/png", bytes = image.Length,
+                sha256 = RimWise.Integration.Marketplace.MarketplaceJson.ComputeSha256(image) } } : Array.Empty<object>()
+        };
+
+        private static void CheckCsrf(HttpRequestMessage request)
+        {
+            if (!request.Headers.TryGetValues("X-RimWise-CSRF", out var values) || values.Single() != "synthetic-csrf-token"
+                || !request.Headers.TryGetValues("Origin", out var origins) || origins.Single() != "https://market.example")
+                throw new InvalidOperationException("Market mutation omitted the expected origin or CSRF header.");
         }
+
+        private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK)
+        { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };
+        private static HttpResponseMessage NoContent() => new(HttpStatusCode.NoContent);
+        private static HttpResponseMessage Error(HttpStatusCode code, string message) => new(code)
+        { Content = new StringContent(JsonSerializer.Serialize(new { error = message }), Encoding.UTF8, "application/json") };
     }
+
+    private sealed record Decision(bool Approve, string Reason);
 }

@@ -54,7 +54,7 @@
     <Grid>
      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="120"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
      <Grid Margin="0,0,8,6">
-      <TextBox x:Name="SearchText" ToolTip="搜索文本、模组标识或堆栈；仅过滤当前显示缓存" TextChanged="Filter_Changed" AutomationProperties.Name="搜索日志"/>
+      <TextBox x:Name="SearchText" Style="{StaticResource SearchInput}" ToolTip="搜索文本、模组标识或堆栈；仅过滤当前显示缓存" TextChanged="Filter_Changed" AutomationProperties.Name="搜索日志"/>
       <TextBlock Text="搜索日志" Margin="10,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}" IsHitTestVisible="False">
        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchText}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
       </TextBlock>

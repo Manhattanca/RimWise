@@ -11,6 +11,11 @@
 #ifndef ActiveMutexValue
   #define ActiveMutexValue "Local\RimWise.Installation.Active"
 #endif
+#ifdef LegacyTestLayout
+  #define ProgramDir "{app}\versions\" + AppVersion
+#else
+  #define ProgramDir "{app}"
+#endif
 
 [Setup]
 AppId={#AppIdValue}
@@ -32,7 +37,7 @@ MinVersion=10.0
 OutputDir={#OutputDirectory}
 OutputBaseFilename=RimWise-v{#AppVersion}-Setup
 SetupIconFile={#IconPath}
-UninstallDisplayIcon={app}\versions\{#AppVersion}\RimWise.exe
+UninstallDisplayIcon={#ProgramDir}\RimWise.exe
 LicenseFile={#LicensePath}
 Compression=lzma2
 SolidCompression=yes
@@ -41,7 +46,8 @@ AppMutex={#ActiveMutexValue}
 SetupMutex=Local\RimWise.Setup.Active
 CloseApplications=no
 RestartApplications=no
-UninstallLogMode=append
+UninstallLogMode=overwrite
+Uninstallable=not IsPortableUpdate
 UninstallDisplayName={#AppNameValue}
 VersionInfoVersion={#AppVersion}
 ShowLanguageDialog=no
@@ -53,20 +59,34 @@ Name: "chinesesimplified"; MessagesFile: "{#ChineseMessages}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{#PackageDirectory}\*"; DestDir: "{app}\versions\{#AppVersion}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifdef ExternalPayload
+  #include "ExternalFiles.iss"
+#else
+Source: "{#PackageDirectory}\*"; DestDir: "{#ProgramDir}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RuntimeInstaller}"; DestName: "windowsdesktop-runtime.exe"; Flags: dontcopy
+#endif
 
 [Icons]
-Name: "{autoprograms}\{#AppNameValue} 独立诊断导出"; Filename: "{app}\versions\{#AppVersion}\Diagnostics\RimWise.Diagnostics.exe"; WorkingDir: "{app}\versions\{#AppVersion}\Diagnostics"
-Name: "{autoprograms}\{#AppNameValue}"; Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; WorkingDir: "{app}\versions\{#AppVersion}"
-Name: "{app}\卸载 RimWise"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppNameValue}"; Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; WorkingDir: "{app}\versions\{#AppVersion}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppNameValue} 独立诊断导出"; Filename: "{#ProgramDir}\Diagnostics\RimWise.Diagnostics.exe"; WorkingDir: "{#ProgramDir}\Diagnostics"; Check: not IsPortableUpdate
+Name: "{autoprograms}\{#AppNameValue}"; Filename: "{#ProgramDir}\RimWise.exe"; WorkingDir: "{#ProgramDir}"; Check: not IsPortableUpdate
+Name: "{autodesktop}\{#AppNameValue}"; Filename: "{#ProgramDir}\RimWise.exe"; WorkingDir: "{#ProgramDir}"; Check: KeepDesktopShortcut
 
 [Run]
-Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; Description: "{cm:LaunchProgram,{#AppNameValue}}"; Flags: nowait postinstall skipifsilent unchecked
-Filename: "{app}\versions\{#AppVersion}\RimWise.exe"; Flags: nowait runasoriginaluser; Check: IsAutomaticUpdate
+Filename: "{#ProgramDir}\RimWise.exe"; Description: "{cm:LaunchProgram,{#AppNameValue}}"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{#ProgramDir}\RimWise.exe"; Flags: nowait runasoriginaluser; Check: IsAutomaticUpdate
 
 [Code]
+function IsPortableUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:RIMWISEPORTABLE|0}') = '1';
+end;
+
+function KeepDesktopShortcut: Boolean;
+begin
+  Result := not IsPortableUpdate and
+    (WizardIsTaskSelected('desktopicon') or FileExists(ExpandConstant('{autodesktop}\{#AppNameValue}.lnk')));
+end;
+
 function IsAutomaticUpdate: Boolean;
 begin
   Result := ExpandConstant('{param:RIMWISEUPDATE|0}') = '1';
@@ -96,7 +116,7 @@ begin
       exit;
     end;
   end;
-  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppIdValue}_is1', 'DisplayVersion', Installed) then
+  if not IsPortableUpdate and RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppIdValue}_is1', 'DisplayVersion', Installed) then
     if StrToVersion(Installed, PreviousVersion) and StrToVersion('{#AppVersion}', NewVersion) then
       if ComparePackedVersion(PreviousVersion, NewVersion) > 0 then
       begin
@@ -115,7 +135,7 @@ begin
   if UninstallSilent then exit;
   if SuppressibleMsgBox('是否同时清除 RimWise 的个人数据？选择“否”将保留设置、排序记录和其他用户数据。',
       mbConfirmation, MB_YESNO, IDNO) <> IDYES then exit;
-  Executable := ExpandConstant('{app}\versions\{#AppVersion}\RimWise.exe');
+  Executable := ExpandConstant('{#ProgramDir}\RimWise.exe');
   if not FileExists(Executable) then
   begin
     SuppressibleMsgBox('找不到 RimWise 数据清理程序。为保护个人数据，卸载已取消。', mbError, MB_OK, IDOK);
@@ -167,16 +187,64 @@ begin
   if not Result then Result := HasRuntimeAt(ExpandConstant('{commonpf64}\dotnet'));
 end;
 
+function GetFileAttributesW(FileName: String): Cardinal;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
+
+function IsPlainPath(Path: String): Boolean;
+var
+  Attributes: Cardinal;
+  Parent: String;
+begin
+  Result := False;
+  while Path <> '' do
+  begin
+    Attributes := GetFileAttributesW(Path);
+    if (Attributes <> $FFFFFFFF) and ((Attributes and $400) <> 0) then exit;
+    Parent := ExtractFileDir(Path);
+    if Parent = Path then break;
+    Path := Parent;
+  end;
+  Result := True;
+end;
+
+procedure CheckPayloadFile(RelativePath, AllowedHashes, ExpectedHash: String);
+var
+  Target, SourcePath: String;
+begin
+  Target := AddBackslash(ExpandConstant('{#ProgramDir}')) + RelativePath;
+  if not IsPlainPath(Target) or DirExists(Target) then
+    RaiseException('安装位置包含目录链接或同名目录：' + RelativePath);
+  if FileExists(Target) then
+    if Pos('|' + Lowercase(GetSHA256OfFile(Target)) + '|', AllowedHashes) = 0 then
+      RaiseException('安装位置存在无法确认归属的同名文件：' + RelativePath);
+#ifdef ExternalPayload
+  SourcePath := ExpandConstant('{src}\payload\') + RelativePath;
+  if not IsPlainPath(SourcePath) or not FileExists(SourcePath) then
+    RaiseException('缺少新版程序文件：' + RelativePath);
+  if CompareText(GetSHA256OfFile(SourcePath), ExpectedHash) <> 0 then
+    RaiseException('新版程序文件校验失败：' + RelativePath);
+#endif
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ExitCode: Integer;
 begin
   Result := '';
+  try
+    #include "CheckPayload.iss"
+  except
+    Result := GetExceptionMessage;
+    exit;
+  end;
   if HasDesktopRuntime then
   begin
     Log('.NET 10 Desktop Runtime x64 already available.');
     exit;
   end;
+#ifdef ExternalPayload
+  Result := '缺少 .NET 10 桌面运行时（x64），请使用完整安装包。';
+#else
   if WizardSilent then
   begin
     Result := '请先安装 .NET 10 桌面运行时（x64），或双击本安装包进行安装。';
@@ -198,15 +266,17 @@ begin
   else if not HasDesktopRuntime then
     Result := '仍未检测到所需运行时。如系统提示需要重启，请重启后重新运行本安装包。';
   NeedsRestart := ExitCode = 3010;
+#endif
 end;
 
 procedure RemoveKnownOldFile(RelativePath, ExpectedHash: String);
 var
   Path: String;
 begin
+  if IsPortableUpdate and (Pos('versions\', RelativePath) = 1) then exit;
   { Generated entries only: exact files and hashes from prior distribution packages. }
   Path := ExpandConstant('{app}\') + RelativePath;
-  if not FileExists(Path) then exit;
+  if not IsPlainPath(Path) or not FileExists(Path) then exit;
   try
     if CompareText(GetSHA256OfFile(Path), ExpectedHash) = 0 then
     begin
@@ -218,10 +288,45 @@ begin
   end;
 end;
 
+procedure RemoveKnownEmptyDir(RelativePath: String);
+var
+  Path: String;
+begin
+  if IsPortableUpdate then exit;
+  Path := ExpandConstant('{app}\') + RelativePath;
+  if IsPlainPath(Path) then RemoveDir(Path);
+end;
+
+procedure RemoveLegacyUninstallShortcut;
+var
+  Path, Target: String;
+  Shell, Shortcut: Variant;
+begin
+  if IsPortableUpdate then exit;
+  Path := ExpandConstant('{app}\卸载 RimWise.lnk');
+  Target := ExpandConstant('{uninstallexe}');
+  if not IsPlainPath(Path) or not IsPlainPath(Target) or not FileExists(Path) then exit;
+  try
+    { Read only: never Save the shortcut or remove a same-name personal link. }
+    Shell := CreateOleObject('WScript.Shell');
+    Shortcut := Shell.CreateShortcut(Path);
+    if (CompareText(Shortcut.TargetPath, Target) = 0) and (Shortcut.Arguments = '') then
+    begin
+      if not DeleteFile(Path) then Log('Preserved occupied legacy uninstall shortcut.');
+    end
+    else Log('Preserved unrelated same-name shortcut.');
+  except
+    Log('Preserved unreadable legacy uninstall shortcut.');
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssDone then
   begin
+    RemoveLegacyUninstallShortcut;
+#ifndef LegacyTestLayout
     #include "RetiredInstallerFiles.iss"
+#endif
   end;
 end;

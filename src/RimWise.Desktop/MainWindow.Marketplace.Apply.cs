@@ -99,18 +99,25 @@ public partial class MainWindow
                 return Task.FromResult(dialog.Result == MessageBoxResult.Yes);
             }
             Report("正在核对 Steam 订阅及下载状态…");
-            var completed = await (download?.Invoke(manifest, progress, operationToken)
-                ?? MarketplaceWorkshopDownloads.DownloadAsync(manifest, AppContext.BaseDirectory, progress, operationToken, ConfirmMissing));
+            IReadOnlyList<WorkshopItemState> completed;
+            try
+            {
+                completed = await (download?.Invoke(manifest, progress, operationToken)
+                    ?? MarketplaceWorkshopDownloads.DownloadAsync(manifest, AppContext.BaseDirectory, progress, operationToken, ConfirmMissing));
+            }
+            catch (OperationCanceledException) when (operationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                or System.Net.Http.HttpRequestException or TimeoutException)
+            {
+                Guard();
+                completed = [];
+                Report("Steam 下载未能完成，已跳过不可用下载并继续导入；缺失模组会在完成后提示。");
+            }
             Guard();
             var expectedIds = manifest.Mods.Where(mod => mod.WorkshopId is not null).Select(mod => mod.WorkshopId!).ToHashSet(StringComparer.Ordinal);
-            if (completed.Any(item => !expectedIds.Remove(item.Id)))
+            var collectionBound = !string.IsNullOrWhiteSpace(manifest.WorkshopCollectionId);
+            if (!collectionBound && completed.Any(item => !expectedIds.Remove(item.Id)))
                 throw new IOException("Steam 返回了重复或无关项目，未读取其他模组目录。");
-            var incomplete = manifest.Mods.Where(mod => mod.WorkshopId is not null)
-                .Where(mod => !completed.Any(item => item.Id == mod.WorkshopId && item.Installed && !string.IsNullOrWhiteSpace(item.Directory)))
-                .Select(mod => mod.PackageId).ToArray();
-            var downloadNotice = incomplete.Length == 0 ? "创意工坊下载已完成。"
-                : $"Steam 尚未确认 {incomplete.Length} 个模组安装完成，缺失项仅提示，仍导入完整排序：" + string.Join("、", incomplete.Take(8))
-                    + (incomplete.Length > 8 ? "等。" : "。");
             completed = completed.Where(item => item.Installed && !string.IsNullOrWhiteSpace(item.Directory)).ToArray();
             if (completed.Count > 0 && download is null)
             {
@@ -133,6 +140,14 @@ public partial class MainWindow
                 { /* Download completion is authoritative; unreadable mod metadata must not gate import. */ }
             }
             Guard();
+            var installedIds = ViewModel.CurrentCatalogue?.Installations
+                .Select(mod => mod.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+            var incomplete = manifest.Mods
+                .Where(mod => !GameContentPolicy.KeepWhenClearing(mod.PackageId, runtimeVersion) && !installedIds.Contains(mod.PackageId))
+                .Select(mod => mod.PackageId).ToArray();
+            var downloadNotice = incomplete.Length == 0 ? "排序中的模组已在本机找到。"
+                : $"有 {incomplete.Length} 个模组未能下载或本机缺失，已跳过并继续导入排序：" + string.Join("、", incomplete.Take(8))
+                    + (incomplete.Length > 8 ? "等。" : "。");
             Report(downloadNotice + "正在导入排序…");
             var importNotice = MarketplaceOrderCompatibility.VersionNotice(manifest, runtimeVersion);
             var newIds = order.ToHashSet(StringComparer.OrdinalIgnoreCase);

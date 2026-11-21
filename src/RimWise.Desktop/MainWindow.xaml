@@ -184,7 +184,7 @@
             <Grid Grid.Row="1" Margin="0,0,0,14">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <TextBlock Text="搜索" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}" Margin="0,0,12,0" />
-                <TextBox Grid.Column="1" x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Grid.Column="1" x:Name="SearchBox" Style="{StaticResource SearchInput}" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
             </Grid>
             <Grid Grid.Row="2" x:Name="ModPanes">
                 <Grid.ColumnDefinitions>

@@ -130,6 +130,9 @@ internal static class AutomaticSortingPreferencesSmokeCheck
         {
             picker.Show();
             await owner.Dispatcher.InvokeAsync(() => picker.UpdateLayout(), DispatcherPriority.ApplicationIdle);
+            Assert(Math.Abs(picker.SearchBox.ActualHeight - owner.RowHeightButton.ActualHeight) < 0.1
+                && Math.Abs(picker.SelectedSearchBox.ActualHeight - owner.RowHeightButton.ActualHeight) < 0.1,
+                "Both insertion picker searches must match the screenshot control height.");
             Assert(picker.ModsList.Items.Count == owner.ViewModel.AvailableMods.Count, "Picker lost inactive mods");
             Assert(picker.ConfirmButton.IsEnabled && picker.CountText.Text.Contains("无需添加"),
                 "Empty picker still requires adding a mod");

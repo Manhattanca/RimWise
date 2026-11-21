@@ -18,19 +18,24 @@ public sealed class MarketplacePublishActions
     public string ClientId { get; init; } = "";
     public bool ClientSecretConfigured { get; set; }
     public bool IsUpdate { get; init; }
+    public string? InitialNotice { get; init; }
+    public string SnapshotLabel { get; init; } = "排序快照";
     public GitHubMarketplaceUser? InitialUser { get; init; }
     public required Func<string, Action<Uri>, CancellationToken, Task<GitHubMarketplaceUser>> LoginAsync { get; init; }
     public required Func<MarketplaceManifest, IProgress<string>, CancellationToken, Task<MarketplaceSubmission>> SubmitAsync { get; init; }
     public required Action Logout { get; init; }
     public required Action<Uri> OpenTrustedLink { get; init; }
     public Func<MarketplaceManifest, IReadOnlyList<MarketplaceImageUpload>, IProgress<string>, CancellationToken, Task<MarketplaceSubmission>>? SubmitImagesAsync { get; init; }
+    public bool IsAccountMarket { get; init; }
+    public Func<CancellationToken, Task<GitHubMarketplaceUser>>? AccountLoginAsync { get; init; }
+    public Func<MarketplaceManifest, IReadOnlyList<MarketplaceImageUpload>, IProgress<string>, CancellationToken, Task<MarketplaceSubmission>>? SubmitAccountAsync { get; init; }
     public Action<MarketplaceManifest, IReadOnlyList<byte[]>>? SaveImageDraft { get; init; }
     public IReadOnlyList<byte[]> InitialImages { get; init; } = [];
     public Action<MarketplaceManifest>? SaveDraft { get; init; }
     public Func<MarketplaceManifest?>? LoadDraft { get; init; }
-    public Func<MarketplaceManifest, CancellationToken, Task<MarketplaceManifest>>? PrepareDraftAsync { get; init; }
     public Func<string, CancellationToken, Task<string>>? FetchCollectionDescriptionAsync { get; init; }
     public Func<CancellationToken, Task<IReadOnlyList<string>>>? LoadMarketplaceIdsAsync { get; init; }
+    public Func<CancellationToken, Task>? LogoutAccountAsync { get; init; }
 }
 
 public partial class MarketplacePublishWindow : Window
@@ -58,18 +63,6 @@ public partial class MarketplacePublishWindow : Window
 
     public MarketplacePublishWindow(MarketplaceManifest draft)
         : this(draft, CreateProductionActions(draft, UserStorage.DirectoryPath, OpenProductionLink)) { }
-
-    public MarketplacePublishWindow(MarketplaceManifest draft,
-        Func<MarketplaceManifest, CancellationToken, Task<MarketplaceManifest>> prepareDraftAsync,
-        Func<CancellationToken, Task<IReadOnlyList<string>>>? loadMarketplaceIdsAsync = null)
-        : this(draft, CreateProductionActions(draft, UserStorage.DirectoryPath, OpenProductionLink,
-            prepareDraftAsync, loadMarketplaceIdsAsync)) { }
-
-    public MarketplacePublishWindow(MarketplaceManifest draft, MarketplaceAuthorSession authorSession,
-        Func<MarketplaceManifest, CancellationToken, Task<MarketplaceManifest>> prepareDraftAsync,
-        Func<CancellationToken, Task<IReadOnlyList<string>>>? loadMarketplaceIdsAsync = null, bool isUpdate = false, MarketplaceSavedDraft? savedDraft = null)
-        : this(draft, CreateProductionActions(draft, UserStorage.DirectoryPath, OpenProductionLink,
-            prepareDraftAsync, loadMarketplaceIdsAsync, authorSession, isUpdate, savedDraft)) { }
 
     public MarketplacePublishWindow(MarketplaceManifest draft, MarketplacePublishActions actions)
     {
@@ -105,9 +98,10 @@ public partial class MarketplacePublishWindow : Window
         catch (Exception ex) { restoreWarning = "无法恢复本地草稿：" + Safe(ex.Message); }
         TitleBox.Text = draft.Title;
         draftId = draft.Id;
-        PublishedIdPanel.Visibility = actions.IsUpdate ? Visibility.Visible : Visibility.Collapsed;
+        PublishedIdPanel.Visibility = actions.IsUpdate && draft.RemoteRevisionId is null ? Visibility.Visible : Visibility.Collapsed;
         PublishedIdText.Text = actions.IsUpdate ? draft.Id : "";
         VersionBox.Text = draft.Version;
+        VersionBox.IsReadOnly = draft.RemoteRevisionId is not null;
         GameVersionBox.Text = draft.GameVersion;
         CollectionBox.Text = draft.WorkshopCollectionId ?? "";
         DescriptionBox.Text = draft.Description;
@@ -115,10 +109,10 @@ public partial class MarketplacePublishWindow : Window
         ReleaseNotesPanel.Visibility = actions.IsUpdate ? Visibility.Visible : Visibility.Collapsed;
         descriptionManuallyEdited = !string.IsNullOrWhiteSpace(draft.Description);
         SyncVersionChoicesFromText();
-        SnapshotSummary.Text = $"当前排序快照 · {draft.Mods.Count} 个模组";
+        SnapshotSummary.Text = $"{actions.SnapshotLabel} · {draft.Mods.Count} 个模组";
         DlcSummary.Text = "所需 DLC：" + (draft.RequiredDlc.Count == 0 ? "未声明额外 DLC" : string.Join("、", draft.RequiredDlc.Select(GameContentNames.DlcName)));
         initialized = true;
-        StatusText.Text = "填写排序信息后提交审核，也可先保存草稿。";
+        StatusText.Text = actions.InitialNotice ?? "填写排序信息后提交审核，也可先保存草稿。";
         DraftStatus.Text = restoreWarning ?? (restored ? "已恢复此排序的本地草稿" : "");
         imageContents.AddRange(actions.InitialImages.Select(bytes => bytes.ToArray()));
         imagesReady = draft.Images.Count == 0 || imageContents.Count > 0;
@@ -157,13 +151,15 @@ public partial class MarketplacePublishWindow : Window
     public Task LoginAsync()
     {
         if (IsBusy || !HasOAuthConfiguration() || user is not null) return Task.CompletedTask;
-        return PendingOperation = RunAsync("正在连接 GitHub…", async token =>
+        return PendingOperation = RunAsync(actions.IsAccountMarket ? "正在登录排序市场…" : "正在连接 GitHub…", async token =>
         {
-            var loggedIn = await actions.LoginAsync(clientId, uri =>
-            {
-                token.ThrowIfCancellationRequested();
-                OpenBrowserLink(uri);
-            }, token);
+            var loggedIn = actions.IsAccountMarket && actions.AccountLoginAsync is { } localLogin
+                ? await localLogin(token)
+                : await actions.LoginAsync(clientId, uri =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    OpenBrowserLink(uri);
+                }, token);
             token.ThrowIfCancellationRequested();
             if (closed) return;
             user = loggedIn;
@@ -181,7 +177,9 @@ public partial class MarketplacePublishWindow : Window
         return PendingOperation = RunAsync("正在提交排序审核…", async token =>
         {
             draft = await EnsureUniqueIdAsync(draft, token);
-            draft = await PrepareDraftAsync(draft, token);
+            if (actions.IsUpdate && !draft.Author.Equals(snapshot.Author, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(actions.IsAccountMarket ? "更新排序时必须使用原发布账号。" : "更新排序时必须使用原作者的 GitHub 账号。");
+            ValidateForSubmission(draft);
             var progress = new Progress<string>(message => { if (!closed && !token.IsCancellationRequested) StatusText.Text = Safe(message); });
             if (!imagesReady) throw new InvalidDataException("原图片尚未读取完成，请重新打开修改窗口后重试。");
             StatusText.Text = "正在自动压缩图片，优先保留画质…";
@@ -190,7 +188,9 @@ public partial class MarketplacePublishWindow : Window
             token.ThrowIfCancellationRequested();
             var uploads = compressed.Select((bytes, i) => MarketplaceImages.Prepare(draft.Author, draft.Id, draft.Version, i, bytes)).ToArray();
             draft = draft with { Images = uploads.Select(item => item.Image).ToArray() };
-            var result = actions.SubmitImagesAsync is { } submitImages
+            var result = actions.IsAccountMarket && actions.SubmitAccountAsync is { } submitAccount
+                ? await submitAccount(draft, uploads, progress, token)
+                : actions.SubmitImagesAsync is { } submitImages
                 ? await submitImages(draft, uploads, progress, token)
                 : uploads.Length == 0 ? await actions.SubmitAsync(draft, progress, token)
                 : throw new InvalidDataException("此投稿入口尚不支持图片。");
@@ -198,7 +198,7 @@ public partial class MarketplacePublishWindow : Window
             if (closed) return;
             submission = result;
             SubmissionPanel.Visibility = Visibility.Visible;
-            SubmissionLinkText.Text = "查看待审核提交 #" + result.PullRequestNumber;
+            SubmissionLinkText.Text = result.IsAccountMarket ? "排序已提交审核" : "查看待审核提交 #" + result.PullRequestNumber;
             StatusText.Text = "提交已创建，等待审核；审核上架后请刷新市场。";
             MarkDraftChanged();
         });
@@ -228,20 +228,6 @@ public partial class MarketplacePublishWindow : Window
         return draft;
     }
 
-    private async Task<MarketplaceManifest> PrepareDraftAsync(MarketplaceManifest draft, CancellationToken token)
-    {
-        if (actions.IsUpdate && !draft.Author.Equals(snapshot.Author, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("更新排序时必须使用原作者的 GitHub 账号。");
-        if (actions.PrepareDraftAsync is not null)
-        {
-            StatusText.Text = "正在核对排序中的工坊来源，无需手动刷新…";
-            draft = await actions.PrepareDraftAsync(draft, token);
-        }
-        token.ThrowIfCancellationRequested();
-        ValidateForSubmission(draft);
-        return draft;
-    }
-
     private async Task RunAsync(string message, Func<CancellationToken, Task> work)
     {
         var source = new CancellationTokenSource();
@@ -250,7 +236,7 @@ public partial class MarketplacePublishWindow : Window
         StatusText.Text = message;
         RefreshState();
         try { await work(source.Token); }
-        catch (OperationCanceledException) { if (!closed) StatusText.Text = "操作已取消。若已发出提交，请在 GitHub 核对结果后再重试。"; }
+        catch (OperationCanceledException) { if (!closed) StatusText.Text = actions.IsAccountMarket ? "操作已取消；请刷新本人投稿确认提交状态。" : "操作已取消。若已发出提交，请在 GitHub 核对结果后再重试。"; }
         catch (Exception ex) { if (!closed) StatusText.Text = "操作未完成：" + Safe(ex.Message); }
         finally
         {
@@ -271,10 +257,11 @@ public partial class MarketplacePublishWindow : Window
         SubmitButton.IsEnabled = !IsBusy && user is not null && submission is null;
         SaveDraftButton.IsEnabled = !IsBusy;
         BusyProgress.Visibility = CancelButton.Visibility = IsBusy ? Visibility.Visible : Visibility.Collapsed;
-        AuthorStatus.Text = user is null ? "尚未登录" : "GitHub · " + user.Login;
-        AuthorMenuButton.Content = user is null ? "未登录  ▾" : "GitHub · " + user.Login + "  ▾";
+        AuthorStatus.Text = user is null ? "尚未登录" : (actions.IsAccountMarket ? "账号 · " : "GitHub · ") + (actions.IsAccountMarket ? user.DisplayName : user.Login);
+        AuthorMenuButton.Content = user is null ? "未登录  ▾" : (actions.IsAccountMarket ? "" : "GitHub · ") + (actions.IsAccountMarket ? user.DisplayName : user.Login) + "  ▾";
         LoginStatus.Text = !hasOAuthConfiguration ? "此版本未配置 GitHub 发布登录，可先保存本地草稿。"
-            : user is null ? "使用 GitHub 登录后，以你的账号提交排序。" : "提交作者将使用当前 GitHub 账号。";
+            : user is null ? actions.IsAccountMarket ? "登录排序市场账号后即可提交排序审核。" : "使用 GitHub 登录后，以你的账号提交排序。"
+                : actions.IsAccountMarket ? "当前排序市场账号：" + user.DisplayName : "提交作者将使用当前 GitHub 账号。";
     }
 
     private void Draft_Changed(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -403,7 +390,7 @@ public partial class MarketplacePublishWindow : Window
             {
                 token.ThrowIfCancellationRequested();
                 using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                if (input.Length is <= 0 or > MarketplaceImages.MaximumBytes) throw new InvalidDataException("单张图片不能超过 5 MiB，请裁剪或更换图片。");
+                if (input.Length is <= 0 or > MarketplaceImages.MaximumBytes) throw new InvalidDataException("单张图片超过大小上限（约 5.24 MB），请裁剪或更换图片。");
                 var bytes = new byte[(int)input.Length]; await input.ReadExactlyAsync(bytes, token);
                 var optimized = await Task.Run(() => MarketplaceImages.Optimize(bytes), token);
                 _ = MarketplaceImagePreview.Decode(optimized, 220); loaded.Add(optimized);
@@ -456,7 +443,7 @@ public partial class MarketplacePublishWindow : Window
         actions.OpenTrustedLink(uri);
     }
 
-    private bool HasOAuthConfiguration() => clientId.Length > 0 && actions.ClientSecretConfigured;
+    private bool HasOAuthConfiguration() => actions.IsAccountMarket || clientId.Length > 0 && actions.ClientSecretConfigured;
     private void OpenSubmission_Click(object sender, RoutedEventArgs e)
     {
         if (submission is { } result && result.PullRequestUri.Scheme == Uri.UriSchemeHttps
@@ -497,32 +484,44 @@ public partial class MarketplacePublishWindow : Window
 
     internal static MarketplacePublishActions CreateProductionActions(MarketplaceManifest snapshot, string profileDirectory,
         Action<Uri> openTrustedLink,
-        Func<MarketplaceManifest, CancellationToken, Task<MarketplaceManifest>>? prepareDraftAsync = null,
         Func<CancellationToken, Task<IReadOnlyList<string>>>? loadMarketplaceIdsAsync = null,
-        MarketplaceAuthorSession? authorSession = null, bool isUpdate = false, MarketplaceSavedDraft? savedDraft = null)
+        MarketplaceAuthorSession? authorSession = null, bool isUpdate = false, MarketplaceSavedDraft? savedDraft = null,
+        LocalMarketApiClient? accountMarket = null, IReadOnlyList<byte[]>? initialImages = null, string? initialNotice = null,
+        string snapshotLabel = "排序快照")
     {
         var store = new MarketplaceDraftStore(profileDirectory);
-        var restored = savedDraft ?? store.ReadAll().FirstOrDefault(item => item.IsUpdate == isUpdate
+        var restored = savedDraft ?? store.ReadAll().FirstOrDefault(item => item.Manifest.RemoteRevisionId == snapshot.RemoteRevisionId && item.IsUpdate == isUpdate
             && item.Manifest.Mods.SequenceEqual(snapshot.Mods)
             && item.Manifest.RequiredDlc.SequenceEqual(snapshot.RequiredDlc, StringComparer.OrdinalIgnoreCase)
             && item.Manifest.GameVersion == snapshot.GameVersion
+            && (!isUpdate || item.Manifest.Version == snapshot.Version)
             && (!isUpdate || item.Manifest.Id == snapshot.Id && item.Manifest.Author.Equals(snapshot.Author, StringComparison.OrdinalIgnoreCase)));
         var key = restored?.Key ?? Guid.NewGuid().ToString("N");
         authorSession ??= new MarketplaceAuthorSession(profileDirectory);
         return new MarketplacePublishActions
         {
             ClientId = authorSession.ClientId, ClientSecretConfigured = authorSession.IsConfigured,
-            InitialUser = authorSession.User, IsUpdate = isUpdate,
-            OpenTrustedLink = openTrustedLink,
-            PrepareDraftAsync = prepareDraftAsync,
-            LoadMarketplaceIdsAsync = loadMarketplaceIdsAsync,
+            InitialUser = accountMarket?.User ?? authorSession.User, IsUpdate = isUpdate, IsAccountMarket = accountMarket is not null,
+            OpenTrustedLink = openTrustedLink, InitialNotice = initialNotice, SnapshotLabel = snapshotLabel,
+            LoadMarketplaceIdsAsync = accountMarket is null ? loadMarketplaceIdsAsync : null,
             SaveDraft = draft => store.Save(key, draft, isUpdate),
             SaveImageDraft = (draft, images) => store.Save(key, draft, isUpdate, images),
-            InitialImages = restored?.ImageContents ?? [],
+            InitialImages = restored?.ImageContents ?? initialImages ?? [],
             SubmitImagesAsync = authorSession.SubmitWithImagesAsync,
+            SubmitAccountAsync = accountMarket is null ? null : (draft, images, progress, token) =>
+                accountMarket.SubmitAsync(draft, images, progress, token, isUpdate),
+            AccountLoginAsync = accountMarket is null ? null : token =>
+            {
+                token.ThrowIfCancellationRequested();
+                var dialog = new LocalMarketAccountWindow(accountMarket) { Owner = Application.Current?.MainWindow };
+                if (dialog.ShowDialog() != true || dialog.AuthenticatedUser is not { } signedIn)
+                    throw new OperationCanceledException(token);
+                return Task.FromResult(signedIn);
+            },
+            LogoutAccountAsync = accountMarket is null ? null : token => accountMarket.LogoutAsync(token),
             LoadDraft = () => restored?.Manifest,
             FetchCollectionDescriptionAsync = WorkshopDependencyDownloads.GetCollectionDescriptionAsync,
-            Logout = authorSession.Logout,
+            Logout = accountMarket is null ? authorSession.Logout : () => { },
             LoginAsync = (_, openBrowser, token) => authorSession.LoginAsync(openBrowser, token),
             SubmitAsync = authorSession.SubmitAsync
         };

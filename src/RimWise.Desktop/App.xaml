@@ -10,6 +10,7 @@
                 <ResourceDictionary Source="Resources/ModPresentation.xaml" />
             </ResourceDictionary.MergedDictionaries>
             <sys:Double x:Key="ModRowHeight">38</sys:Double>
+            <sys:Double x:Key="SearchInputHeight">34</sys:Double>
             <!-- Remove the system focus frame around containers and options. Interactive
                  controls keep their own themed focus state and keyboard navigation. -->
             <Style x:Key="DefaultControlFocusVisualStyle" TargetType="Control">
@@ -139,7 +140,7 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"/>
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/></Trigger>
@@ -147,6 +148,12 @@
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value></Setter>
+            </Style>
+            <Style x:Key="SearchInput" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                <Setter Property="Height" Value="{StaticResource SearchInputHeight}" />
+                <Setter Property="MinHeight" Value="{StaticResource SearchInputHeight}" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="Padding" Value="9,0,9,0" />
             </Style>
             <Style TargetType="Menu">
                 <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
@@ -166,11 +173,12 @@
                 <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
                 <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBrush}" />
                 <Setter Property="Padding" Value="9,7" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="Template"><Setter.Value>
                     <ControlTemplate TargetType="PasswordBox">
                         <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="1" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                            <ScrollViewer x:Name="PART_ContentHost" />
+                            <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" /></Trigger>

@@ -13,6 +13,8 @@ public sealed record MarketplaceManifest(
     IReadOnlyList<string> RequiredDlc, string? WorkshopCollectionId,
     IReadOnlyList<MarketplaceMod> Mods)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? RemoteRevisionId { get; init; }
     public string ReleaseNotes { get; init; } = "";
     public IReadOnlyList<MarketplaceImage> Images { get; init; } = [];
 }
@@ -25,6 +27,11 @@ public sealed record MarketplaceEntry(
     public int? ModCount { get; init; }
     public string ReleaseNotes { get; init; } = "";
     public IReadOnlyList<MarketplaceImage> Images { get; init; } = [];
+    public string? AuthorDisplayName { get; init; }
+    public bool IsAccountMarket { get; init; }
+    public string? PublicationState { get; init; }
+    public string? RejectionReason { get; init; }
+    public string DisplayAuthor => string.IsNullOrWhiteSpace(AuthorDisplayName) ? (IsAccountMarket ? "排序作者" : Author) : AuthorDisplayName;
 }
 
 public sealed record MarketplaceCatalogue(int SchemaVersion, IReadOnlyList<MarketplaceEntry> Entries);
@@ -42,9 +49,15 @@ public sealed record GitHubAccessToken(string AccessToken, string TokenType, str
     public override string ToString() => "GitHub access token (redacted)";
 }
 
-public sealed record GitHubMarketplaceUser(string Login, string? Name);
+public sealed record GitHubMarketplaceUser(string Login, string? Name)
+{
+    public string DisplayName => string.IsNullOrWhiteSpace(Name) ? "市场用户" : Name;
+}
 public sealed record MarketplaceSubmission(
-    int PullRequestNumber, Uri PullRequestUri, string Branch, string ManifestPath, string Sha256);
+    int PullRequestNumber, Uri PullRequestUri, string Branch, string ManifestPath, string Sha256)
+{
+    public bool IsAccountMarket { get; init; }
+}
 
 /// <summary>Safe, credential-free message for display. No server response bodies are included.</summary>
 public sealed class MarketplaceException(string message) : Exception(message);

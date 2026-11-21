@@ -40,7 +40,7 @@ public static class AutomaticGameMaintenance
         IReadOnlyList<CustomOrderRule> rules, MaintenanceLimits limits, IProgress<MaintenanceProgress>? progress,
         IProgress<OrdinaryGameProgress>? gameProgress, CancellationToken token, string? resumeTaskId = null,
         Func<DeclaredConflict, CancellationToken, Task<string[]?>>? chooseConflict = null, DatabaseSnapshot? database = null,
-        bool connectionAlreadyChecked = false)
+        bool connectionAlreadyChecked = false, IReadOnlySet<string>? copyFallbackPackages = null)
     {
         if ((database?.Id ?? "") != request.DatabaseSnapshotId)
             throw new InvalidDataException("自动任务数据库快照不匹配。");
@@ -63,7 +63,8 @@ public static class AutomaticGameMaintenance
         }
         var session = new PreparedGameSession(options with { UseFixedHelper=true, WarnOnSlowStartup=true, MaximumSeconds=1800,
             CollectInsertionEvidence=limits.InsertionBaselineJson is not null },paths,catalogue,request,rules,progress,gameProgress,chooseConflict,database,limits);
-        var controller = new LevelOneMaintenance(client,estimator,session,resumeTaskId, testOriginalFirst: limits.InsertionBaselineJson is null);
+        var controller = new LevelOneMaintenance(client,estimator,session,resumeTaskId, testOriginalFirst: limits.InsertionBaselineJson is null,
+            copyFallbackPackages: copyFallbackPackages);
         var result = await controller.RunAsync(request,catalogue,rules,limits,progress,token);
         return new(result,session.Scan,session.Subscriptions) { DatabaseSnapshotId = database?.Id ?? "",
             PreparedOrder = session.PreparedOrder };

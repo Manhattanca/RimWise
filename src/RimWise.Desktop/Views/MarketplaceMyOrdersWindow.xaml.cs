@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using RimWise.Integration.Marketplace;
@@ -46,7 +46,8 @@ public partial class MarketplaceMyOrdersWindow : Window
         if (SelectedDraft is not null) OrdersList.SelectedIndex = -1;
         RefreshState();
     }
-    private void RefreshState() => EditButton.IsEnabled = !IsBusy && (SelectedDraft is not null || SelectedEntry is not null);
+    private void RefreshState() => EditButton.IsEnabled = !IsBusy && (SelectedDraft is not null
+        || SelectedEntry is not null && SelectedEntry.PublicationState is not "pending");
     private void Edit_Click(object sender, RoutedEventArgs e)
     {
         if (EditButton.IsEnabled) DialogResult = true;
@@ -63,6 +64,7 @@ public partial class MarketplaceMyOrdersWindow : Window
     private void List_MenuOpening(object sender, ContextMenuEventArgs e)
     {
         if (sender is not ListBox list || list.SelectedItem is null || IsBusy) { e.Handled = true; return; }
+        ((MenuItem)list.ContextMenu.Items[0]).IsEnabled = EditButton.IsEnabled;
         var remove = (MenuItem)list.ContextMenu.Items[1];
         remove.IsEnabled = list.SelectedItem is MarketplaceSavedDraft ? actions.DeleteDraft is not null
             : list.SelectedItem is MarketplaceEntry entry && actions.DeleteOrderAsync is not null && !pendingDeletions.Contains(entry.Author + "/" + entry.Id);
@@ -129,7 +131,9 @@ public partial class MarketplaceMyOrdersWindow : Window
                 EmptyText.Visibility = Visibility.Visible;
                 var result = await actions.DeleteOrderAsync!(entry!, scope, CancellationToken.None);
                 pendingDeletions.Add(entry!.Author + "/" + entry.Id);
-                EmptyText.Text = $"{(scope == MarketplaceDeletionScope.AllVersions ? "全部版本" : "版本 v" + entry.Version)}下架申请已提交（#{result.PullRequestNumber}），系统核实原发布者后自动下架；请稍后刷新市场。";
+                EmptyText.Text = result.IsAccountMarket
+                    ? $"{(scope == MarketplaceDeletionScope.AllVersions ? "全部版本" : "版本 v" + entry.Version)}已从市场下架。"
+                    : $"{(scope == MarketplaceDeletionScope.AllVersions ? "全部版本" : "版本 v" + entry.Version)}下架申请已提交（#{result.PullRequestNumber}），系统核实原发布者后自动下架；请稍后刷新市场。";
             }
         }
         catch (Exception ex)

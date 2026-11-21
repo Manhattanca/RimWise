@@ -9,7 +9,11 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-        Application.ThreadException += (_, _) => MessageBox.Show("审核助手遇到错误，本次操作未确认完成；请重新刷新核对 GitHub 状态。", "RimWise 审核助手", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        Application.ThreadException += (_, e) =>
+        {
+            if (Application.OpenForms.OfType<ReviewWindow>().FirstOrDefault() is { } window) window.HandleUnexpectedUiError(e.Exception);
+            else MessageBox.Show("审核助手界面发生错误，请重新打开并核对服务器状态。", "RimWise 审核助手", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        };
         try
         {
             if (args.Length == 1 && args[0] == "--enable-startup") { ReviewSettings.SetStartup(true); return 0; }

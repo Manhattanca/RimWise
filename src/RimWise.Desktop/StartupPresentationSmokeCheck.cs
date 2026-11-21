@@ -40,6 +40,11 @@ internal static class StartupPresentationSmokeCheck
             var source = HwndSource.FromHwnd(new WindowInteropHelper(window).Handle);
             Check(window.Background is SolidColorBrush brush
                 && source?.CompositionTarget?.BackgroundColor == brush.Color, stage + ": native clear color matches theme");
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621))
+            {
+                var result = DwmGetWindowAttribute(source!.Handle, 38 /* DWMWA_SYSTEMBACKDROP_TYPE */, out var backdrop, sizeof(int));
+                Check(result == 0 && backdrop is 0 or 1, stage + ": opaque application does not extend a system backdrop into its client area");
+            }
             if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) || SystemParameters.HighContrast) return;
             foreach (var (attribute, key) in new[] { (35, "PanelBrush"), (36, "TextBrush"), (34, "BorderBrush") })
             {
@@ -80,6 +85,8 @@ internal static class StartupPresentationSmokeCheck
             {
                 Check(NativeStartupFrameCapture.IsAppCloaked(window), "ContentRendered does not expose an unsubmitted native surface");
                 Check(await window.StartupPresentation.Ready, "native presentation completed");
+                Check(AppContext.TryGetSwitch("Switch.System.Windows.Appearance.DisableFluentThemeWindowBackdrop", out var disabled) && disabled,
+                    "Fluent controls retain their theme without enabling transparent window backdrops");
                 // Capture after release, without adding a bitmap render, image write or
                 // fixed delay before the production reveal path can show the window.
                 var nativeSamples = NativeStartupFrameCapture.Capture(window, Path.Combine(output, "native-first-frame.png"));
@@ -108,6 +115,13 @@ internal static class StartupPresentationSmokeCheck
                     await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
                     CheckSurface("Live " + theme);
                     Check(order.SequenceEqual(window.ViewModel.Rows.Select(row => row.PackageId)), "theme preserves order " + theme);
+                }
+                foreach (var state in new[] { WindowState.Maximized, WindowState.Normal, WindowState.Minimized, WindowState.Normal })
+                {
+                    window.WindowState = state;
+                    await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
+                    CheckSurface("Window state " + state);
+                    Check(order.SequenceEqual(window.ViewModel.Rows.Select(row => row.PackageId)), "window state preserves order " + state);
                 }
                 app.Themes.Select(initialTheme, save: false);
                 Check(new AppearanceSettingsStore(UserStorage.DirectoryPath).Load() == initialTheme, "saved theme unchanged");

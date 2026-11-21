@@ -1,9 +1,11 @@
 #if DEBUG
 using System.IO;
 using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using System.Windows.Input;
@@ -26,6 +28,7 @@ internal static class MarketplaceSmokeCheck
             try
             {
                 var checks = new List<string>();
+                await LocalMarketClientSmokeCheck.RunAsync(window, output, checks);
                 File.WriteAllText(Path.Combine(output, "stage.txt"), "browser");
                 await RunAsync(window, output, checks);
                 File.WriteAllText(Path.Combine(output, "stage.txt"), "publish");
@@ -57,6 +60,7 @@ internal static class MarketplaceSmokeCheck
             if (!passed) throw new InvalidOperationException(message);
             checks.Add(message);
         }
+        await RunAccountDialogChecks(window, output, Check);
         window.LoadSample();
         var revision = window.ViewModel.ContentRevision;
         var original = window.ViewModel.Rows.Select(row => row.PackageId).ToArray();
@@ -74,6 +78,9 @@ internal static class MarketplaceSmokeCheck
         var manifestLoads = 0;
         string? requestedVersion = null;
         var publishes = 0;
+        var filePublishes = 0;
+        var identityRefreshes = 0;
+        TaskCompletionSource? heldFilePublish = null;
         var fail = false;
         var cache = false;
         TaskCompletionSource<MarketplaceResult<MarketplaceCatalogue>>? held = null;
@@ -112,8 +119,10 @@ internal static class MarketplaceSmokeCheck
             },
             NotifyDownload = window.ShowMarketplaceDownloadNotification,
             PublishCurrent = () => publishes++,
+            PublishFileAsync = async () => { filePublishes++; if (heldFilePublish is not null) await heldFilePublish.Task; },
             OpenTrustedLink = _ => { },
-            RefreshUserAsync = _ => Task.FromResult<GitHubMarketplaceUser?>(new("ExampleAuthor", null)),
+            RefreshUserAsync = _ => { identityRefreshes++; return Task.FromResult<GitHubMarketplaceUser?>(new("ExampleAuthor", "示例昵称")); },
+            ManageAccount = () => { },
             UpdateOrder = _ => { },
             Logout = () => { }
         };
@@ -124,10 +133,54 @@ internal static class MarketplaceSmokeCheck
         var page = (MarketplacePage)window.MarketplaceHost.Content;
         await page.PendingOperation;
         await Idle(window);
+        Check(page.PublishButton.Content.ToString() == "发布当前使用排序"
+            && page.PublishFileButton.Content.ToString() == "发布其他排序文件"
+            && page.PublishFileButton.IsEnabled
+            && page.PublishFileButton.TranslatePoint(new Point(), page).X < page.PublishButton.TranslatePoint(new Point(), page).X,
+            "其他排序文件入口位于发布当前使用排序左侧，文案明确区分两个来源。");
+        page.PublishFileButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await page.PendingOperation;
+        Check(filePublishes == 1 && publishes == 0 && window.ViewModel.ContentRevision == revision
+            && window.ViewModel.Rows.Select(row => row.PackageId).SequenceEqual(original),
+            "发布其他文件只触发文件发布入口，不触发当前排序发布或修改当前清单。");
+        heldFilePublish = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var previousRefreshes = identityRefreshes;
+        page.PublishFileButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var filePublication = page.PendingOperation;
+        Check(filePublishes == 2 && !filePublication.IsCompleted && identityRefreshes == previousRefreshes,
+            "文件发布等待选文件及编辑完成后才同步登录状态，不提前请求账号或结束异步工作。");
+        heldFilePublish.SetResult();
+        await filePublication;
+        heldFilePublish = null;
+        Check(identityRefreshes == previousRefreshes + 1, "退出文件发布界面后同步最新登录状态。");
         Check(loads == 1 && page.ResultsList.Items.Count == 2 && page.SelectedManifest is null && manifestLoads == 0,
             "Entering market reads only the catalogue and never downloads a sorting manifest");
-        Check(page.AuthorMenuButton.Content.ToString()!.Contains("ExampleAuthor") && page.MyOrdersButton.IsEnabled,
+        var rowHeightReference = (FrameworkElement)(window.FindName("RowHeightButton")
+            ?? throw new InvalidOperationException("主界面行高工具按钮不存在。"));
+        Check(Math.Abs(page.SearchBox.ActualHeight - rowHeightReference.ActualHeight) < 0.1,
+            $"市场搜索框与图示主界面工具栏控件等高：{page.SearchBox.ActualHeight:F1} / {rowHeightReference.ActualHeight:F1} DIP。");
+        Check(page.AuthorMenuButton.Content.ToString()!.Contains("示例昵称") && page.MyOrdersButton.IsEnabled,
             "Market header restores the shared GitHub identity and enables published-order management");
+        page.AuthorMenuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        try
+        {
+            await Idle(window);
+            await Task.Delay(160);
+            var menu = (FrameworkElement)page.AuthorPopup.Child;
+            var anchor = page.AuthorMenuButton;
+            var menuLeft = menu.PointToScreen(new Point()).X;
+            var menuRight = menu.PointToScreen(new Point(menu.ActualWidth, 0)).X;
+            var anchorRight = anchor.PointToScreen(new Point(anchor.ActualWidth, 0)).X;
+            var pageLeft = page.PointToScreen(new Point()).X;
+            Check(page.AuthorPopup.IsOpen && Math.Abs(menuRight - anchorRight) <= 2 && menuLeft >= pageLeft,
+                $"账号菜单右边缘与账号按钮对齐且在主面板内：菜单 {menuLeft:F1}–{menuRight:F1}，按钮右边缘 {anchorRight:F1}。");
+            Check(!page.LoginButton.IsVisible && new[] { page.ManageAccountButton, page.LogoutButton }.All(button =>
+                button.IsVisible && button.IsEnabled && Descendants<ContentPresenter>(button).Any(presenter =>
+                    presenter.ActualWidth > 0 && presenter.ActualWidth + button.Padding.Left + button.Padding.Right <= button.ActualWidth)),
+                "已登录菜单只显示账号操作，账号设置和退出登录文字均放得下。");
+            PrototypeSmokeCheck.SavePreview(menu, Path.Combine(output, "market-account-menu.png"));
+        }
+        finally { page.AuthorPopup.IsOpen = false; }
         Check(!page.Focusable && !page.IsTabStop && page.FocusVisualStyle is null
             && Descendants<ScrollViewer>(page).All(viewer => !viewer.Focusable),
             "Market containers and scroll surfaces cannot acquire the window-sized focus frame");
@@ -161,7 +214,8 @@ internal static class MarketplaceSmokeCheck
         heldSteam = new(TaskCreationOptions.RunContinuationsAsynchronously);
         page.UseButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await Idle(window);
-        Check(page.IsBusy && window.MarketplaceNotice.IsVisible && window.MarketplaceNoticeProgress.IsIndeterminate
+        Check(page.IsBusy && !page.PublishFileButton.IsEnabled && !page.PublishButton.IsEnabled
+            && window.MarketplaceNotice.IsVisible && window.MarketplaceNoticeProgress.IsIndeterminate
             && window.MarketplaceNoticeText.Text.Contains("请等待创意工坊下载完成（1/2）")
             && window.MarketplaceNoticeCancelButton.IsVisible,
             "Waiting for Workshop downloads stays visible in the top-right progress notification before import");
@@ -239,13 +293,21 @@ internal static class MarketplaceSmokeCheck
                 await Idle(window);
                 Check(page.ResultsList.ActualWidth >= 250 && page.DetailPanel.ActualWidth >= 350
                     && page.UseButton.IsVisible && page.SearchBox.ActualWidth > 200, $"Market layout {theme} at {width}");
+                Check(new[] { page.PublishFileButton, page.PublishButton }.All(button =>
+                    button.Background == page.UseButton.Background && button.Foreground == page.UseButton.Foreground
+                    && button.BorderBrush == page.UseButton.BorderBrush
+                    && button.TranslatePoint(new Point(), page).X >= 0
+                    && button.TranslatePoint(new Point(button.ActualWidth, 0), page).X <= page.ActualWidth + 1),
+                    $"{theme} / {width}：两个发布入口沿用下载并使用的亮色，且完整位于市场面板内。");
                 PrototypeSmokeCheck.SavePreview(window, Path.Combine(output, $"market-{theme}-{width}.png"));
             }
         }
         held = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = page.RefreshAsync();
         Check(page.IsBusy && page.CancelButton.IsVisible && !page.UseButton.IsEnabled, "Pending network operation exposes cancel and disables apply");
-        Check(page.PublishButton.IsEnabled, "Catalogue refresh never disables publication of the current order");
+        Check(page.PublishButton.IsEnabled && page.PublishFileButton.IsEnabled, "Catalogue refresh never disables either publication source");
+        page.PublishFileButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(filePublishes == 3 && page.IsBusy, "目录刷新期间仍可选择其他排序文件，不等待市场刷新。");
         page.PublishButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Check(publishes == 2 && page.IsBusy, "Publication can open while catalogue refresh remains pending");
         page.Cancel();
@@ -272,8 +334,8 @@ internal static class MarketplaceSmokeCheck
         await page.PendingOperation;
         Check(page.SelectedManifest?.Version == "1.0.9" && requestedVersion == "1.0.9", "Explicit download uses the selected old sorting version");
         await page.RefreshAsync();
-        Check(page.SelectedEntry?.Version == "1.0.9" && page.VersionPicker.SelectedIndex == 1,
-            "Refresh preserves the explicitly selected version when it still exists");
+        Check(page.SelectedEntry?.Version == "1.0.10" && page.VersionPicker.SelectedIndex == 0,
+            "Refreshing a sorting entry defaults back to the numeric latest version");
         page.SearchBox.Text = "仅旧版具有的搜索词";
         Check(page.ResultsList.Items.Count == 1, "Grouped search includes older-version metadata");
         page.SearchBox.Clear();
@@ -311,6 +373,90 @@ internal static class MarketplaceSmokeCheck
             "Browsing, cancelling and publishing preserve editor order and history");
     }
 
+    private static async Task RunAccountDialogChecks(Window owner, string output, Action<bool, string> check)
+    {
+        using var api = new LocalMarketApiClient(new Uri("http://127.0.0.1:5187/"));
+        var dialog = new LocalMarketAccountWindow(api) { Owner = owner };
+        T Field<T>(string name) where T : class =>
+            typeof(LocalMarketAccountWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(dialog) as T
+            ?? throw new InvalidOperationException($"账号窗口缺少 {name} 控件。");
+        void SetMode(bool register, bool recover) =>
+            typeof(LocalMarketAccountWindow).GetMethod("SetMode", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(dialog, [register, recover]);
+
+        var nickname = Field<StackPanel>("nicknamePanel");
+        var recovery = Field<StackPanel>("recoveryPanel");
+        var confirmation = Field<StackPanel>("confirmationPanel");
+        var recoveryInput = Field<TextBox>("recoveryCode");
+        var forgot = Field<Hyperlink>("forgotPassword");
+        var link = Field<TextBlock>("forgotPasswordLine");
+        var root = (StackPanel)dialog.Content;
+        var password = Field<PasswordBox>("password");
+        var username = Field<TextBox>("username");
+        var toggle = Field<Button>("toggle");
+        owner.UpdateLayout();
+        var referenceHeight = ((FrameworkElement)(owner.FindName("RowHeightButton")
+            ?? throw new InvalidOperationException("主界面行高工具按钮不存在。"))).ActualHeight;
+
+        void CheckInputHeights(string mode, params Control[] inputs)
+        {
+            dialog.UpdateLayout();
+            check(inputs.All(input => input.IsVisible && Math.Abs(input.ActualHeight - referenceHeight) < 0.1),
+                $"{mode}用户名、密码等输入框与参考工具栏控件等高：{string.Join("、", inputs.Select(input => input.ActualHeight))} / {referenceHeight:F1} DIP。");
+        }
+
+        dialog.Show();
+        try
+        {
+            await Idle(dialog);
+            check(dialog.Width == 400 && dialog.SizeToContent == SizeToContent.Height,
+                "账号窗口使用紧凑宽度并按内容控制高度。");
+            CheckInputHeights("登录", username, password);
+            username.Focus();
+            await Idle(dialog);
+            username.CaretIndex = 0;
+            var usernameCaret = username.GetRectFromCharacterIndex(0, true);
+            check(usernameCaret.X is >= 0 and <= 8
+                && Math.Abs(usernameCaret.Top + usernameCaret.Height / 2 - username.ActualHeight / 2) <= 2,
+                $"用户名插入光标靠左并垂直居中：x={usernameCaret.X:F1}, y={usernameCaret.Top:F1}, h={usernameCaret.Height:F1}。");
+            password.ApplyTemplate();
+            var passwordHost = password.Template.FindName("PART_ContentHost", password) as ScrollViewer
+                ?? throw new InvalidOperationException("密码输入区模板缺少内容容器。");
+            var passwordHostBounds = passwordHost.TransformToAncestor(password).TransformBounds(new Rect(passwordHost.RenderSize));
+            check(passwordHostBounds.Left is >= 0 and <= 8
+                && Math.Abs(passwordHostBounds.Top + passwordHostBounds.Height / 2 - password.ActualHeight / 2) <= 2,
+                $"密码插入区靠左并垂直居中：x={passwordHostBounds.Left:F1}, y={passwordHostBounds.Top:F1}, h={passwordHostBounds.Height:F1}。");
+            var status = Field<TextBlock>("status");
+            check(string.IsNullOrWhiteSpace(status.Text), "登录模式不显示注册专用的密码长度提示。");
+            var passwordBottom = password.TranslatePoint(new Point(0, password.ActualHeight), root);
+            var linkTop = link.TranslatePoint(new Point(), root);
+            var forgotLabel = (forgot.Inlines.FirstInline as Run)?.Text;
+            check(forgot.Focusable && forgotLabel == "忘记密码" && forgot.TextDecorations?.Count > 0
+                && Math.Abs(linkTop.X - passwordBottom.X) <= 2 && linkTop.Y - passwordBottom.Y is >= 0 and <= 8,
+                $"忘记密码是紧贴密码框下方的可聚焦下划线文字链接：label={forgotLabel}, x={linkTop.X:F1}/{passwordBottom.X:F1}, dy={linkTop.Y - passwordBottom.Y:F1}。");
+            check(confirmation.Visibility == Visibility.Collapsed && recovery.Visibility == Visibility.Collapsed,
+                "登录模式隐藏确认密码和恢复码整组控件。");
+            PrototypeSmokeCheck.SavePreview(dialog, Path.Combine(output, "market-account-login.png"));
+
+            SetMode(register: true, recover: false);
+            CheckInputHeights("注册", username, Field<TextBox>("nickname"), password, Field<PasswordBox>("confirmation"));
+            check(status.Text == "密码长度为 7 至 15 个字符。", "注册模式显示密码长度提示。");
+            check(nickname.IsVisible && confirmation.IsVisible && !recovery.IsVisible && !link.IsVisible,
+                "注册模式显示昵称和确认密码，不显示恢复入口。");
+
+            SetMode(register: false, recover: false);
+            check(string.IsNullOrWhiteSpace(status.Text), "返回登录后隐藏注册专用的密码长度提示。");
+            forgot.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
+            CheckInputHeights("恢复", username, password, recoveryInput, Field<PasswordBox>("confirmation"));
+            check(status.Text == "输入注册时保存的恢复码并设置新密码。", "密码恢复模式显示恢复说明而非注册长度提示。");
+            check(recovery.IsVisible && confirmation.IsVisible && !link.IsVisible && (string)toggle.Content == "返回登录",
+                "点击文字进入恢复模式，并提供唯一的返回登录入口。");
+            toggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            check(!recovery.IsVisible && link.IsVisible, "返回登录可恢复原表单。");
+        }
+        finally { dialog.Close(); }
+    }
+
     private static async Task ExerciseFirstUseWarning(MainWindow window, string output, List<string> checks, Func<int> loads)
     {
         void Check(bool passed, string message)
@@ -318,6 +464,8 @@ internal static class MarketplaceSmokeCheck
             if (!passed) throw new InvalidOperationException(message);
             checks.Add(message);
         }
+        Check(MarketplaceFirstUseNotice.Text == "此功能为测试版，可能会出现问题。\n\n发布排序时请尽量绑定 Steam 创意工坊合集。\n\n排序标题和简介请勿包含政治相关内容，上传图片请勿包含色情或裸露内容。",
+            "Market warning uses the approved three-paragraph testing, collection and content notice");
         var store = new MarketplaceNoticeStore(UserStorage.DirectoryPath);
         Check(!store.IsAcknowledged(), "A new profile must see the market warning");
         Directory.CreateDirectory(Path.GetDirectoryName(store.FilePath)!);

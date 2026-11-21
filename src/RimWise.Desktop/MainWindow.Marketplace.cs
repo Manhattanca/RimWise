@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using Microsoft.Win32;
@@ -17,10 +17,13 @@ public partial class MainWindow
 {
     private MarketplacePage? marketplacePage;
     private MarketplaceClient? marketplaceClient;
+    private LocalMarketApiClient? localMarketClient;
     private MarketplaceAuthorSession? marketplaceAuthorSession;
     private string? marketplaceNoticeAcknowledgedProfile;
     private bool marketplaceNoticeShowing;
+    private bool marketplaceFilePreparing;
     private MarketplaceAuthorSession MarketplaceAuthor => marketplaceAuthorSession ??= new(UserStorage.DirectoryPath);
+    private LocalMarketApiClient LocalMarket => localMarketClient ??= new();
 
     private bool EnsureMarketplaceNotice()
     {
@@ -48,29 +51,26 @@ public partial class MainWindow
     {
         if (marketplacePage is null)
         {
-            marketplaceClient = new MarketplaceClient(
-                Path.Combine(UserStorage.DirectoryPath, "Data", "Marketplace", MarketplaceRepository.Name, "Cache"));
             ConfigureMarketplacePage(new MarketplacePageActions
             {
-                LoadCatalogueAsync = token => marketplaceClient.GetCatalogueAsync(token),
-                LoadManifestAsync = (entry, token) => marketplaceClient.GetManifestAsync(entry, token),
-                LoadManifestWithProgressAsync = (entry, progress, token) => marketplaceClient.GetManifestAsync(entry, token, progress),
+                LoadCatalogueAsync = token => LocalMarket.GetCatalogueAsync(token),
+                LoadManifestAsync = (entry, token) => LocalMarket.GetManifestAsync(entry, token),
+                LoadManifestWithProgressAsync = (entry, progress, token) => LocalMarket.GetManifestAsync(entry, token),
                 DownloadAsync = DownloadMarketplaceOrderAsync,
                 NotifyDownload = ShowMarketplaceDownloadNotification,
                 PublishCurrent = PublishMarketplaceOrder,
+                PublishFileAsync = PublishMarketplaceFileAsync,
                 OpenTrustedLink = OpenMarketplaceWorkshop,
-                RefreshUserAsync = token => MarketplaceAuthor.RefreshAsync(token),
-                LoginAsync = token => MarketplaceAuthor.LoginAsync(uri =>
-                {
-                    if (uri.Scheme != "https" || uri.Host != "github.com" || uri.AbsolutePath != "/login/oauth/authorize")
-                        throw new InvalidOperationException("GitHub 授权地址无效。");
-                    Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
-                }, token),
-                Logout = () => MarketplaceAuthor.Logout(),
-                CurrentUser = () => MarketplaceAuthor.User,
+                RefreshUserAsync = token => LocalMarket.RefreshUserAsync(token),
+                LoginAsync = LoginToLocalMarketAsync,
+                LogoutAsync = token => LocalMarket.LogoutAsync(token),
+                CurrentUser = () => LocalMarket.User,
+                ManageAccount = ManageLocalMarketAccount,
+                LoadMyOrdersAsync = token => LocalMarket.GetMineAsync(token),
+                LoadImageAsync = (image, token) => LocalMarket.LoadImageAsync(image, token),
                 UpdateOrder = entry => PublishMarketplaceOrderCore(entry),
                 DeleteDraft = saved => new MarketplaceDraftStore(UserStorage.DirectoryPath).Delete(saved.Key),
-                DeleteOrderAsync = (entry, scope, token) => MarketplaceAuthor.RequestDeletionAsync(entry, scope, token),
+                DeleteOrderAsync = (entry, scope, token) => LocalMarket.WithdrawOrderAsync(entry, scope, token),
                 LoadDrafts = () => new MarketplaceDraftStore(UserStorage.DirectoryPath).ReadAll(),
                 OpenDraft = saved => PublishMarketplaceOrderCore(null, saved)
             });
@@ -121,35 +121,100 @@ public partial class MainWindow
 
     private void PublishMarketplaceOrder() => PublishMarketplaceOrderCore(null);
 
-    private async void PublishMarketplaceOrderCore(MarketplaceEntry? update, MarketplaceSavedDraft? saved = null)
+    private async Task PublishMarketplaceFileAsync()
+    {
+        if (marketplaceFilePreparing) return;
+        marketplaceFilePreparing = true;
+        try
+        {
+            // Select and read a separate snapshot before opening the editor. Never use
+            // ImportOrderAsync/LoadFile here: publishing must not replace the game order.
+            var dialog = new OpenFileDialog
+            {
+                Title = "选择要发布的其他排序文件", Filter = OrderImportDialog.FallbackFilter,
+                CheckFileExists = true, Multiselect = false, AddToRecent = false
+            };
+            if (dialog.ShowDialog(this) != true) return;
+            var draft = await LoadMarketplaceFileDraftAsync(dialog.FileName, lifetime.Token);
+            lifetime.Token.ThrowIfCancellationRequested();
+            PublishMarketplaceOrderCore(null, fileDraft: draft, sourceName: Path.GetFileName(dialog.FileName));
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException
+            or InvalidOperationException or System.Xml.XmlException or System.Text.Json.JsonException
+            or System.ComponentModel.Win32Exception or System.Runtime.InteropServices.COMException)
+        {
+            MessageDialog.Show(this, "无法读取所选排序文件，请确认文件格式及内容有效。当前排序未被修改。\n" + ex.Message,
+                "尚不能发布排序文件", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        finally { marketplaceFilePreparing = false; }
+    }
+
+    internal async Task<MarketplaceManifest> LoadMarketplaceFileDraftAsync(string file, CancellationToken token)
+    {
+        var catalogue = ViewModel.CurrentCatalogue;
+        return await Task.Run(() =>
+        {
+            token.ThrowIfCancellationRequested();
+            var source = orderFiles.Read(file);
+            token.ThrowIfCancellationRequested();
+            return CreateMarketplaceDraft(source, GameVersion.Parse(source.Configuration.GameVersion), catalogue,
+                Path.GetFileNameWithoutExtension(file), preferFileReferences: true);
+        }, token);
+    }
+
+    private async Task<GitHubMarketplaceUser> LoginToLocalMarketAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var dialog = new LocalMarketAccountWindow(LocalMarket) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.AuthenticatedUser is not { } signedIn)
+            throw new OperationCanceledException(token);
+        return signedIn;
+    }
+
+    private void ManageLocalMarketAccount()
+    {
+        if (LocalMarket.User is not { } user) return;
+        new LocalMarketAccountSettingsWindow(LocalMarket, user) { Owner = this }.ShowDialog();
+    }
+
+    private async void PublishMarketplaceOrderCore(MarketplaceEntry? update, MarketplaceSavedDraft? saved = null,
+        MarketplaceManifest? fileDraft = null, string? sourceName = null)
     {
         try
         {
-            var draft = saved?.Manifest;
+            var draft = saved?.Manifest ?? fileDraft;
+            IReadOnlyList<byte[]>? publishedImages = null;
             if (update is not null)
             {
-                if (MarketplaceAuthor.User?.Login.Equals(update.Author, StringComparison.OrdinalIgnoreCase) != true)
-                    throw new InvalidOperationException("请登录排序作者的 GitHub 账号后更新。");
-                marketplaceClient ??= new MarketplaceClient(
-                    Path.Combine(UserStorage.DirectoryPath, "Data", "Marketplace", MarketplaceRepository.Name, "Cache"));
-                draft = await LoadMarketplaceUpdateAsync(update, marketplaceClient, CancellationToken.None);
+                if (LocalMarket.User?.Login.Equals(update.Author, StringComparison.OrdinalIgnoreCase) != true)
+                    throw new InvalidOperationException("请登录发布该排序的市场账号后更新。");
+                var published = (await LocalMarket.GetManifestAsync(update, lifetime.Token)).Value;
+                // Server image references are catalogue assets, not GitHub manifest paths.
+                // Restore their verified bytes separately so updating metadata never drops the cover.
+                var loadedImages = new List<byte[]>();
+                foreach (var image in update.Images)
+                    loadedImages.Add(await LocalMarket.GetImageAsync(image, lifetime.Token));
+                publishedImages = loadedImages;
+                bool resubmit = update.PublicationState is "draft" or "rejected";
+                draft = resubmit ? published with { RemoteRevisionId = update.ManifestPath }
+                    : published with { Version = MarketplaceVersions.Next(published.Version), ReleaseNotes = "" };
             }
             draft ??= CreateMarketplaceDraft();
-            var capturedPaths = paths;
-            var pendingPaths = pathInitialization is { IsCompleted: false } ? pathInitialization : null;
-            new MarketplacePublishWindow(draft, MarketplaceAuthor, async (candidate, token) =>
+            lifetime.Token.ThrowIfCancellationRequested();
+            var publishingActions = MarketplacePublishWindow.CreateProductionActions(draft, UserStorage.DirectoryPath,
+                OpenMarketplaceWorkshop, loadMarketplaceIdsAsync: async token =>
             {
-                if (pendingPaths is not null)
-                {
-                    await pendingPaths.WaitAsync(token);
-                    token.ThrowIfCancellationRequested();
-                    capturedPaths = paths;
-                    pendingPaths = null;
-                }
-                return await PrepareMarketplacePublicationAsync(candidate, capturedPaths, token);
-            }, LoadMarketplaceIdsAsync, isUpdate: saved?.IsUpdate ?? update is not null, savedDraft: saved)
-                { Owner = this }.ShowDialog();
+                var catalogue = await LocalMarket.GetCatalogueAsync(token);
+                return catalogue.Value.Entries.Select(entry => entry.Id).Distinct().ToArray();
+            }, isUpdate: saved?.IsUpdate ?? update is not null, savedDraft: saved, accountMarket: LocalMarket,
+                initialImages: publishedImages, initialNotice: update?.PublicationState == "rejected"
+                    ? "投稿已退回：" + update.RejectionReason + "。修改后可重新提交审核，保持原版本号。" : null,
+                snapshotLabel: sourceName is not null ? "文件排序快照 · " + sourceName + "（不会修改当前排序）"
+                    : saved is not null || update is not null ? "排序快照" : "当前使用排序快照");
+            new MarketplacePublishWindow(draft, publishingActions) { Owner = this }.ShowDialog();
         }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or MarketplaceException)
         {
             MessageDialog.Show(this, ex.Message, "尚不能发布排序", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -160,17 +225,22 @@ public partial class MainWindow
         CancellationToken token)
     {
         var published = (await client.GetManifestAsync(entry, token)).Value;
-        var components = published.Version.Split('-')[0].Split('.').Select(int.Parse).ToArray();
-        return published with { Version = $"{components[0]}.{components[1]}.{checked(components[2] + 1)}", ReleaseNotes = "" };
+        return published with { Version = MarketplaceVersions.Next(published.Version), ReleaseNotes = "" };
     }
 
     internal MarketplaceManifest CreateMarketplaceDraft()
     {
         if (!ViewModel.HasDocument) throw new InvalidDataException("请先载入或导入要发布的排序。");
-        var catalogue = ViewModel.CurrentCatalogue;
-        var document = ViewModel.CreateExportDocument();
-        var version = ViewModel.EffectiveGameVersion;
-        var hints = ViewModel.CreateOrderFile().WorkshopReferences;
+        return CreateMarketplaceDraft(ViewModel.CreateOrderFile(), ViewModel.EffectiveGameVersion,
+            ViewModel.CurrentCatalogue, "我的排序");
+    }
+
+    private static MarketplaceManifest CreateMarketplaceDraft(OrderFileDocument source, GameVersion? version,
+        ModCatalogue? catalogue, string title, bool preferFileReferences = false)
+    {
+        var document = source.Configuration;
+        if (document.Order.PackageIds.Count == 0) throw new InvalidDataException("所选文件没有可发布的模组排序。");
+        var hints = source.WorkshopReferences;
         var mods = new List<MarketplaceMod>();
         var dlc = new List<string>();
         foreach (var id in document.Order.PackageIds)
@@ -185,13 +255,14 @@ public partial class MainWindow
                 var installed = catalogue?.Resolve(id, version).UniqueInstallation;
                 var references = hints.Where(hint => hint.Identifier.Equals(id, StringComparison.OrdinalIgnoreCase))
                     .Select(hint => hint.WorkshopId).Distinct().Take(2).ToArray();
-                var workshop = installed?.Source == ModSource.Workshop ? installed.WorkshopId
+                var workshop = preferFileReferences && references.Length == 1 ? references[0]
+                    : installed?.Source == ModSource.Workshop ? installed.WorkshopId
                     : references.Length == 1 ? references[0] : null;
                 mods.Add(new(id, ImportedOrderDownloads.WorkshopIdFromInput(workshop ?? "")));
             }
         }
-        return new MarketplaceManifest(1, MarketplaceJson.GenerateUniqueId([]), "1.0.0",
-            "我的排序", "unpublished", "", version?.Series ?? "", dlc.AsReadOnly(), null, mods.AsReadOnly());
+        return new MarketplaceManifest(1, MarketplaceJson.GenerateUniqueId([]), "1.0",
+            string.IsNullOrWhiteSpace(title) ? "我的排序" : title, "unpublished", "", version?.Series ?? "", dlc.AsReadOnly(), null, mods.AsReadOnly());
     }
 
     private async Task<IReadOnlyList<string>> LoadMarketplaceIdsAsync(CancellationToken token)
@@ -200,42 +271,6 @@ public partial class MainWindow
             Path.Combine(UserStorage.DirectoryPath, "Data", "Marketplace", MarketplaceRepository.Name, "Cache"));
         var catalogue = await marketplaceClient.GetCatalogueAsync(token);
         return catalogue.Value.Entries.Select(entry => entry.Id).ToArray();
-    }
-
-    internal static async Task<MarketplaceManifest> PrepareMarketplacePublicationAsync(MarketplaceManifest draft,
-        GamePaths capturedPaths, CancellationToken token)
-    {
-        var versions = MarketplaceJson.ParseGameVersions(draft.GameVersion).Select(value => GameVersion.Parse(value)!).ToArray();
-        var version = versions[0];
-        // Scan metadata without inspecting mod content, then verify the captured order.
-        // Never refresh or replace the editor.
-        var scan = await Task.Run(() => new ModScanner().Scan(capturedPaths, token,
-            targetOverride: version, inspectContent: false), token);
-        token.ThrowIfCancellationRequested();
-        if (scan.Diagnostics.Any(issue => issue.Code is "ScanLimit" or "ScanRootUnreadable" or "NoScanPaths"))
-            throw new InvalidDataException("模组目录未完整读取，请检查目录设置后重试；草稿已保留。");
-        var resolved = draft.Mods.ToDictionary(mod => mod.PackageId, _ => new HashSet<string>(StringComparer.Ordinal), StringComparer.OrdinalIgnoreCase);
-        foreach (var target in versions)
-        {
-            foreach (var mod in draft.Mods)
-            {
-                if (GameContentPolicy.KeepWhenClearing(mod.PackageId, target)) continue;
-                var installed = scan.Catalogue.Resolve(mod.PackageId, target).UniqueInstallation;
-                if (installed is null || installed.Source != ModSource.Workshop
-                    || ImportedOrderDownloads.WorkshopIdFromInput(installed.WorkshopId ?? "") is not { } workshop)
-                    throw new InvalidDataException($"无法确认 {target.Series} 版本下模组的工坊来源，请检查安装、重复模组或兼容版本：{mod.PackageId}");
-                resolved[mod.PackageId].Add(workshop);
-            }
-        }
-        var mods = new List<MarketplaceMod>();
-        foreach (var mod in draft.Mods)
-        {
-            if (versions.All(target => GameContentPolicy.KeepWhenClearing(mod.PackageId, target))) { mods.Add(new(mod.PackageId, null)); continue; }
-            if (resolved[mod.PackageId].Count != 1)
-                throw new InvalidDataException("不同游戏版本下模组的工坊来源不一致，无法安全发布：" + mod.PackageId);
-            mods.Add(new(mod.PackageId, resolved[mod.PackageId].Single()));
-        }
-        return draft with { Mods = mods.AsReadOnly() };
     }
 
     private void OpenMarketplaceWorkshop(Uri uri)

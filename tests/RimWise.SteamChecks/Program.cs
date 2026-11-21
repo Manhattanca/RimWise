@@ -25,6 +25,21 @@ if (args.Length == 2 && args[0] == "--ordering-cycle-checks")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--sorting-installation-checks")
+{
+    var results = new List<string>(); var failures = new List<string>();
+    void Record(string name, Action test)
+    {
+        try { test(); results.Add(name); Console.WriteLine("PASS " + name); }
+        catch (Exception ex) { failures.Add(name + ": " + ex); Console.WriteLine("FAIL " + name + ": " + ex); }
+    }
+    SortingInstallationChecks.Run(Record);
+    DuplicateCopyChecks.Run(Record);
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Failed = failures.Count, Checks = results, Failures = failures }));
+    Environment.ExitCode = failures.Count == 0 ? 0 : 1;
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--completed-map-diagnostics-replay")
 {
     MaintenanceDiagnosisChecks.ReplayCompletedMapReports(args[1]);

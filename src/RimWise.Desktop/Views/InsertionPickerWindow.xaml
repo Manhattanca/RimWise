@@ -7,7 +7,7 @@
   <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
    <Grid Grid.Column="0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
     <TextBlock x:Name="AvailableTitle" Text="未启用" FontSize="18" Margin="0,0,0,8"/>
-    <TextBox x:Name="SearchBox" Grid.Row="1" TextChanged="Search_Changed" ToolTip="搜索未启用模组" Margin="0,0,0,10"/>
+    <TextBox x:Name="SearchBox" Grid.Row="1" Style="{StaticResource SearchInput}" TextChanged="Search_Changed" ToolTip="搜索未启用模组" Margin="0,0,0,10"/>
     <DataGrid x:Name="ModsList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
      CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" Style="{StaticResource ModListGrid}" AlternationCount="2" EnableRowVirtualization="True"
      Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" CellStyle="{StaticResource ModListCell}"
@@ -20,7 +20,7 @@
    </Grid>
    <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
     <TextBlock x:Name="SelectedTitle" Text="准备测试" FontSize="18" Margin="0,0,0,8"/>
-    <TextBox x:Name="SelectedSearchBox" Grid.Row="1" TextChanged="Search_Changed" ToolTip="搜索准备测试模组" Margin="0,0,0,10"/>
+    <TextBox x:Name="SelectedSearchBox" Grid.Row="1" Style="{StaticResource SearchInput}" TextChanged="Search_Changed" ToolTip="搜索准备测试模组" Margin="0,0,0,10"/>
     <DataGrid x:Name="SelectedList" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
      CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" Style="{StaticResource ModListGrid}" AlternationCount="2" EnableRowVirtualization="True"
      Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource TextBrush}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" CellStyle="{StaticResource ModListCell}"

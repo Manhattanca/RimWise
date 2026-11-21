@@ -6,7 +6,11 @@ using System.Text.RegularExpressions;
 namespace RimWise.Integration.Updates;
 
 public sealed record ReleaseDownload(string Version, string FileName, Uri Url, long Size, string Sha256,
-    bool IsInstaller);
+    bool IsInstaller)
+{
+    public string? FromVersion { get; init; }
+    public ReleaseDownload? Delta { get; init; }
+}
 public sealed record DownloadProgress(long Received, long Total);
 
 /// <summary>Reads public GitHub releases and downloads verified assets. Never installs or restarts.</summary>
@@ -59,9 +63,27 @@ public sealed class GitHubReleaseUpdater(HttpClient http)
         var assets = root.GetProperty("assets").EnumerateArray().ToArray();
         foreach (var name in new[] { $"RimWise-v{version}-Setup.exe", $"RimWise-v{version}.zip" })
         {
+            var full = ReadAsset(name);
+            if (full is null) continue;
+            if (!full.IsInstaller || !BinaryUpdatePackage.CanUpgrade(installedVersion, version)) return full;
+            try
+            {
+                var delta = ReadAsset(BinaryUpdatePackage.FileName(installedVersion, version));
+                return delta is not null && delta.Size < full.Size
+                    ? full with { Delta = delta with { FromVersion = installedVersion } } : full;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or FormatException or KeyNotFoundException)
+            {
+                return full; // Optional delta metadata must never make a full release unavailable.
+            }
+        }
+        throw new UpdateDownloadException("新版本尚未提供安装包或程序 ZIP，请稍后重试。");
+
+        ReleaseDownload? ReadAsset(string name)
+        {
             var matches = assets.Where(a => a.GetProperty("name").GetString() == name).ToArray();
             if (matches.Length > 1) throw new UpdateDownloadException("发布附件名称重复，未下载。");
-            if (matches.Length == 0) continue;
+            if (matches.Length == 0) return null;
             var asset = matches[0];
             var url = asset.GetProperty("browser_download_url").GetString();
             var expectedUrl = $"https://github.com/{Repository}/releases/download/{tag}/{name}";
@@ -75,15 +97,17 @@ public sealed class GitHubReleaseUpdater(HttpClient http)
                 throw new UpdateDownloadException("发布附件缺少 SHA256 校验信息，请等待维护者补全。");
             return new ReleaseDownload(version, name, new Uri(url), size, digest[7..].ToLowerInvariant(), name.EndsWith(".exe"));
         }
-        throw new UpdateDownloadException("新版本尚未提供安装包或程序 ZIP，请稍后重试。");
     }
 
     public async Task<string> DownloadAsync(ReleaseDownload release, string cacheDirectory,
         IProgress<DownloadProgress>? progress, CancellationToken cancellationToken)
     {
         // Validate again at the write boundary, even when the caller constructs a record itself.
-        var expectedName = $"RimWise-v{release.Version}" + (release.IsInstaller ? "-Setup.exe" : ".zip");
+        var expectedName = release.FromVersion is { } from
+            ? BinaryUpdatePackage.FileName(from, release.Version)
+            : $"RimWise-v{release.Version}" + (release.IsInstaller ? "-Setup.exe" : ".zip");
         if (!TryVersion(release.Version, out _) || release.Version.StartsWith('v') || release.FileName != expectedName ||
+            (release.FromVersion is { } source && (release.IsInstaller || !BinaryUpdatePackage.CanUpgrade(source, release.Version))) ||
             release.Size <= 0 || release.Size > MaximumAssetSize ||
             !Regex.IsMatch(release.Sha256, @"^[a-fA-F0-9]{64}$", RegexOptions.CultureInvariant) ||
             !IsReleaseAsset(release.Url, release.Version, expectedName))
@@ -221,7 +245,7 @@ public sealed class GitHubReleaseUpdater(HttpClient http)
             {
                 var previous = JsonSerializer.Deserialize<string>(File.ReadAllText(receipt));
                 if (previous != currentName && previous is not null && Regex.IsMatch(previous,
-                    @"^RimWise-v\d+\.\d+\.\d+(?:\.\d+)?(?:-Setup\.exe|\.zip)$", RegexOptions.CultureInvariant))
+                    @"^RimWise-v\d+\.\d+\.\d+(?:\.\d+)?(?:-Setup\.exe|\.zip|-to-v\d+\.\d+\.\d+-Delta\.zip)$", RegexOptions.CultureInvariant))
                 {
                     var old = Path.Combine(directory, previous);
                     EnsureNoLink(old);

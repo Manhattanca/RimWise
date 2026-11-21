@@ -4,7 +4,7 @@ namespace RimWise.Desktop.Views;
 
 internal static class MarketplaceFirstUseNotice
 {
-    internal const string Text = "此功能为测试版，可能会出现问题。\n请确保您可以连接 GitHub。\n发布排序时请尽量链接 Steam 合集。";
+    internal const string Text = "此功能为测试版，可能会出现问题。\n\n发布排序时请尽量绑定 Steam 创意工坊合集。\n\n排序标题和简介请勿包含政治相关内容，上传图片请勿包含色情或裸露内容。";
 
     internal static bool Show(Window owner)
     {

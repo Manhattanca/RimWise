@@ -62,6 +62,10 @@ public partial class AiSortingWindow
         automaticRunning=true;
         outcome=null;
         automaticResultShown=false;
+        automaticCopies = null;
+        installationOriginalOrder = null;
+        installationSelectionCommitted = false;
+        installationNotices.Clear();
         trialDecisionShown=false;
         ResponseText.Text=resumeId is null ? "正在准备模型校验。\n" : "正在读取任务恢复记录。\n"; SummaryText.Text="";
         ShowDependencyReasons(null);
@@ -137,12 +141,16 @@ public partial class AiSortingWindow
             // Stop optional enrichment before the runner captures catalogue identity.
             if (prepareCatalogue is not null) await prepareCatalogue();
             cancellation.Token.ThrowIfCancellationRequested();
-            if (!ResolveDuplicateInstallations(cancellation.Token))
+            if (resumeId is null) await PrepareSortingInstallationsAsync(cancellation.Token, reset: true);
+            else
             {
-                automaticResultShown = true;
-                StatusText.Text = "尚有重复安装未处理，已返回；当前排序保留，未启动测试或请求 AI 生成排序方案。";
-                return;
+                automaticCopies = new(dataDirectory, gamePaths(), editor.EffectiveGameVersion!);
+                installationPaths = gamePaths();
+                automaticCopies.AttachForRecovery(editor.CurrentCatalogue!, editor.Rows.Select(r => r.PackageId).ToArray(), cancellation.Token);
+                installationExpectedRevision = editor.ContentRevision;
             }
+            // Paid checkpoints retain their original installation context. Never silently select
+            // different files or replay a request while resuming a historical task.
             cancellation.Token.ThrowIfCancellationRequested();
             MaintenanceLimits limits;
             if(resumeId is not null)
@@ -178,7 +186,9 @@ public partial class AiSortingWindow
                         var baseline = editor.ApplyInsertionSelection(picker.SelectedIdentifiers);
                         limits = limits with { InsertionBaselineJson = baseline };
                     }
-                    if (!ResolveDuplicateInstallations(cancellation.Token)) return;
+                    var beforePreparation = editor.CurrentCatalogue!;
+                    await PrepareSortingInstallationsAsync(cancellation.Token);
+                    limits = limits with { InsertionBaselineJson = RemapInsertionBaseline(limits.InsertionBaselineJson, beforePreparation) };
                 }
             }
             // An export may be produced by a newer process than the recorded task.
@@ -223,6 +233,7 @@ public partial class AiSortingWindow
             });
             var result=await RunWithCopyFallbackAsync(limits, maintenanceProgress, gameProgress, responseProgress,
                 cancellation.Token, resumeId, checkedModelScope);
+            installationSelectionCommitted |= result.CandidateApplied || result.LastOrderKept;
             receiving=false;
             if(closed) return;
             ShowAutomaticResult(result);
@@ -231,6 +242,7 @@ public partial class AiSortingWindow
                 var chosen = ChooseLastOrder(result);
                 if (!ReferenceEquals(chosen, result)) ShowAutomaticResult(chosen);
                 result = chosen;
+                installationSelectionCommitted |= result.CandidateApplied || result.LastOrderKept;
                 if (!result.LastOrderDecisionRecorded) ShowTerminalNotice(result);
             }
         }
@@ -251,6 +263,13 @@ public partial class AiSortingWindow
         finally
         {
             receiving=false;
+            await RollbackUncommittedInstallationsAsync();
+            RecordInstallationNotices();
+            if (!closed && installationNotices.Count > 0)
+            {
+                var marker = SummaryText.Text.IndexOf("\n\n模组处理汇总：", StringComparison.Ordinal);
+                SummaryText.Text = (marker >= 0 ? SummaryText.Text[..marker] : SummaryText.Text) + InstallationSummary;
+            }
             DiagnosticEventLog.Current?.Record("automatic-sorting", "visible-result", StatusText.Text + "\n" + SummaryText.Text + "\n" + StartupFailureText.Text);
             if (runPrepared) await FinishAutomaticLogsAsync(logStarted, resumeId);
             receiving=false; requestCancellation=null; automaticRunning=false;
@@ -379,7 +398,8 @@ public partial class AiSortingWindow
         string Name(string id) => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id);
         RejectedList.ItemsSource=result.Subscriptions.Select(d=>$"已记录缺失模组／前置订阅：{Name(d.PackageId)}")
             .Concat(result.Maintenance.ConflictApprovals.Select(a=>"已记录移出排序："+string.Join("、",a.RemovedIds.Select(Name))+"（安装文件保留）"))
-            .Concat(result.Maintenance.TrialExclusions.Select(t=>$"第 {t.Attempt} 轮临时试排除："+string.Join("、",t.RemovedIds.Select(Name)))).ToArray();
+            .Concat(result.Maintenance.TrialExclusions.Select(t=>$"第 {t.Attempt} 轮临时试排除："+string.Join("、",t.RemovedIds.Select(Name))))
+            .Concat(installationNotices).ToArray();
         SummaryText.Text=result.CandidateApplied && result.Maintenance.ExistingErrorsOnly ? "新增 Mod 已定位并保存；完整对照测试仅重现已有错误。原有红字仍然存在，并非全部无红。"
             : result.CandidateApplied && result.Maintenance.HasVulkanConfigurationWarning ? "已排序完成并保存。除已忽略的 Vulkan 配置读取错误外，本轮地图生成与短时运行测试未发现其他错误；未覆盖游戏内全部内容。"
             : result.CandidateApplied ? "已排序完成。本轮地图生成与短时运行测试未检测到红字；未覆盖游戏内全部内容。"
@@ -403,6 +423,7 @@ public partial class AiSortingWindow
                 + (result.PreparationApplied ? "已放回临时试排除模组，保留必要前置与规则排序。"
                     : result.Maintenance.OriginalRestored ? "原排序已恢复。" : "尚未确认恢复，请核对恢复记录。")
                 + "\n以下仅为排查记录：\n" + TrialDescription(result.Maintenance);
+        SummaryText.Text += InstallationSummary;
     }
 
     internal static string? CompletionNotice(AutomaticMaintenanceResult result) =>
@@ -417,11 +438,11 @@ public partial class AiSortingWindow
         var notice = TerminalNotice(result, trialDecisionShown);
         if (notice is null) return;
         DiagnosticEventLog.Current?.Record("automatic-sorting", "result-dialog", notice.Value.Title);
-        if (CompletionNotice(result) is not null && !result.Maintenance.ExistingErrorsOnly)
+        if (CompletionNotice(result) is not null && !result.Maintenance.ExistingErrorsOnly && installationNotices.Count == 0)
             new TrialExclusionWindow([], result.Maintenance.HasWarnings, editor.ShowModBadgeIcons,
                 vulkanConfigurationWarning: result.Maintenance.HasVulkanConfigurationWarning) { Owner = DialogOwner }.ShowDialog();
         else
-            MessageDialog.Show(DialogOwner, notice.Value.Text, notice.Value.Title, MessageBoxButton.OK, notice.Value.Image);
+            MessageDialog.Show(DialogOwner, notice.Value.Text + InstallationSummary, notice.Value.Title, MessageBoxButton.OK, notice.Value.Image);
     }
 
     // A trial decision already reports the passing reduced combination. Only suppress

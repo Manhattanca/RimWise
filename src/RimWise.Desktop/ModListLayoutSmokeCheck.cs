@@ -19,6 +19,8 @@ internal static class ModListLayoutSmokeCheck
         Check(System.Text.Json.JsonSerializer.Deserialize<ListDisplaySettings>("{\"AvailableSource\":1}") is { RowHeight: 38, AvailableSource: 1 }, "Old settings lost their row height default.");
         main.RowHeightPopup.IsOpen = true;
         await Layout(main);
+        Check(Math.Abs(main.SearchBox.ActualHeight - main.RowHeightButton.ActualHeight) < 0.1,
+            $"Mod search height differs from the screenshot control height: {main.SearchBox.ActualHeight:F1} / {main.RowHeightButton.ActualHeight:F1} DIP.");
         Check(main.RowHeightSlider.FocusVisualStyle is null, "Slider still uses the white Windows focus rectangle.");
         Check(!main.RowHeightSlider.IsSnapToTickEnabled, "Row height slider still snaps in two-pixel jumps.");
         main.RowHeightInput.Text = "35";

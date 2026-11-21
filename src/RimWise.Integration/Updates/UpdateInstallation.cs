@@ -5,7 +5,8 @@ namespace RimWise.Integration.Updates;
 /// <summary>Creates a fixed installer invocation; never runs arbitrary commands from release text.</summary>
 public static class UpdateInstallation
 {
-    public static ProcessStartInfo CreateStartInfo(string installer, ReleaseDownload release, string? installationDirectory)
+    public static ProcessStartInfo CreateStartInfo(string installer, ReleaseDownload release, string? installationDirectory,
+        bool portable = false)
     {
         if (!release.IsInstaller || !Version.TryParse(release.Version, out var version) || version < new Version(0, 5, 2) ||
             release.FileName != $"RimWise-v{release.Version}-Setup.exe" ||
@@ -20,6 +21,7 @@ public static class UpdateInstallation
             info.ArgumentList.Add(argument);
         if (!string.IsNullOrWhiteSpace(installationDirectory))
             info.ArgumentList.Add("/DIR=" + Path.TrimEndingDirectorySeparator(Path.GetFullPath(installationDirectory)));
+        if (portable) info.ArgumentList.Add("/RIMWISEPORTABLE=1");
         return info;
     }
 
@@ -28,14 +30,15 @@ public static class UpdateInstallation
     public static string? MatchInstalledDirectory(string applicationDirectory, string? registeredDirectory)
     {
         var application = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(applicationDirectory)));
-        if (application.Parent?.Name.Equals("versions", StringComparison.OrdinalIgnoreCase) == true &&
-            application.Parent.Parent is { } versionedRoot)
-            return versionedRoot.FullName;
-
         if (!string.IsNullOrWhiteSpace(registeredDirectory))
         {
             var registered = Path.TrimEndingDirectorySeparator(Path.GetFullPath(registeredDirectory));
             if (string.Equals(application.FullName, registered, StringComparison.OrdinalIgnoreCase))
+                return registered;
+            if (application.Parent?.Name.Equals("versions", StringComparison.OrdinalIgnoreCase) == true &&
+                application.Parent.Parent is { } versionedRoot && Version.TryParse(application.Name, out var version) &&
+                version >= new Version(0, 5, 0) && version <= new Version(0, 6, 4) &&
+                string.Equals(versionedRoot.FullName, registered, StringComparison.OrdinalIgnoreCase))
                 return registered;
         }
 

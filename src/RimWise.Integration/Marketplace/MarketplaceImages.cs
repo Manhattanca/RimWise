@@ -16,7 +16,7 @@ public static class MarketplaceImages
 
     public static Information Inspect(ReadOnlySpan<byte> bytes)
     {
-        Check(bytes.Length is > 0 and <= MaximumBytes, "图片必须小于或等于 5 MiB。");
+        Check(bytes.Length is > 0 and <= MaximumBytes, "图片大小超过上限（约 5.24 MB）。");
         if (bytes.StartsWith(Signature)) return Png(bytes.ToArray(), optimize: false).Info;
         Check(bytes.Length > 4 && bytes[0] == 255 && bytes[1] == 216 && bytes[^2] == 255 && bytes[^1] == 217,
             "仅支持完整的 PNG 或 JPEG 图片。");

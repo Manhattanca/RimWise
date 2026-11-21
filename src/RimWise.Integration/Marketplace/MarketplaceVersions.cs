@@ -8,6 +8,14 @@ public static class MarketplaceVersions
         .Select(group => (IReadOnlyList<MarketplaceEntry>)group.OrderByDescending(entry => entry.Version,
             Comparer<string>.Create(Compare)).ToArray()).ToArray();
 
+    public static string Next(string version)
+    {
+        var parts = version.Split('-')[0].Split('.');
+        if (parts.Length < 2 || !int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor))
+            throw new MarketplaceException("排序版本号无效。");
+        return $"{major}.{checked(minor + 1)}";
+    }
+
     public static int Compare(string? left, string? right)
     {
         if (left == right) return 0;

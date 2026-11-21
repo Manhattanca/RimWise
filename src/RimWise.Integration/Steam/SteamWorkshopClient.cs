@@ -27,11 +27,17 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
     public async Task<IReadOnlyList<WorkshopItemState>> EnqueueMissingAsync(string[] ids, IProgress<string>? progress, CancellationToken token)
     {
         var items = new List<WorkshopItemState>();
-        foreach (var batch in ids.Chunk(1000)) items.AddRange(await RunAsync("enqueue-many", batch, progress, token));
+        foreach (var batch in ids.Chunk(1000))
+        {
+            token.ThrowIfCancellationRequested();
+            try { items.AddRange(await RunAsync("enqueue-many", batch, progress, token)); }
+            catch (IOException)
+            { progress?.Report("一批模组未能完成订阅，已跳过；继续处理其他模组，完成后提示缺失项。"); }
+        }
         return items;
     }
-    public Task<IReadOnlyList<WorkshopItemState>> EnqueueCollectionAsync(string id, IProgress<string>? progress, CancellationToken token)
-        => RunAsync("enqueue-collection", [id], progress, token);
+    public Task<IReadOnlyList<WorkshopItemState>> CollectionItemsAsync(string id, IProgress<string>? progress, CancellationToken token)
+        => RunAsync("collection", [id], progress, token);
     public Task<IReadOnlyList<WorkshopItemState>> QueryAsync(string id, CancellationToken token) => RunAsync("query", [id], null, token);
     public Task<IReadOnlyList<WorkshopItemState>> SubscribeAndDownloadAsync(string id, IProgress<string>? progress, CancellationToken token)
         => RunAsync("subscribe", [id], progress, token);
@@ -73,7 +79,7 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(operation == "ready" ? TimeSpan.FromSeconds(30)
             : operation is "subscribe" or "wait-download" ? TimeSpan.FromMinutes(17)
-            : operation is "enqueue-many" or "enqueue-collection" ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(150));
+            : operation is "enqueue-many" or "collection" ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(150));
         using var process = Process.Start(start) ?? throw new IOException("无法启动 Steam 组件。");
         try
         {
@@ -96,7 +102,7 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
                     if (result is not null) throw new IOException("Steam 组件返回了重复结果。");
                     result = line;
                 }
-                else if (kind == "progress" && operation is "subscribe" or "enqueue" or "wait-download" or "enqueue-many" or "enqueue-collection")
+                else if (kind == "progress" && operation is "subscribe" or "enqueue" or "wait-download" or "enqueue-many" or "collection")
                 {
                     var id = json.RootElement.GetProperty("Id").GetString();
                     if (!ids.Contains(id, StringComparer.Ordinal)) throw new IOException("Steam 组件返回了无关项目。");
@@ -150,7 +156,7 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
         if (!root.GetProperty("Success").GetBoolean())
             throw new IOException(root.TryGetProperty("Error", out var error) ? error.GetString() : "Steam 操作失败。");
         if (exitCode != 0 || root.GetProperty("Operation").GetString() != operation) throw new IOException("Steam 结果与操作不一致。");
-        var collection = operation == "enqueue-collection";
+        var collection = operation == "collection";
         if (collection && (ids.Length != 1 || !root.TryGetProperty("CollectionId", out var collectionId)
             || collectionId.GetString() != ids[0])) throw new IOException("Steam 返回了不匹配的合集。");
         var items = root.GetProperty("Items").Deserialize<WorkshopItemState[]>(Json) ?? throw new IOException("Steam 缺少状态。");
@@ -160,7 +166,7 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
         {
             ValidateId(item.Id);
             if (operation != "inventory" && !collection && !ids.Contains(item.Id, StringComparer.Ordinal)) throw new IOException("Steam 返回了无关项目。");
-            if (operation is "enqueue" or "enqueue-many" or "enqueue-collection" && !item.Subscribed) throw new IOException("Steam 未确认订阅。");
+            if (operation == "enqueue" && !item.Subscribed) throw new IOException("Steam 未确认订阅。");
             if (operation is "subscribe" or "wait-download" && (!item.Subscribed || !item.Installed)) throw new IOException("Steam 未完成订阅或下载。");
             if (operation == "unsubscribe" && item.Subscribed) throw new IOException("Steam 尚未取消订阅。");
         }

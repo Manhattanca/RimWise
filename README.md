@@ -14,7 +14,7 @@
 - 离线自动排序结合本地元数据、缓存规则和程序集关系，单次排序，不调用 AI 或启动游戏。
 - 记录实际回报的 token 用量；未回报用量单独标记。支持导出脱敏诊断日志。
 - 后台检查 GitHub Releases 更新，校验下载后在右上角通知；点击“更新并重启”完成安装并打开新版。
-- 排序市场（测试）：匿名浏览和下载，作者通过 GitHub 登录投稿、管理草稿与提交更新，支持 Steam 合集和最多三张图片。
+- 排序市场（测试）：连接独立 HTTPS 服务，匿名浏览和下载，通过市场账号注册、登录和恢复，可发布当前使用排序或其他排序文件、管理草稿和更新，支持 Steam 合集和最多三张图片，无需 GitHub 账号。
 
 日常模组管理和规则排序无需 AI。AI 自动排障需要用户自行配置服务，服务费用由对应提供商收取。AI 接收筛选、脱敏后的技术信息，不能任意读取电脑文件或执行命令。
 
@@ -42,13 +42,15 @@
 
 ### 构建分发包
 
-运行 `scripts/Publish-Preview.ps1 -Version 0.6.4` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.6.4 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
+运行 `scripts/Publish-Preview.ps1 -Version 0.7.0` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.7.0 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
 
-独立审核助手源码位于 `tools/RimWise.MarketplaceReview`，仅连接 GitHub，每 1 分钟检查待审投稿，人工核对图片和文字后合并。使用 `dotnet publish tools/RimWise.MarketplaceReview -c Release -o work/review` 构建；登录所需 OAuth 共享配置通过构建时的 `RimWiseGitHubOAuthClientSecret` 环境变量提供，不随源码分发。运行助手加 `--self-test <输出目录>` 可进行隔离测试，不接触真实投稿。
+仅当源、目标是同一主、次版本的相邻正式补丁版时，可以在完整安装包和 ZIP 之外运行 `scripts/Build-DeltaUpdate.ps1 -FromVersion <已发布源版本> -ToVersion <目标版本> -Compiler <ISCC.exe路径>`。它使用 Windows MSDelta，读取 `releases` 下的两份完整载荷，输出名称包含源、目标版本的差异 ZIP；不比全量包小时不输出。Release 说明须注明差分包的准确源版本。跳过补丁版或跨主、次版本不打差分包。旧客户端仍下载完整安装包。
+
+独立审核助手源码位于 `tools/RimWise.MarketplaceReview`，使用市场账号连接独立市场服务，每 1 分钟检查待审投稿，空闲期间暂停请求；人工核对标题、简介和图片后通过或退回，不接 AI。使用 `dotnet publish tools/RimWise.MarketplaceReview -c Release -o work/review` 构建。运行助手加 `--self-test <输出目录>` 可进行隔离测试，不接触真实投稿。当前桌面和审核助手的市场账号链路不需要注入 GitHub OAuth Client Secret；旧 GitHub 兼容工具保留，不是默认市场。
 
 启动后核对游戏、模组和配置路径，再导入或调整排序。AI 功能在“自动排序”窗口配置。用户数据独立于程序目录，密钥在本机加密保存；迁移数据请使用软件的路径设置。
 
-程序更新仅使用本仓库的 [GitHub Releases](https://github.com/Manhattanca/RimWise/releases)。有安装包时优先提供安装包；ZIP 版本请关闭软件，清空原程序目录后再解压，保留独立的用户数据目录。没有发布附件时会提示暂时无法取得更新，不影响使用。
+程序更新仅使用本仓库的 [GitHub Releases](https://github.com/Manhattanca/RimWise/releases)。使用安装包更新时，`RimWise.exe` 直接位于原安装根目录，不再生成版本号子目录；只有能核实归属的旧版程序文件才会清理。便携版可以在软件内更新原目录，或将完整 ZIP 解压到干净的独立目录使用。请不要清空包含其他内容的目录。首次由不支持增量的旧版升级时使用完整安装包。
 
 当前仓库公开源码；可下载的程序版本以 Releases 实际附件为准。后台更新已经验证过正式发布附件的下载与校验；安装包同时支持安装和更新。
 

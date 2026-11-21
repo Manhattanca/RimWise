@@ -54,6 +54,8 @@ public sealed record MaintenanceResult(MaintenanceOutcome Outcome, string Messag
     public bool HasWarnings { get; init; }
     public bool HasVulkanConfigurationWarning { get; init; }
     public IReadOnlyList<string> LogPaths { get; init; } = [];
+    // A locally associated failed copy can be retried only by the trusted outer installation coordinator.
+    public string? CopyFallbackPackageId { get; init; }
 }
 
 /// <summary>Not a settings toggle: a verified broker and game-test adapter are required.</summary>
@@ -121,13 +123,15 @@ public sealed class LevelOneMaintenance
     private readonly AiTaskRecoveryStore tasks;
     private readonly string? resumeTaskId;
     private readonly bool testOriginalFirst;
+    private readonly IReadOnlySet<string> copyFallbackPackages;
     private int active;
 
     public LevelOneMaintenance(IAiClient client, AiTokenEstimator estimator) : this(client, estimator, null) { }
     internal LevelOneMaintenance(IAiClient client, AiTokenEstimator estimator, ILevelOneGameSession? session,
-        string? resumeTaskId = null, bool testOriginalFirst = false)
-        => (this.client, this.estimator, this.session, tasks, this.resumeTaskId, this.testOriginalFirst) =
-            (client, estimator, session, new(estimator.ApplicationDirectory), resumeTaskId, testOriginalFirst);
+        string? resumeTaskId = null, bool testOriginalFirst = false, IReadOnlySet<string>? copyFallbackPackages = null)
+        => (this.client, this.estimator, this.session, tasks, this.resumeTaskId, this.testOriginalFirst, this.copyFallbackPackages) =
+            (client, estimator, session, new(estimator.ApplicationDirectory), resumeTaskId, testOriginalFirst,
+                copyFallbackPackages ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 
     public async Task<MaintenanceResult> RunAsync(AiRequest request, ModCatalogue catalogue,
         IReadOnlyList<CustomOrderRule> rules, MaintenanceLimits limits,
@@ -173,6 +177,7 @@ public sealed class LevelOneMaintenance
         bool cyclePlanBlocked = false;
         StartupFailureDetails? startupFailure = null;
         var replyFailure = AiReplyFailure.None;
+        string? copyFallbackPackageId = null;
         string? analysis = null;
         bool hasWarnings = false;
         bool hasVulkanConfigurationWarning = false;
@@ -473,6 +478,7 @@ public sealed class LevelOneMaintenance
                 {
                     if (recoveryTask.Current.LastUsage?.Output > (recoveryTask.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest))
                         Stop("服务未遵守输出上限，已停止；恢复不会绕过用量限制。");
+                    else if (TryCopyFallback(report)) { }
                     else if (await TryTrialAsync(report)) continue;
                     else Stop("上轮 AI 回复已保存，但没有通过校验的待执行调整；已停止，避免重复付费请求。");
                     break;
@@ -548,6 +554,10 @@ public sealed class LevelOneMaintenance
                     Stop(AiErrorStop());
                     break;
                 }
+                // Respect a valid new AI reorder first. When there is no executable new order,
+                // compare an installed alternative before considering removal of that mod.
+                if ((plan is null || !plan.CanApply || seen.Any(o => o.SequenceEqual(plan.After, StringComparer.OrdinalIgnoreCase)))
+                    && TryCopyFallback(report)) break;
                 if (testOriginalFirst && !SafeToAct(report))
                 { Stop("已完成 AI 分析；当前证据不允许通过排序调整或移出模组，原排序及日志已保留。"); break; }
                 if (cyclePlanBlocked)
@@ -791,6 +801,7 @@ public sealed class LevelOneMaintenance
         async Task<bool> TryTrialAsync(MaintenanceGameReport report, IReadOnlyList<string>? cycleMembers = null)
         {
             deadline.Token.ThrowIfCancellationRequested();
+            if (TryCopyFallback(report)) throw new MaintenancePauseException("本轮关联项将先自动换用其他副本进行对照；未试排除模组。");
             trialStopReason = null;
             if (testOriginalFirst && cycleMembers is null) return false;
             if (session is not IMaintenanceTrialSession trialSession || AttemptLimitReached(attempts)
@@ -850,6 +861,19 @@ public sealed class LevelOneMaintenance
                 + "；尚未证明各项根因。结束后恢复原排序，移除仍按用户设置确认。");
             return true;
         }
+        bool TryCopyFallback(MaintenanceGameReport report)
+        {
+            if (copyFallbackPackages.Count == 0 || replyFailure != AiReplyFailure.None || requestInFlight
+                || recoveryTask?.Current.Feedback?.ServiceError is not null || GameVersion.Parse(request.GameVersion) is not { } version)
+                return false;
+            var owner = OrderingCycleTrials.Associated(report, catalogue, current, version, includeVerifiedBlocker: true)
+                .Select(id => catalogue.Resolve(id, version).UniqueInstallation?.PackageId ?? id)
+                .FirstOrDefault(copyFallbackPackages.Contains);
+            if (owner is null) return false;
+            copyFallbackPackageId = owner;
+            Stop("本轮错误关联模组仍有副本对照记录；结束并恢复独立测试后自动换用下一副本，保留全部用量。尚未确定根因。");
+            return true;
+        }
         MaintenanceResult Result(MaintenanceOutcome state, string text) =>
             new(state, text, attempts, requests, spent, unknown, Array.AsReadOnly(current.ToArray()), restored)
                 { TaskId = recoveryTask?.Id, ControlAttempts = recoveryTask?.Current.InsertionControlAttempts ?? 0,
@@ -857,7 +881,8 @@ public sealed class LevelOneMaintenance
                     TrialExclusions = Array.AsReadOnly(trials), StartupFailure = startupFailure,
                     ReplyFailure = replyFailure,
                     ExistingErrorsOnly = existingErrorsOnly, Analysis = analysis, HasWarnings = hasWarnings,
-                    HasVulkanConfigurationWarning = hasVulkanConfigurationWarning, LogPaths = logPaths };
+                    HasVulkanConfigurationWarning = hasVulkanConfigurationWarning, LogPaths = logPaths,
+                    CopyFallbackPackageId = copyFallbackPackageId };
     }
 
     private static bool SafeToAct(MaintenanceGameReport report) => report.CanDiagnose

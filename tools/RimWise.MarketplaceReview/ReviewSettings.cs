@@ -9,6 +9,8 @@ internal sealed class ReviewSettings
 {
     internal const string StartupName = "RimWiseMarketplaceReview";
     internal static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(1);
+    public string Username { get; set; } = "";
+    public string ServerOrigin { get; set; } = "";
     public NotificationState Notifications { get; set; } = new();
     public DateTimeOffset? LastCheckUtc { get; set; }
     internal static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RimWiseMarketplaceReview");
@@ -51,8 +53,9 @@ internal sealed class ReviewSettings
 /// <summary>Windows local credential store only; no AI services are constructed or contacted.</summary>
 internal static class ReviewCredentials
 {
-    private const string Name = "RimWise/MarketplaceReview/GitHub";
-    internal static string? Read() => new WindowsCredentialSecretStore().Read(Name);
-    internal static void Write(string value) => new WindowsCredentialSecretStore().Write(Name, value);
-    internal static void Delete() => new WindowsCredentialSecretStore().Delete(Name);
+    private static string Name(Uri origin, string username) => "RimWise/MarketplaceReview/MarketPassword/"
+        + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(origin.AbsoluteUri + "|" + username)));
+    internal static string? Read(Uri origin, string username) => new WindowsCredentialSecretStore().Read(Name(origin, username));
+    internal static void Write(Uri origin, string username, string value) => new WindowsCredentialSecretStore().Write(Name(origin, username), value);
+    internal static void Delete(Uri origin, string username) => new WindowsCredentialSecretStore().Delete(Name(origin, username));
 }

@@ -48,6 +48,7 @@ public partial class App : Application
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--order-import-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--priority-fixes-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--main-panel-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--sorting-installations-smoke";
 #endif
         // Storage migration can include hashing/copying. Keep the dispatcher responsive,
         // but show only the fully sized, themed main window once its profile is ready.
@@ -141,6 +142,8 @@ public partial class App : Application
             AiUiSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--main-panel-smoke")
             MainPanelWorkflowSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--sorting-installations-smoke")
+            SortingInstallationSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--performance-smoke")
             StartupPerformanceSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--runtime-ui-smoke")

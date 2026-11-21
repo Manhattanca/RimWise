@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using RimWise.Desktop.Presentation;
 using RimWise.Desktop.Services;
@@ -19,10 +20,15 @@ public sealed class MarketplacePageActions
     public required Func<MarketplaceManifest, bool, IProgress<string>, CancellationToken, Task<MarketplaceDownloadResult>> DownloadAsync { get; init; }
     public Action<MarketplaceDownloadNotice>? NotifyDownload { get; init; }
     public required Action PublishCurrent { get; init; }
+    public Func<Task>? PublishFileAsync { get; init; }
     public required Action<Uri> OpenTrustedLink { get; init; }
     public Func<CancellationToken, Task<GitHubMarketplaceUser?>>? RefreshUserAsync { get; init; }
     public Func<CancellationToken, Task<GitHubMarketplaceUser>>? LoginAsync { get; init; }
     public Action? Logout { get; init; }
+    public Func<CancellationToken, Task>? LogoutAsync { get; init; }
+    public Func<CancellationToken, Task<IReadOnlyList<MarketplaceEntry>>>? LoadMyOrdersAsync { get; init; }
+    public Func<MarketplaceImage, CancellationToken, Task<byte[]>>? LoadImageAsync { get; init; }
+    public Action? ManageAccount { get; init; }
     public Action<MarketplaceEntry>? UpdateOrder { get; init; }
     public Func<IReadOnlyList<MarketplaceSavedDraft>>? LoadDrafts { get; init; }
     public Action<MarketplaceSavedDraft>? DeleteDraft { get; init; }
@@ -58,7 +64,12 @@ public partial class MarketplacePage : UserControl
     public MarketplacePage()
     {
         InitializeComponent();
-        PublishButton.IsEnabled = RefreshButton.IsEnabled = false;
+        AuthorPopup.CustomPopupPlacementCallback = (popupSize, targetSize, _) =>
+        [
+            new(new Point(targetSize.Width - popupSize.Width, targetSize.Height + 4), PopupPrimaryAxis.Horizontal),
+            new(new Point(targetSize.Width - popupSize.Width, -popupSize.Height - 4), PopupPrimaryAxis.Horizontal),
+        ];
+        PublishFileButton.IsEnabled = PublishButton.IsEnabled = RefreshButton.IsEnabled = false;
         PreviewKeyDown += Page_KeyDown;
         Unloaded += (_, _) => { Cancel(); imageLoading?.Cancel(); };
     }
@@ -71,6 +82,7 @@ public partial class MarketplacePage : UserControl
         if (active is not null) throw new InvalidOperationException("请先取消当前操作。");
         actions = value;
         PublishButton.IsEnabled = RefreshButton.IsEnabled = true;
+        PublishFileButton.IsEnabled = actions.PublishFileAsync is not null;
         RefreshAccountState();
     }
 
@@ -87,7 +99,7 @@ public partial class MarketplacePage : UserControl
         await RefreshAsync();
         if (actions?.RefreshUserAsync is null || revision != cancellationRevision) return;
         var catalogueStatus = StatusText.Text;
-        const string message = "正在读取 GitHub 登录状态…";
+        const string message = "正在读取账号登录状态…";
         await AccountOperationAsync(async token =>
         {
             var restored = await actions.RefreshUserAsync(token);
@@ -100,8 +112,11 @@ public partial class MarketplacePage : UserControl
     private void RefreshAccountState()
     {
         if (actions?.CurrentUser is not null) user = actions.CurrentUser();
-        AuthorMenuButton.Content = user is null ? "未登录 ▾" : "GitHub · " + user.Login + " ▾";
-        AuthorStatus.Text = user is null ? "登录后可提交和更新自己发布的排序。" : "当前账号：" + user.Login;
+        AuthorMenuButton.Content = user is null ? "未登录 ▾" : user.DisplayName + " ▾";
+        AuthorStatus.Text = user is null ? "登录后可提交和更新自己发布的排序。" : "当前账号：" + user.DisplayName;
+        LoginButton.Visibility = user is null ? Visibility.Visible : Visibility.Collapsed;
+        ManageAccountButton.Visibility = user is not null && actions?.ManageAccount is not null ? Visibility.Visible : Visibility.Collapsed;
+        LogoutButton.Visibility = user is not null ? Visibility.Visible : Visibility.Collapsed;
         LoginButton.IsEnabled = !IsBusy && user is null && actions?.LoginAsync is not null;
         LogoutButton.IsEnabled = !IsBusy && user is not null;
         MyOrdersButton.IsEnabled = !IsBusy && actions is not null;
@@ -113,7 +128,7 @@ public partial class MarketplacePage : UserControl
         var source = BeginOperation(message);
         try { await operation(source.Token); source.Token.ThrowIfCancellationRequested(); }
         catch (OperationCanceledException) { StatusText.Text = "登录操作已取消。"; }
-        catch (Exception ex) { StatusText.Text = "无法完成 GitHub 登录操作：" + Safe(ex.Message); }
+        catch (Exception ex) { StatusText.Text = "无法完成账号操作：" + Safe(ex.Message); }
         finally { EndOperation(source); RefreshAccountState(); }
     }
 
@@ -126,21 +141,33 @@ public partial class MarketplacePage : UserControl
             var authenticated = await actions.LoginAsync(token);
             token.ThrowIfCancellationRequested();
             user = authenticated;
-            StatusText.Text = "已登录 GitHub · " + user.Login;
-        }, "请在浏览器完成 GitHub 授权…");
+            StatusText.Text = "已登录账号 · " + user.DisplayName;
+        }, "正在登录排序市场…");
     }
-    private void Logout_Click(object sender, RoutedEventArgs e)
+    private async void Logout_Click(object sender, RoutedEventArgs e)
     {
         if (IsBusy) return;
-        try { actions?.Logout?.Invoke(); user = null; RefreshAccountState(); StatusText.Text = "已退出 GitHub 登录。"; }
+        if (actions?.LogoutAsync is { } logout)
+        {
+            await AccountOperationAsync(async token =>
+            {
+                try { await logout(token); }
+                finally { user = null; RefreshAccountState(); }
+                StatusText.Text = "已退出登录。";
+            }, "正在退出登录…");
+            return;
+        }
+        try { actions?.Logout?.Invoke(); user = null; RefreshAccountState(); StatusText.Text = "已退出登录。"; }
         catch (Exception ex) { StatusText.Text = "无法退出登录：" + Safe(ex.Message); }
     }
-    private void MyOrders_Click(object sender, RoutedEventArgs e)
+    private async void MyOrders_Click(object sender, RoutedEventArgs e)
     {
         if (actions is null || IsBusy) return;
         try
         {
-            var entries = cards.SelectMany(card => card.Versions).Where(entry => user is not null && entry.Author.Equals(user.Login, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var entries = actions.LoadMyOrdersAsync is not null
+                ? await actions.LoadMyOrdersAsync(CancellationToken.None)
+                : cards.SelectMany(card => card.Versions).Where(entry => user is not null && entry.Author.Equals(user.Login, StringComparison.OrdinalIgnoreCase)).ToArray();
             var dialog = new MarketplaceMyOrdersWindow(entries, actions.LoadDrafts?.Invoke() ?? [], new MarketplaceMyOrdersActions
             { DeleteDraft = actions.DeleteDraft, DeleteOrderAsync = actions.DeleteOrderAsync }) { Owner = Window.GetWindow(this) };
             if (dialog.ShowDialog() != true) return;
@@ -174,6 +201,7 @@ public partial class MarketplacePage : UserControl
         BusyProgress.Visibility = CancelButton.Visibility = Visibility.Visible;
         RefreshButton.IsEnabled = false;
         PublishButton.IsEnabled = actions is not null && !downloading;
+        PublishFileButton.IsEnabled = actions?.PublishFileAsync is not null && !downloading;
         UpdateActions();
         RefreshAccountState();
         return source;
@@ -192,6 +220,7 @@ public partial class MarketplacePage : UserControl
             ResultsList.IsEnabled = true;
             BusyProgress.Visibility = CancelButton.Visibility = Visibility.Collapsed;
             RefreshButton.IsEnabled = PublishButton.IsEnabled = actions is not null;
+            PublishFileButton.IsEnabled = actions?.PublishFileAsync is not null;
             UpdateActions();
             RefreshAccountState();
         }
@@ -214,7 +243,7 @@ public partial class MarketplacePage : UserControl
             if (!string.IsNullOrWhiteSpace(result.Warning)) CacheText.Text += " " + Safe(result.Warning);
             selected = previous is null ? null : cards.FirstOrDefault(card => card.Versions.Any(entry => EntryKey(entry) == EntryKey(previous)));
             selected ??= cards.FirstOrDefault();
-            selectedVersion = selected?.Versions.FirstOrDefault(entry => previous is not null && EntryKey(entry) == EntryKey(previous)) ?? selected?.Entry;
+            selectedVersion = selected?.Entry;
             manifest = null;
             FilterResults();
             if (selectedVersion is not null) RenderEntry(selectedVersion);
@@ -289,7 +318,7 @@ public partial class MarketplacePage : UserControl
         DetailPanel.Visibility = Visibility.Visible;
         DetailTitle.Text = entry.Title;
         _ = LoadImagesAsync(entry);
-        DetailAuthor.Text = "作者  " + entry.Author;
+        DetailAuthor.Text = "作者  " + entry.DisplayAuthor;
         DetailId.Text = "排序标识  " + entry.Id;
         DetailVersion.Text = "版本 " + entry.Version;
         DetailGameVersion.Text = "RimWorld " + entry.GameVersion;
@@ -310,10 +339,13 @@ public partial class MarketplacePage : UserControl
         DetailImages.Children.Clear();
         try
         {
-            using var client = new MarketplaceClient(System.IO.Path.Combine(UserStorage.DirectoryPath, "Cache", "MarketplaceImages"));
+            using var client = actions?.LoadImageAsync is null
+                ? new MarketplaceClient(System.IO.Path.Combine(UserStorage.DirectoryPath, "Cache", "MarketplaceImages")) : null;
             foreach (var image in entry.Images)
             {
-                var bytes = await client.GetImageAsync(image, source.Token);
+                var bytes = actions?.LoadImageAsync is { } loadImage
+                    ? await loadImage(image, source.Token)
+                    : await client!.GetImageAsync(image, source.Token);
                 var bitmap = await Task.Run(() => MarketplaceImagePreview.Decode(bytes), source.Token);
                 if (source.IsCancellationRequested || !ReferenceEquals(imageLoading, source)) return;
                 DetailImages.Children.Add(new Image { Source = bitmap, MaxHeight = 280, Stretch = System.Windows.Media.Stretch.Uniform, Margin = new Thickness(0, 0, 0, 10) });
@@ -419,13 +451,34 @@ public partial class MarketplacePage : UserControl
 
     private void Publish_Click(object sender, RoutedEventArgs e)
     {
+        if (actions is { } current)
+            PendingOperation = OpenPublishAsync(() => { current.PublishCurrent(); return Task.CompletedTask; });
+    }
+    private void PublishFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (!downloading && actions?.PublishFileAsync is { } publish) PendingOperation = OpenPublishAsync(publish);
+    }
+
+    private async Task OpenPublishAsync(Func<Task> publish)
+    {
         try
         {
-            actions?.PublishCurrent();
+            await publish();
             if (actions?.RefreshUserAsync is not null)
-                PendingOperation = AccountOperationAsync(async token => user = await actions.RefreshUserAsync(token), "正在同步 GitHub 登录状态…");
+                await AccountOperationAsync(async token => user = await actions.RefreshUserAsync(token), "正在同步账号登录状态…");
         }
         catch (Exception ex) { StatusText.Text = "无法打开发布窗口：" + Safe(ex.Message); }
+    }
+    private void ManageAccount_Click(object sender, RoutedEventArgs e)
+    {
+        AuthorPopup.IsOpen = false;
+        try
+        {
+            actions?.ManageAccount?.Invoke();
+            if (actions?.RefreshUserAsync is not null)
+                PendingOperation = AccountOperationAsync(async token => user = await actions.RefreshUserAsync(token), "正在同步账号昵称…");
+        }
+        catch (Exception ex) { StatusText.Text = "无法打开账号设置：" + Safe(ex.Message); }
     }
     private void Refresh_Click(object sender, RoutedEventArgs e) => _ = RefreshAsync();
     private void Download_Click(object sender, RoutedEventArgs e) => PendingOperation = DownloadAsync(false);
@@ -447,6 +500,6 @@ public partial class MarketplacePage : UserControl
         public string Monogram => string.IsNullOrWhiteSpace(Entry.Title) ? "R" : System.Globalization.StringInfo.GetNextTextElement(Entry.Title.Trim());
         public string Summary => Entry.Description.Replace('\r', ' ').Replace('\n', ' ');
         public string VersionLabel => $"RimWorld {Entry.GameVersion}  ·  v{Entry.Version}" + (Versions.Count > 1 ? $" · 共 {Versions.Count} 个版本" : "");
-        public string SearchText => string.Join('\n', Versions.Select(entry => string.Join('\n', entry.Title, entry.Author, entry.Description, entry.GameVersion, entry.Version)));
+        public string SearchText => string.Join('\n', Versions.Select(entry => string.Join('\n', entry.Title, entry.DisplayAuthor, entry.Description, entry.GameVersion, entry.Version)));
     }
 }

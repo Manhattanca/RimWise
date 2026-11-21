@@ -3,8 +3,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <Version>0.6.4</Version>
-    <InformationalVersion>0.6.4</InformationalVersion>
+    <Version>0.7.0</Version>
+    <InformationalVersion>0.7.0</InformationalVersion>
     <AssemblyName>RimWise</AssemblyName>
     <RootNamespace>RimWise.Desktop</RootNamespace>
     <Product>RimWise</Product>
@@ -15,6 +15,11 @@
     <RimWiseGitHubOAuthClientId Condition="'$(RimWiseGitHubOAuthClientId)' == ''">Ov23lihyUCUL4swTmdJp</RimWiseGitHubOAuthClientId>
   </PropertyGroup>
   <ItemGroup>
+    <!-- RimWise paints opaque themed surfaces. Fluent's automatic Mica backdrop
+         extends glass across the HWND and can expose stale/underlying windows
+         during composition. Opt out before WPF initializes; keep Fluent controls
+         and hardware acceleration, without machine-wide rendering changes. -->
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Appearance.DisableFluentThemeWindowBackdrop" Value="true" />
     <AssemblyMetadata Include="GitHubOAuthClientId" Value="$(RimWiseGitHubOAuthClientId)" />
     <AssemblyMetadata Include="GitHubOAuthClientSecret" Value="$(RimWiseGitHubOAuthClientSecret)" />
     <ProjectReference Include="..\RimWise.Core\RimWise.Core.csproj" />

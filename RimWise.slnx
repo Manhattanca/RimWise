@@ -11,4 +11,5 @@
   <Project Path="tests/RimWise.ImageCompressionChecks/RimWise.ImageCompressionChecks.csproj" />
   <Project Path="tools/RimWise.MarketplaceReview/RimWise.MarketplaceReview.csproj" />
   <Project Path="tools/RimWise.MarketplaceCatalog/RimWise.MarketplaceCatalog.csproj" />
+  <Project Path="tools/RimWise.DeltaBuilder/RimWise.DeltaBuilder.csproj" />
 </Solution>

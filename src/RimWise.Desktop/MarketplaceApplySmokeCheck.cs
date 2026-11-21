@@ -47,7 +47,7 @@ internal static class MarketplaceApplySmokeCheck
                 {
                     previews++;
                     Require(!notice.Contains("缺少") && !notice.Contains("前置") && !notice.Contains("诊断")
-                        && notice.Contains("必须保留") && notice.Contains("old.mod") && notice.Contains("创意工坊下载已完成"),
+                        && notice.Contains("必须保留") && notice.Contains("old.mod") && notice.Contains("本机缺失"),
                         "Import preview ran blocking diagnostics or omitted download completion/replacement safeguards");
                     return Task.FromResult(true);
                 });
@@ -210,12 +210,12 @@ internal static class MarketplaceApplySmokeCheck
                 if (scenario == "wait failure") release.SetException(new IOException("合成 Steam 下载失败"));
                 else release.SetResult(scenario == "wait incomplete" ? [] : Completed(fixture.Manifest));
                 var applied = await operation;
-                Require(applied == (scenario is "wait success" or "wait incomplete"), "Incorrect outcome after " + scenario);
+                Require(applied == (scenario is "wait success" or "wait incomplete" or "wait failure"), "Incorrect outcome after " + scenario);
                 if (!applied)
                     Require(previewCount == 0 && File.ReadAllBytes(fixture.Config).SequenceEqual(fixture.OriginalBytes)
                         && window.ViewModel.Rows.Select(row => row.PackageId).SequenceEqual(latest), "Waiting overwrote original/later order");
                 else Require(previewCount == 1 && window.ViewModel.Status.Contains("已导入并保存"), "Completion did not import once");
-                if (scenario == "wait incomplete") Require(window.ViewModel.Status.Contains("尚未确认 3")
+                if (scenario is "wait incomplete" or "wait failure") Require(window.ViewModel.Status.Contains("本机缺失")
                     && window.ViewModel.Status.Contains("缺少 2") && !window.ViewModel.HasChanges,
                     "Incomplete download blocked import or lost missing-mod notice");
                 checks.Add("Marketplace waits for Steam before import and protects original edits: " + scenario);

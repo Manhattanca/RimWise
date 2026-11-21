@@ -37,11 +37,15 @@ internal static class ReleaseUpdateChecks
                 throw new Exception("Unsupported update should not start.");
             }
             Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root, "versions", "0.5.1"), root + Path.DirectorySeparatorChar) == root);
-            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root, "versions", "0.5.1"), "D:\\old-location") == root);
+            var oldCopy = Path.Combine(root, "versions", "0.5.1");
+            Assert(UpdateInstallation.MatchInstalledDirectory(oldCopy, "D:\\old-location") == oldCopy);
             var portable = Path.Combine(directory, "portable");
             Assert(UpdateInstallation.MatchInstalledDirectory(portable, root) == portable);
             Assert(UpdateInstallation.MatchInstalledDirectory(portable, null) == portable);
-            Assert(UpdateInstallation.MatchInstalledDirectory(Path.Combine(root + "-other", "versions", "0.5.1"), root) == root + "-other");
+            var portableVersion = Path.Combine(root + "-other", "versions", "0.5.1");
+            Assert(UpdateInstallation.MatchInstalledDirectory(portableVersion, root) == portableVersion);
+            Assert(UpdateInstallation.CreateStartInfo(Path.Combine(directory, release.FileName), release, portable, true)
+                .ArgumentList.Contains("/RIMWISEPORTABLE=1"));
             var nested = Path.Combine(root, "portable", "nested");
             Assert(UpdateInstallation.MatchInstalledDirectory(nested, root) == nested);
         }));
@@ -60,6 +64,38 @@ internal static class ReleaseUpdateChecks
             var release = GitHubReleaseUpdater.ParseRelease(Release(assets: [Asset(), Asset("RimWise-v0.5.0-Setup.exe")]), "0.4.9");
             Assert(release is { IsInstaller: true });
             ExpectFailure(() => GitHubReleaseUpdater.ParseRelease(Release(assets: [Asset("RimWise-v0.5.0-source.zip")]), "0.4.9"));
+        });
+        check("Updater selects an exact smaller delta only for consecutive patch versions", () =>
+        {
+            object Full(int size = 4096) => Asset("RimWise-v0.6.5-Setup.exe", Url("RimWise-v0.6.5-Setup.exe"), size: size);
+            object Delta(string from, int size = 1024, string? digest = null)
+            {
+                var name = BinaryUpdatePackage.FileName(from, "0.6.5");
+                return Asset(name, Url(name), digest, size);
+            }
+            static string Url(string name) => $"https://github.com/{GitHubReleaseUpdater.Repository}/releases/download/v0.6.5/{name}";
+            ReleaseDownload? Parse(string current, params object[] assets) => GitHubReleaseUpdater.ParseRelease(Release("v0.6.5", assets: assets), current);
+            Assert(Parse("0.6.4", Full(), Delta("0.6.4")) is { IsInstaller: true, Delta.FromVersion: "0.6.4" });
+            Assert(Parse("0.6.4", Full()) is { IsInstaller: true, Delta: null });
+            Assert(Parse("0.6.3", Full(), Delta("0.6.4")) is { IsInstaller: true, Delta: null });
+            Assert(Parse("0.6.3", Full(), Delta("0.6.3"), Delta("0.6.4")) is { IsInstaller: true, Delta: null });
+            Assert(Parse("0.6.4-dev.1", Full(), Delta("0.6.4")) is { IsInstaller: true, Delta: null });
+            Assert(Parse("0.5.9", Full(), Delta("0.5.9")) is { IsInstaller: true, Delta: null });
+            Assert(Parse("0.6.4", Full(), Delta("0.6.4", 4096)) is { IsInstaller: true, Delta: null });
+            Assert(Parse("0.6.4", Full(), Delta("0.6.4", digest: "invalid")) is { IsInstaller: true, Delta: null });
+            Assert(Parse("0.6.4", Full(), Delta("0.6.4"), Delta("0.6.4")) is { IsInstaller: true, Delta: null });
+        });
+        check("Delta builder eligibility uses adjacent numeric stable versions", () =>
+        {
+            Assert(BinaryUpdatePackage.CanUpgrade("0.6.9", "0.6.10"));
+            Assert(BinaryUpdatePackage.CanUpgrade("0.6.2147483646", "0.6.2147483647"));
+            Assert(!BinaryUpdatePackage.CanUpgrade("0.6.3", "0.6.5"));
+            Assert(!BinaryUpdatePackage.CanUpgrade("0.6.9", "0.7.0"));
+            Assert(!BinaryUpdatePackage.CanUpgrade("0.6.9", "1.6.10"));
+            Assert(!BinaryUpdatePackage.CanUpgrade("0.6.9", "0.6.9"));
+            Assert(!BinaryUpdatePackage.CanUpgrade("0.6.10", "0.6.9"));
+            Assert(!BinaryUpdatePackage.CanUpgrade("0.6.2147483647", "0.6.0"));
+            Assert(!BinaryUpdatePackage.CanUpgrade("0.6.9", "0.6.10-beta"));
         });
         check("Updater rejects changed repository, digest, duplicated assets and malformed versions", () =>
         {

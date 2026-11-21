@@ -43,7 +43,8 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         IProgress<AiResponseUpdate> responseProgress, CancellationToken token, string? resumeId = null,
         Func<DeclaredConflict, CancellationToken, Task<string[]?>>? chooseConflict = null,
         Func<Action>? prepareSave = null,
-        Func<MaintenanceResult, CancellationToken, Task<bool>>? confirmTrials = null, string? checkedModelScope = null)
+        Func<MaintenanceResult, CancellationToken, Task<bool>>? confirmTrials = null, string? checkedModelScope = null,
+        IReadOnlySet<string>? copyFallbackPackages = null)
     {
         stoppedOrder = null;
         if (AiClient.ConfigurationProblem(settings.Normalize()) is { } configurationProblem)
@@ -131,7 +132,8 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
             }
             return await AutomaticGameMaintenance.RunAsync(client??ownedClient!,new(directory),options,paths,request,
                 catalogue,rules,limits,progress,gameProgress,token,resumeId,chooseConflict,database,
-                connectionAlreadyChecked: checkedModelScope is not null || resumeId is not null);
+                connectionAlreadyChecked: checkedModelScope is not null || resumeId is not null,
+                copyFallbackPackages: copyFallbackPackages);
         },token);
         if (result.Maintenance is { Outcome: MaintenanceOutcome.Passed, TrialExclusions.Count: > 0,
                 TrialRemovalsApproved: false, TrialDecisionRecorded: false })

@@ -154,6 +154,7 @@ public partial class MainWindow : Window
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         lifetime.Cancel();
+        preparedDelta?.Dispose();
         aiSortingWindow?.DisposeEmbedded();
         AiSortingHost.Content = null;
         ViewModel?.CancelPreviewLoads();
@@ -197,7 +198,7 @@ public partial class MainWindow : Window
 
     private async Task OpenPathsAsync(bool detect)
     {
-        if (settingsOpen) return;
+        if (settingsOpen || preparingUpdate) return;
         settingsOpen = true;
         try
         {

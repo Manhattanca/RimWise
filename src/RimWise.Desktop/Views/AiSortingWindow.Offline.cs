@@ -16,6 +16,10 @@ public partial class AiSortingWindow
         requestCancellation = cancellation;
         outcome = null;
         automaticResultShown = false;
+        automaticCopies = null;
+        installationOriginalOrder = null;
+        installationSelectionCommitted = false;
+        installationNotices.Clear();
         AcceptedList.ItemsSource = null;
         RejectedList.ItemsSource = null;
         SummaryText.Text = "";
@@ -36,6 +40,7 @@ public partial class AiSortingWindow
             if (session.ReadinessProblem is { } problem) throw new InvalidOperationException(problem);
             if (editor.ScanIssues.Any(issue => issue.Diagnostic.Code is "ScanLimit" or "ScanRootUnreadable" or "NoScanPaths"))
                 throw new InvalidOperationException("模组目录未完整读取，请检查读取记录并刷新后再排序。");
+            await PrepareSortingInstallationsAsync(cancellation.Token, reset: true);
             var catalogue = editor.CurrentCatalogue!;
             var version = editor.EffectiveGameVersion ?? throw new InvalidOperationException("请先确认目标游戏版本。");
             var revision = editor.ContentRevision;
@@ -54,6 +59,8 @@ public partial class AiSortingWindow
             {
                 if (plan.CanApply) editor.ApplyAiPlan(plan, revision, result.Rules);
                 succeeded = true;
+                // Offline results deliberately stay in the editor until the player saves.
+                installationSelectionCommitted = true;
                 message = plan.CanApply ? "离线排序完成，已更新当前清单。" : "离线排序完成，当前顺序无需调整。";
                 message += "\n未进行游戏测试，不代表运行时无红字。可在主界面保存排序或撤销调整。";
                 if (result.Messages.Count > 0) message += "\n仍有需要留意的事项，请查看右侧警告列表。";
@@ -66,11 +73,17 @@ public partial class AiSortingWindow
                 + "\n" + message;
         }
         catch (OperationCanceledException)
-        { message = "已取消离线排序，当前清单保持不变；未调用 AI。"; if (!closed) ResponseText.Text = message; }
+        { message = installationNotices.Count == 0 ? "已取消离线排序，当前清单保持不变；未调用 AI。"
+            : "已取消离线排序；已完成的模组清理可在主界面撤销，副本可在“副本备份”恢复。未调用 AI。";
+            if (!closed) ResponseText.Text = message; }
         catch (Exception ex) when (IsExpectedError(ex))
         { message = "离线排序未完成：" + ex.Message; if (!closed) ResponseText.Text = message; }
         finally
         {
+            await RollbackUncommittedInstallationsAsync();
+            RecordInstallationNotices();
+            message += InstallationSummary;
+            if (!closed) SummaryText.Text = InstallationSummary;
             DiagnosticEventLog.Current?.Record("offline-sorting", succeeded ? "completed" : "not-applied", message);
             try
             {

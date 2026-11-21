@@ -23,7 +23,7 @@ internal static class DuplicateCopyChecks
         }
         var a = Mod("A 高版本", "2.0"); var b = Mod("B 旧版本", "1.9");
         var paths = new GamePaths { LocalModsDirectory = mods };
-        var store = new DuplicateCopyBackups(Path.Combine(root, "用户 数据"), paths);
+        var store = new DuplicateCopyBackups(Path.Combine(root, "用户 数据"), paths) { GameRunning = () => false };
         DuplicateCopyInspection Inspect(ModInstallation m) => DuplicateCopyInspector.Inspect(m, new(1, 7), new HashSet<string>(), CancellationToken.None);
         void Assert(bool value) { if (!value) throw new Exception("Duplicate copy regression"); }
         check("Release version is distinct from supported game version", () =>
@@ -70,7 +70,7 @@ internal static class DuplicateCopyChecks
         });
         check("New store instance restores journalled Chinese paths", () =>
         {
-            new DuplicateCopyBackups(Path.Combine(root, "用户 数据"), paths).Restore(plan!.Id, CancellationToken.None);
+            new DuplicateCopyBackups(Path.Combine(root, "用户 数据"), paths) { GameRunning = () => false }.Restore(plan!.Id, CancellationToken.None);
             Assert(Directory.Exists(a.Directory) && Directory.Exists(b.Directory) && store.List().Count == 0);
         });
         check("Foreign directories and official content cannot enter move plan", () =>

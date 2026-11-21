@@ -9,12 +9,18 @@ using RimWise.Integration.Safety;
 namespace RimWise.Integration.Scanning;
 
 public sealed record DuplicateCopyMove(string Original, string Backup);
-public sealed record DuplicateCopyBackup(string Id, string Selected, DuplicateCopyMove[] Moves, bool Restored = false);
+public sealed record DuplicateCopyBackup(string Id, string Selected, DuplicateCopyMove[] Moves, bool Restored = false)
+{
+    // Explicit automatic-sorting authority, not a relaxation of the manual picker.
+    public string AutomaticPackageId { get; init; } = "";
+    public string[] RejectedDirectories { get; init; } = [];
+}
 
-/// <summary>Only called following explicit product UI confirmation. Renames whole directories on the same
+/// <summary>Called following manual confirmation or the automatic-sorting selection policy. Renames whole directories on the same
 /// volume without changing file contents. Write-ahead journals survive partial moves and process exit.</summary>
 public sealed class DuplicateCopyBackups(string dataDirectory, GamePaths paths)
 {
+    internal Func<bool> GameRunning { get; set; } = () => GameProcessService.IsAnyRunning();
     private string Store => ScopedPaths.Child(dataDirectory, "Data/DuplicateCopies");
     private string[] Roots => new[] { paths.LocalModsDirectory.Length > 0 ? paths.LocalModsDirectory
         : Path.Combine(paths.GameDirectory, "Mods"), paths.WorkshopDirectory }
@@ -22,9 +28,16 @@ public sealed class DuplicateCopyBackups(string dataDirectory, GamePaths paths)
         .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     public DuplicateCopyBackup Plan(IReadOnlyList<ModInstallation> copies, ModInstallation selected)
+        => Plan(copies, selected, automatic: false);
+
+    public DuplicateCopyBackup PlanAutomatic(IReadOnlyList<ModInstallation> copies, ModInstallation selected)
+        => Plan(copies, selected, automatic: true);
+
+    private DuplicateCopyBackup Plan(IReadOnlyList<ModInstallation> copies, ModInstallation selected, bool automatic)
     {
         if (copies.Count < 2 || !copies.Contains(selected) || copies.Any(c => c.Source == ModSource.Game
-            || c.Source != selected.Source || !c.PackageId.Equals(selected.PackageId, StringComparison.OrdinalIgnoreCase)))
+            || !automatic && c.Source != selected.Source || !c.PackageId.Equals(selected.PackageId, StringComparison.OrdinalIgnoreCase))
+            || string.IsNullOrWhiteSpace(selected.PackageId) || GameContentPolicy.KeepWhenClearing(selected.PackageId, new(1, 7)))
             throw new InvalidDataException("副本组已变化，请重新选择。");
         var id = Guid.NewGuid().ToString("N");
         var moves = copies.Where(c => c != selected).Select((c, i) =>
@@ -39,7 +52,7 @@ public sealed class DuplicateCopyBackups(string dataDirectory, GamePaths paths)
         ValidateSource(selected.Directory);
         if (copies.Select(c => Path.GetFullPath(c.Directory)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != copies.Count)
             throw new InvalidDataException("副本路径重复。");
-        return new(id, selected.Directory, moves);
+        return new(id, selected.Directory, moves) { AutomaticPackageId = automatic ? selected.PackageId : "" };
     }
 
     public void Apply(DuplicateCopyBackup plan, CancellationToken token)
@@ -111,9 +124,19 @@ public sealed class DuplicateCopyBackups(string dataDirectory, GamePaths paths)
         Save(record with { Restored = true });
     }
 
+    public void RejectSelected(string id)
+    {
+        using var directory = PinnedDirectory.Open(Store);
+        using var gate = new FileStream(Path.Combine(Store, "operation.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        EnsureStopped();
+        var record = List().Single(r => r.Id == id);
+        if (record.AutomaticPackageId.Length == 0) throw new InvalidDataException("不是自动副本选择记录。");
+        Save(record with { RejectedDirectories = record.RejectedDirectories.Append(record.Selected).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() });
+    }
+
     private void Validate(DuplicateCopyBackup record)
     {
-        if (!Guid.TryParseExact(record.Id, "N", out _) || string.IsNullOrWhiteSpace(record.Selected)
+        if (!Guid.TryParseExact(record.Id, "N", out _) || string.IsNullOrWhiteSpace(record.Selected) || record.AutomaticPackageId is null
             || record.Moves is null || record.Moves.Length is < 1 or > 256
             || record.Moves.Any(m => m is null || string.IsNullOrWhiteSpace(m.Original) || string.IsNullOrWhiteSpace(m.Backup)))
             throw new InvalidDataException("副本备份记录无效。");
@@ -130,10 +153,17 @@ public sealed class DuplicateCopyBackups(string dataDirectory, GamePaths paths)
             var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scan.ToUpperInvariant())))[..16];
             var expected = Path.Combine(Path.GetDirectoryName(scan)!, ".RimWise-DuplicateBackups", key, record.Id, index.ToString());
             if (!Path.GetFullPath(move.Backup).Equals(expected, StringComparison.OrdinalIgnoreCase)
-                || !Path.GetDirectoryName(source)!.Equals(Path.GetDirectoryName(record.Selected), StringComparison.OrdinalIgnoreCase)
+                || record.AutomaticPackageId.Length == 0 && !Path.GetDirectoryName(source)!.Equals(Path.GetDirectoryName(record.Selected), StringComparison.OrdinalIgnoreCase)
                 || move.Original.Equals(record.Selected, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("副本备份边界不匹配。");
         }
+        if (record.AutomaticPackageId is null || record.RejectedDirectories is null
+            || record.RejectedDirectories.Any(p => !record.Moves.Select(m => m.Original).Append(record.Selected).Contains(p, StringComparer.OrdinalIgnoreCase)))
+            throw new InvalidDataException("副本尝试记录无效。");
+        if (record.AutomaticPackageId.Length > 0 && (record.AutomaticPackageId.Length > 256
+            || record.AutomaticPackageId.Any(char.IsControl)
+            || GameContentPolicy.KeepWhenClearing(record.AutomaticPackageId, new(1, 7))))
+            throw new InvalidDataException("自动副本组标识无效。");
     }
 
     private string ValidateSource(string path)
@@ -168,8 +198,8 @@ public sealed class DuplicateCopyBackups(string dataDirectory, GamePaths paths)
         File.Move(pending, path, true);
     }
 
-    private static void EnsureStopped()
-    { if (GameProcessService.IsAnyRunning()) throw new IOException("请关闭游戏后再切换或恢复模组副本。"); }
+    private void EnsureStopped()
+    { if (GameRunning()) throw new IOException("请关闭游戏后再切换或恢复模组副本。"); }
 
     private static void Move(string source, string target, CancellationToken token)
     {

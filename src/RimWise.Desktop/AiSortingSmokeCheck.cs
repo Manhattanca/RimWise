@@ -1421,30 +1421,17 @@ internal static class AiSortingSmokeCheck
         automatic.Show();
         try
         {
-            var observed = false;
-            async Task CancelDuplicateDialogAsync()
-            {
-                var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
-                DuplicateModsWindow? modal;
-                while ((modal = automatic.OwnedWindows.OfType<DuplicateModsWindow>().SingleOrDefault()) is null)
-                {
-                    if (DateTimeOffset.UtcNow >= deadline) throw new InvalidOperationException("Duplicate preflight dialog missing.");
-                    await Task.Delay(10);
-                }
-                observed = modal.InstallationsGrid.Items.Count == 2;
-                PrototypeSmokeCheck.SavePreview(modal, Path.Combine(output, "duplicate-installations.png"));
-                modal.Close();
-            }
-            var cancel = CancelDuplicateDialogAsync();
-            await automatic.StartAutomaticAsync();
-            await cancel;
-            Assert(observed && !automatic.IsWorking && client.Calls == 0 && client.ProbeCalls == 1
-                && expected.SequenceEqual(vm.Rows.Select(row => row.PackageId)), "Preflight cancel changed order or sent request.");
-            checks.Add("after one model check, automatic sorting shows duplicate names, sources and paths; cancel preserves order");
-
+            // This picker remains a manual inspection/recovery UI, no longer a sorting blocker.
+            var manual = new DuplicateModsWindow(duplicates, automatic.RefreshDuplicateInstallationsAsync) { Owner = automatic };
+            var observed = manual.InstallationsGrid.Items.Count == 2;
+            var cancel = main.Dispatcher.InvokeAsync(() => manual.Close(), DispatcherPriority.ApplicationIdle);
+            manual.ShowDialog(); await cancel;
+            Assert(observed && !automatic.IsWorking && client.Calls == 0 && client.ProbeCalls == 0
+                && expected.SequenceEqual(vm.Rows.Select(row => row.PackageId)), "Manual duplicate cancel changed order or sent request.");
+            checks.Add("manual duplicate inspection cancel preserves all files and order without AI; automatic sorting uses the separate trusted selection policy");
             var remaining = await automatic.RefreshDuplicateInstallationsAsync(CancellationToken.None);
             Assert(remaining.Count == 1 && expected.SequenceEqual(vm.Rows.Select(row => row.PackageId)), "Refresh lost duplicates or order.");
-            checks.Add("duplicate refresh preserves current order and still blocks unresolved duplicates");
+            checks.Add("duplicate refresh preserves current order and reports every unresolved installation for manual inspection");
             var ranked = DuplicateCopyInspector.Rank(duplicates[0].Candidates.Select(mod =>
                 DuplicateCopyInspector.Inspect(mod, new(1, 7), new HashSet<string>(), default)));
             DuplicateCopyInspection? selectedCopy = null;

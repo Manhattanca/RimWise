@@ -6,11 +6,8 @@
     <AssemblyName>RimWise.MarketplaceReview</AssemblyName>
     <Version>0.1.4</Version>
     <ApplicationIcon>..\..\src\RimWise.Desktop\Resources\Branding\RimWise.ico</ApplicationIcon>
-    <RimWiseGitHubOAuthClientId>Ov23lihyUCUL4swTmdJp</RimWiseGitHubOAuthClientId>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\RimWise.Integration\RimWise.Integration.csproj" />
-    <AssemblyMetadata Include="GitHubOAuthClientId" Value="$(RimWiseGitHubOAuthClientId)" />
-    <AssemblyMetadata Include="GitHubOAuthClientSecret" Value="$(RimWiseGitHubOAuthClientSecret)" />
   </ItemGroup>
 </Project>

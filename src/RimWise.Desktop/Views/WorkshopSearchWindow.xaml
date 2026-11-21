@@ -10,7 +10,7 @@
                        TextWrapping="Wrap" Margin="0,0,0,12"/>
             <DockPanel Grid.Row="1" Margin="0,0,0,12">
                 <Button x:Name="SearchButton" DockPanel.Dock="Right" Content="搜索" Click="Search_Click"/>
-                <TextBox x:Name="SearchText" MaxLength="200" KeyDown="SearchText_KeyDown" VerticalContentAlignment="Center"/>
+                <TextBox x:Name="SearchText" Style="{StaticResource SearchInput}" MaxLength="200" KeyDown="SearchText_KeyDown"/>
             </DockPanel>
             <DataGrid Style="{StaticResource ModListGrid}" x:Name="ResultsGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
                       SelectionMode="Single" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column"

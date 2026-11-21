@@ -91,7 +91,9 @@ public static class DuplicateCopyInspector
     }
 
     public static IReadOnlyList<DuplicateCopyInspection> Rank(IEnumerable<DuplicateCopyInspection> copies) => copies
-        .OrderBy(c => c.HasFileErrors).ThenByDescending(c => NumericVersion(c.Version))
+        .OrderBy(c => c.HasFileErrors)
+        .ThenBy(c => c.Installation.Source == ModSource.Workshop ? 0 : 1)
+        .ThenByDescending(c => NumericVersion(c.Version))
         .ThenBy(c => c.Limited)
         .ThenBy(c => ulong.TryParse(c.Installation.WorkshopId, out var id) ? id : ulong.MaxValue)
         .ThenBy(c => c.Installation.FolderName, StringComparer.Ordinal)

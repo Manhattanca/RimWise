@@ -14,21 +14,6 @@ public partial class AiSortingWindow
         ? DuplicateInstallations.FindRequired(catalogue, editor.Rows.Select(row => row.PackageId).ToArray(),
             editor.EffectiveGameVersion) : [];
 
-    private bool ResolveDuplicateInstallations(CancellationToken cancellation)
-    {
-        var duplicates = RequiredDuplicateInstallations();
-        if (duplicates.Count == 0) return true;
-        DiagnosticEventLog.Current?.Record("automatic-sorting", "duplicate-installations",
-            string.Join("\n\n", duplicates.Select(DuplicateInstallations.Describe)));
-        var window = new DuplicateModsWindow(duplicates, RefreshDuplicateInstallationsAsync, ChooseDuplicateCopyAsync,
-            editor.EffectiveGameVersion,
-            editor.Rows.Select(r => r.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase)) { Owner = DialogOwner };
-        using var registration = cancellation.Register(() => Dispatcher.BeginInvoke(new Action(() =>
-        { if (window.IsVisible) window.Close(); })));
-        cancellation.ThrowIfCancellationRequested();
-        return window.ShowDialog() == true;
-    }
-
     internal async Task<bool> ChooseDuplicateCopyAsync(IReadOnlyList<DuplicateCopyInspection> group,
         DuplicateCopyInspection selected, CancellationToken cancellation)
     {

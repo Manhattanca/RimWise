@@ -15,8 +15,11 @@ public partial class MainWindow
     private Task? updateTask;
     private string? downloadedUpdatePath;
     private ReleaseDownload? downloadedRelease;
+    private ReleaseDownload? fullUpdateRelease;
+    private PreparedBinaryUpdate? preparedDelta;
     private bool preparingUpdate;
     private ProcessStartInfo? pendingUpdateInstallation;
+    private Exception? pendingUpdateStartError;
 
     private async Task StartBackgroundUpdateAsync()
     {
@@ -44,7 +47,10 @@ public partial class MainWindow
     private async Task CheckAndDownloadUpdateAsync(bool manual, CancellationToken token)
     {
         CheckUpdatesMenu.IsEnabled = false;
+        preparedDelta?.Dispose();
+        preparedDelta = null;
         downloadedRelease = null;
+        fullUpdateRelease = null;
         downloadedUpdatePath = null;
         UpdateInstallButton.Visibility = Visibility.Collapsed;
         UpdateRetryButton.Visibility = Visibility.Collapsed;
@@ -52,6 +58,8 @@ public partial class MainWindow
         var reportProgress = false;
         try
         {
+            await Task.Run(PreparedBinaryUpdate.ReclaimExpired, token);
+            token.ThrowIfCancellationRequested();
             if (manual) ShowUpdateNotification("正在检查更新", "正在连接 GitHub，不影响当前操作。", false);
             using var http = GitHubReleaseUpdater.CreateHttpClient();
             var updater = new GitHubReleaseUpdater(http);
@@ -73,7 +81,32 @@ public partial class MainWindow
                     UpdateNoticeText.Text = $"正在后台下载：{value.Received * 100 / value.Total}% ，不影响当前操作。";
             });
             var cache = Path.Combine(UserStorage.DirectoryPath, "Updates");
-            var saved = await Task.Run(() => updater.DownloadAsync(release, cache, progress, token), token);
+            var fullRelease = release;
+            fullUpdateRelease = fullRelease;
+            string? saved = null;
+            if (release.Delta is { } delta)
+            {
+                try
+                {
+                    var archive = await Task.Run(() => updater.DownloadAsync(delta, cache, progress, token), token);
+                    reportProgress = false;
+                    UpdateNoticeText.Text = "正在校验并重建新版程序，不影响当前操作。";
+                    var prepared = await Task.Run(() => BinaryUpdatePackage.Prepare(archive, AppContext.BaseDirectory, delta, token), token);
+                    if (token.IsCancellationRequested) prepared.Dispose();
+                    token.ThrowIfCancellationRequested();
+                    preparedDelta = prepared;
+                    saved = preparedDelta.InstallerPath;
+                    release = preparedDelta.Installer;
+                    DiagnosticEventLog.Current?.Record("update", "delta-verified", $"from={delta.FromVersion};to={delta.Version};bytes={delta.Size}");
+                }
+                catch (Exception ex) when (!token.IsCancellationRequested && IsDeltaFailure(ex))
+                {
+                    UpdateNoticeText.Text = "增量更新不可用，正在改为下载完整安装包。";
+                    DiagnosticEventLog.Current?.Record("update", "delta-fallback", ex.GetType().Name);
+                    reportProgress = true;
+                }
+            }
+            saved ??= await Task.Run(() => updater.DownloadAsync(fullRelease, cache, progress, token), token);
             reportProgress = false;
             token.ThrowIfCancellationRequested();
             downloadedUpdatePath = saved;
@@ -136,20 +169,15 @@ public partial class MainWindow
             var release = downloadedRelease;
             var path = downloadedUpdatePath;
             UpdateNoticeText.Text = "正在校验安装包…";
-            // Keep the checked bytes read-only until Setup has been started.
-            using var installerLease = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (!await GitHubReleaseUpdater.IsVerifiedAsync(path, release, lifetime.Token))
-                throw new InvalidDataException("安装包已变化或丢失，请重新检查更新。");
-            if (lifetime.IsCancellationRequested || !CanInstallUpdate()) return;
-            using var registry = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Uninstall\RimWise.Desktop_is1");
-            var directory = UpdateInstallation.MatchInstalledDirectory(AppContext.BaseDirectory,
-                registry?.GetValue("InstallLocation") as string);
-            pendingUpdateInstallation = UpdateInstallation.CreateStartInfo(path, release, directory);
-            Close(); // OnClosing handles unsaved edits before starting the installer.
+            try { await VerifyAndStartUpdateAsync(path, release); }
+            catch (Exception ex) when (preparedDelta is not null && !lifetime.IsCancellationRequested && IsDeltaFailure(ex))
+            {
+                pendingUpdateInstallation = null;
+                await PrepareFullUpdateAsync(ex);
+            }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
-        catch (Exception ex) when (ex is IOException or Win32Exception or InvalidOperationException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException)
+        catch (Exception ex) when (IsDeltaFailure(ex) || ex is InvalidOperationException or ArgumentException or System.Security.SecurityException)
         {
             ShowUpdateNotification("更新未开始", "安装包无法校验或启动，请重新检查更新。当前软件仍可使用。", true);
             DiagnosticEventLog.Current?.Record("update", "install-start-failed", ex.GetType().Name);
@@ -157,10 +185,55 @@ public partial class MainWindow
         finally
         {
             pendingUpdateInstallation = null;
+            pendingUpdateStartError = null;
             preparingUpdate = false;
             UpdateInstallButton.IsEnabled = true;
         }
     }
+
+    private async Task VerifyAndStartUpdateAsync(string path, ReleaseDownload release)
+    {
+        // Keep the checked executable read-only until Setup accepts the handoff.
+        using var installerLease = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (!await GitHubReleaseUpdater.IsVerifiedAsync(path, release, lifetime.Token))
+            throw new InvalidDataException("安装包已变化或丢失，请重新检查更新。");
+        if (preparedDelta is { } delta)
+            await Task.Run(() => delta.VerifyPayload(lifetime.Token), lifetime.Token);
+        if (lifetime.IsCancellationRequested || !CanInstallUpdate()) return;
+        using var registry = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Uninstall\RimWise.Desktop_is1");
+        var registered = registry?.GetValue("InstallLocation") as string;
+        var directory = UpdateInstallation.MatchInstalledDirectory(AppContext.BaseDirectory, registered);
+        var portable = string.IsNullOrWhiteSpace(registered) || !string.Equals(directory,
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(registered)), StringComparison.OrdinalIgnoreCase);
+        pendingUpdateInstallation = UpdateInstallation.CreateStartInfo(path, release, directory, portable);
+        Close(); // OnClosing handles unsaved edits before starting the installer.
+        if (pendingUpdateStartError is { } error && preparedDelta is not null) throw error;
+    }
+
+    private async Task PrepareFullUpdateAsync(Exception reason)
+    {
+        var release = fullUpdateRelease ?? throw new InvalidDataException("缺少完整安装包。");
+        preparedDelta?.Dispose();
+        preparedDelta = null;
+        downloadedRelease = null;
+        downloadedUpdatePath = null;
+        ShowUpdateNotification("正在改用完整更新", "增量文件未通过复核，正在下载完整安装包。当前软件仍可使用。", false);
+        DiagnosticEventLog.Current?.Record("update", "delta-install-fallback", reason.GetType().Name);
+        using var http = GitHubReleaseUpdater.CreateHttpClient();
+        var updater = new GitHubReleaseUpdater(http);
+        var cache = Path.Combine(UserStorage.DirectoryPath, "Updates");
+        var token = lifetime.Token;
+        var path = await Task.Run(() => updater.DownloadAsync(release, cache, null, token), token);
+        token.ThrowIfCancellationRequested();
+        downloadedRelease = release;
+        downloadedUpdatePath = path;
+        ShowUpdateNotification("完整更新已就绪", "点击“更新并重启”应用新版。", false, ready: true);
+    }
+
+    internal static bool IsDeltaFailure(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException
+        or JsonException or Win32Exception or HttpRequestException or OperationCanceledException or InvalidOperationException
+        or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
 
     private bool CanInstallUpdate()
     {
@@ -206,20 +279,24 @@ public partial class MainWindow
         if (e.Cancel || pendingUpdateInstallation is null) return;
         try
         {
+            preparedDelta?.RecordHandoff();
             using var process = Process.Start(pendingUpdateInstallation)
                 ?? throw new InvalidOperationException("Installer did not start.");
+            preparedDelta?.HandOff();
             DiagnosticEventLog.Current?.Record("update", "installer-started");
         }
-        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or IOException)
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             e.Cancel = true;
+            pendingUpdateStartError = ex;
             ShowUpdateNotification("更新未开始", "无法启动安装程序，当前软件保持打开。请重试或检查安全软件提示。", false, ready: true);
         }
     }
 
     private async Task StopUpdateDownloadAsync()
     {
+        if (updateTask is not { IsCompleted: false }) return;
         updateCancellation?.Cancel();
-        if (updateTask is not null) await updateTask;
+        await updateTask;
     }
 }

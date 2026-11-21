@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\database.snapshot.gz" LogicalName="RimWise.Databases.snapshot.gz" />
+    <EmbeddedResource Include="Resources\market-api-root.crt" LogicalName="RimWise.MarketApi.Root" />
     <ProjectReference Include="..\RimWise.Core\RimWise.Core.csproj" />
     <ProjectReference Include="..\RimWise.Formats\RimWise.Formats.csproj" />
   </ItemGroup>

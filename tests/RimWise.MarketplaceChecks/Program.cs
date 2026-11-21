@@ -53,6 +53,15 @@ internal static class Checks
             True(MarketplaceVersions.Compare("1.0.0-beta.2", "1.0.0-beta.11") < 0);
             Equal(MarketplaceVersions.Group([entries[0], entries[0] with { Author = "AnotherAuthor" }]).Count, 2);
         }));
+        yield return ("two-part order versions round-trip and increment independently of application SemVer", () => Sync(() =>
+        {
+            foreach (var version in new[] { "1.0", "1.1", "1.9", "1.10" })
+                Equal(MarketplaceJson.ParseManifest(MarketplaceJson.SerializeManifest(Sample() with { Version = version })).Version, version);
+            Equal(MarketplaceVersions.Next("1.0"), "1.1"); Equal(MarketplaceVersions.Next("1.1"), "1.2");
+            Equal(MarketplaceVersions.Next("1.9"), "1.10"); Equal(MarketplaceVersions.Next("1.0.1"), "1.1");
+            True(MarketplaceVersions.Compare("1.10", "1.9") > 0);
+        }));
+        foreach (var check in MarketSessionChecks.All()) yield return check;
         foreach (var check in ImageChecks.All(output)) yield return check;
         yield return ("software and marketplace repositories are separate", () => Sync(() =>
         {
@@ -102,7 +111,7 @@ internal static class Checks
                 True(converted.WorkshopReferences.Select(item => item.WorkshopId).SequenceEqual(["123", "456"]));
             }));
         }
-        foreach (var scenario in new[] { "collection complete", "collection idle", "collection active", "collection failure", "cancelled",
+        foreach (var scenario in new[] { "collection complete", "collection idle", "collection active", "collection missing", "collection enqueue failure", "collection failure", "cancelled",
             "unbound accept", "unbound decline", "unbound installed", "unbound cancel" })
         {
             var mode = scenario;
@@ -114,7 +123,7 @@ internal static class Checks
                 using var cancellation = new CancellationTokenSource();
                 var clock = new WorkshopTestClock();
                 var queries = 0;
-                var subscribed = mode == "unbound installed";
+                var subscribed = mode == "unbound installed" || !mode.StartsWith("unbound") && mode is not ("collection missing" or "collection enqueue failure");
                 var prompts = 0;
                 var success = false;
                 try
@@ -134,13 +143,15 @@ internal static class Checks
                         Equal(id, manifest.WorkshopCollectionId);
                         events.Add("collection");
                         if (mode == "collection failure") throw new IOException("synthetic collection failure");
-                        subscribed = true;
                         if (mode == "cancelled") cancellation.Cancel();
-                        return Task.FromResult<IReadOnlyList<WorkshopItemState>>([new("123", true, false, ""), new("456", true, false, "")]);
+                        return Task.FromResult<IReadOnlyList<WorkshopItemState>>([
+                            new("123", true, false, ""), new("456", mode is not ("collection missing" or "collection enqueue failure"), false, "")]);
                     }, (ids, _, token) =>
                     {
                         True(ids.SequenceEqual(["456"]));
-                        events.Add("enqueue-missing"); subscribed = true;
+                        events.Add("enqueue-missing");
+                        if (mode == "collection enqueue failure") throw new IOException("synthetic subscription failure");
+                        subscribed = true;
                         return Task.FromResult<IReadOnlyList<WorkshopItemState>>([new("456", true, false, "")]);
                     }, (count, token) =>
                     {
@@ -148,18 +159,19 @@ internal static class Checks
                         if (mode == "unbound cancel") throw new OperationCanceledException(token);
                         return Task.FromResult(mode == "unbound accept");
                     }, null, cancellation.Token, clock, clock.Delay);
-                    True(completed.Count == 2);
+                    True(completed.Count == (mode == "collection failure" ? 0 : 2));
                     if (mode == "collection idle") True(!completed[1].Installed && clock.Elapsed == TimeSpan.FromSeconds(30));
                     if (mode == "collection active") True(completed[1].Installed && clock.Elapsed == TimeSpan.FromSeconds(45));
                     if (mode == "unbound decline") True(!completed[1].Subscribed && queries == 1);
                     success = true;
                 }
-                catch (IOException) when (mode == "collection failure") { }
                 catch (OperationCanceledException) when (mode is "cancelled" or "unbound cancel") { }
-                True(success == (mode is not ("cancelled" or "collection failure" or "unbound cancel")));
+                True(success == (mode is not ("cancelled" or "unbound cancel")));
                 Equal(prompts, mode.StartsWith("unbound") && mode != "unbound installed" ? 1 : 0);
                 True(events.SequenceEqual(mode.StartsWith("unbound")
-                    ? mode == "unbound accept" ? ["enqueue-missing"] : Array.Empty<string>() : ["collection"]));
+                    ? mode == "unbound accept" ? ["enqueue-missing"] : Array.Empty<string>()
+                    : mode == "collection failure" ? ["collection"]
+                    : mode is "collection missing" or "collection enqueue failure" ? ["collection", "enqueue-missing"] : ["collection"]));
             });
         }
         foreach (var scenario in new[] { "pending", "byte progress", "active cancellation" })
@@ -187,17 +199,22 @@ internal static class Checks
                 { Equal(clock.Elapsed, TimeSpan.FromSeconds(40)); }
             });
         }
-        yield return ("bound collection content is monitored but never inserted into the authored order", async () =>
+        yield return ("bound collection auto-enqueues only unsubscribed children and never inserts them into the authored order", async () =>
         {
             var manifest = Sample() with { RequiredDlc = [], Mods = [new("a.mod", "123")] };
             var result = await MarketplaceWorkshopDownloads.DownloadAsync(manifest, (ids, token) =>
             {
                 True(ids.SequenceEqual(["123", "999"]));
                 return Task.FromResult<IReadOnlyList<WorkshopItemState>>(ids.Select(id => new WorkshopItemState(id, true, true, Path.Combine(output, id))).ToArray());
-            }, (_, _, _) => Task.FromResult<IReadOnlyList<WorkshopItemState>>([new("999", true, true, output)]),
-                (_, _, _) => throw new InvalidOperationException("Unrelated manifest items must not be subscribed"),
-                (_, _) => throw new InvalidOperationException("Bound collection must not prompt for individual subscriptions"), null, default);
-            True(result.Select(item => item.Id).SequenceEqual(["123"]) && manifest.Mods.Count == 1);
+            }, (_, _, _) => Task.FromResult<IReadOnlyList<WorkshopItemState>>([new("999", false, false, "")]),
+                (ids, _, _) =>
+                {
+                    True(ids.SequenceEqual(["999"]));
+                    return Task.FromResult<IReadOnlyList<WorkshopItemState>>([new("999", true, false, "")]);
+                },
+                (_, _) => throw new InvalidOperationException("Bound collection must not prompt for individual subscriptions"), null, default,
+                delay: (_, _) => Task.CompletedTask);
+            True(result.Select(item => item.Id).SequenceEqual(["123", "999"]) && manifest.Mods.Count == 1);
         });
         yield return ("canonical UTF8 roundtrip preserves order and optional release notes", () => Sync(() =>
         {
@@ -710,7 +727,6 @@ internal static class Checks
         yield return ("collection numeric ASCII only", m => m with { WorkshopCollectionId = "１２３" });
         yield return ("collection unsigned64 overflow rejected", m => m with { WorkshopCollectionId = "99999999999999999999" });
         yield return ("workshop unsigned64 overflow rejected", m => m with { Mods = [new("synthetic.a", "18446744073709551616")], RequiredDlc = [] });
-        yield return ("nonofficial null workshop rejected", m => m with { Mods = [new("synthetic.a", null)], RequiredDlc = [] });
         yield return ("official workshop assignment rejected", m => m with { Mods = [new("ludeon.rimworld", "123")], RequiredDlc = [] });
         yield return ("duplicate package case insensitive", m => m with { Mods = [new("synthetic.a", "123"), new("Synthetic.A", "456")], RequiredDlc = [] });
         yield return ("duplicate workshop rejected", m => m with { Mods = [new("synthetic.a", "123"), new("synthetic.b", "123")], RequiredDlc = [] });

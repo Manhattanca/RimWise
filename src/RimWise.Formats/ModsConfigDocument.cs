@@ -11,6 +11,8 @@ public sealed class ModsConfigDocument
     public LoadOrder Order { get; }
     public string GameVersion => template.Root?.Element("version")?.Value ?? string.Empty;
 
+    public IEnumerable<string> KnownExpansions => template.Root?.Element("knownExpansions")?.Elements("li").Select(item => item.Value) ?? [];
+
     internal ModsConfigDocument(LoadOrder order, XDocument template)
     {
         Order = order;

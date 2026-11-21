@@ -68,9 +68,8 @@ public static class MarketplaceJson
             Require(IsPackageId(mod!.PackageId), "Invalid packageId.");
             Require(packages.Add(mod.PackageId), "Duplicate packageId in manifest.");
             var official = GameContentPolicy.KeepWhenClearing(mod.PackageId, new GameVersion(1, 6));
-            if (mod.WorkshopId is null)
-                Require(official, "Only official game content may omit workshopId.");
-            else
+            // Workshop hints are optional. Hosting an order must not require a local scan or an accessible Workshop entry.
+            if (mod.WorkshopId is not null)
             {
                 Require(!official, "Official game content must not specify a workshopId.");
                 Require(IsWorkshopId(mod.WorkshopId), "workshopId must be a positive ASCII decimal string.");
@@ -193,7 +192,7 @@ public static class MarketplaceJson
 
     public static string GetManifestPath(string author, string id, string version)
     {
-        Require(IsLogin(author), "Author must be a GitHub login.");
+        Require(IsLogin(author), "作者账号格式无效。");
         Require(IsId(id), "Invalid immutable marketplace id (use lowercase ASCII letters, digits and hyphens).");
         Require(IsVersion(version), "Invalid immutable manifest version (expected major.minor.patch with optional prerelease).");
         return $"marketplace/manifests/{author.ToLowerInvariant()}/{id}/{version}.json";
@@ -229,7 +228,7 @@ public static class MarketplaceJson
     }
 
     internal static bool IsLogin(string? value) => value is { Length: > 0 and <= 39 } &&
-        Regex.IsMatch(value, "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$", RegexOptions.CultureInvariant) && !value.Contains("--", StringComparison.Ordinal);
+        Regex.IsMatch(value, "^[A-Za-z0-9][A-Za-z0-9_-]*$", RegexOptions.CultureInvariant);
 
     internal static void Require(bool condition, string message)
     {
@@ -288,7 +287,7 @@ public static class MarketplaceJson
         Regex.IsMatch(value, "^[a-z0-9][a-z0-9-]*$", RegexOptions.CultureInvariant);
 
     private static bool IsVersion(string? value) => value is { Length: > 0 and <= 64 } &&
-        Regex.IsMatch(value, @"^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-[a-z0-9]+(?:[.-][a-z0-9]+)*)?$", RegexOptions.CultureInvariant);
+        Regex.IsMatch(value, @"^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:\.(0|[1-9][0-9]{0,8}))?(?:-[a-z0-9]+(?:[.-][a-z0-9]+)*)?$", RegexOptions.CultureInvariant);
 
     private static bool IsPackageId(string? value) => value is { Length: > 0 and <= 256 } &&
         Regex.IsMatch(value, "^[A-Za-z0-9][A-Za-z0-9_.-]*$", RegexOptions.CultureInvariant);

@@ -48,7 +48,7 @@ internal static class DiagnosticEvidenceWriter
             {
                 using var entry = JsonDocument.Parse(record);
                 if (inRun is not null && entry.RootElement.ValueKind == JsonValueKind.Object && entry.RootElement.TryGetProperty("timestampUtc", out var time)
-                    && time.TryGetDateTimeOffset(out var timestamp) && !inRun(timestamp)) continue;
+                    && time.ValueKind == JsonValueKind.String && time.TryGetDateTimeOffset(out var timestamp) && !inRun(timestamp)) continue;
                 text.WriteLine(redactor.Json(record));
             }
             catch (JsonException)

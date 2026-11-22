@@ -61,12 +61,30 @@ public static class TestDataRetention
         var before = Size(root);
         var removed = 0; var compressed = 0;
         var evictable = new List<string>();
+        void ManageEvidence(IEnumerable<string> paths, bool completed)
+        {
+            foreach (var file in paths.Where(IsEvidence).Select(LogicalPath).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(StoredEvidence.Resolve).ToArray())
+            {
+                if (clearLogs && completed)
+                {
+                    Delete(file); removed++;
+                    if (!file.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) && File.Exists(file + ".gz"))
+                    { Delete(file + ".gz"); removed++; }
+                    continue;
+                }
+                if (!file.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+                { StoredEvidence.Compress(file); compressed++; }
+                if (completed) evictable.Add(StoredEvidence.Resolve(file));
+            }
+        }
         foreach (var session in Directory.EnumerateDirectories(root, "game-*"))
         {
             if (!Guid.TryParseExact(Path.GetFileName(session)[5..], "N", out _)) continue;
             ScopedPaths.Ordinary(session, true);
             // Unfinished journals remain for process/helper recovery after a crash.
             var completed = Finished(session) && protectedSessions?.Contains(session) != true;
+            ManageEvidence(Directory.EnumerateFiles(session).Select(p => ScopedPaths.Ordinary(p, true)), completed);
             foreach (var attempt in Directory.EnumerateDirectories(session, "attempt-*"))
             {
                 ScopedPaths.Ordinary(attempt, true);
@@ -81,19 +99,7 @@ public static class TestDataRetention
                     if (IsEvidence(original) && File.Exists(StoredEvidence.Resolve(original)))
                     { Delete(temporary); removed++; }
                 }
-                foreach (var file in Files(attempt).Where(IsEvidence).Select(LogicalPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(StoredEvidence.Resolve).ToArray())
-                {
-                    if (clearLogs && completed)
-                    {
-                        Delete(file); removed++;
-                        if (!file.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) && File.Exists(file + ".gz"))
-                        { Delete(file + ".gz"); removed++; }
-                        continue;
-                    }
-                    if (!file.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
-                    { StoredEvidence.Compress(file); compressed++; }
-                    if (completed) evictable.Add(StoredEvidence.Resolve(file));
-                }
+                ManageEvidence(Files(attempt), completed);
             }
         }
         // Static analysis cache is reproducible, not an AI task or billing receipt.
@@ -241,9 +247,7 @@ public static class TestDataRetention
     {
         var name = Path.GetFileName(path);
         if (name.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)) name = name[..^3];
-        return name.EndsWith(".log", StringComparison.OrdinalIgnoreCase) || name == "output_log.txt"
-            || name is "result.json" or "diagnostic-context.json" or "diagnostic-sources.json"
-                or "intended-ModsConfig.xml" or "observed-ModsConfig.xml";
+        return GameEvidenceCatalog.Disposable(name);
     }
 
     private static IEnumerable<string> Files(string directory)

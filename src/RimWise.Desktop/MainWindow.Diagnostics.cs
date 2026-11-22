@@ -58,14 +58,7 @@ public partial class MainWindow
     internal async Task<DiagnosticExportResult> ExportDiagnosticsAsync(string destination)
     {
         var directory = UserStorage.DirectoryPath;
-        var snapshot = new { ViewModel.Status, ViewModel.HasChanges, ViewModel.IsScanning,
-            ViewModel.GameVersionLabel, configurationVersion = ViewModel.VersionLabel,
-            effectiveVersion = ViewModel.EffectiveGameVersion?.ToString(), targetVersionOverride = paths.TargetVersionOverride,
-            installedVersion = ViewModel.CurrentDetectedVersion?.ToString(),
-            ViewModel.WarningCount, ViewModel.ErrorCount,
-            diagnostics = ViewModel.Diagnostics.Select(row => row.Diagnostic).ToArray(),
-            scanIssues = ViewModel.ScanIssues.Select(row => row.Diagnostic).ToArray(),
-            order = ViewModel.Rows.Select(r => new { r.PackageId, r.Name }).ToArray() };
+        var snapshot = ViewModel.CaptureDiagnosticSnapshot(paths.TargetVersionOverride);
         ViewModel.Status = "正在导出诊断日志…";
         if (DiagnosticEventLog.Current is { } log) await log.FlushAsync();
         return await Task.Run(() => DiagnosticExportService.Export(directory, destination, snapshot));

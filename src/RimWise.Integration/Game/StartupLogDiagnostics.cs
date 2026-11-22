@@ -125,7 +125,7 @@ internal static partial class StartupLogDiagnostics
                 .Concat(groups.OrderByDescending(g => g.Any(e => e.Source == "general")).SelectMany(g => g)).Take(96).ToArray())
             { BoundedErrorCaptureVerified = report.BoundedErrorCaptureVerified }.CopyValidated();
         // These paths come only from the trusted attempt directory, never from AI prose.
-        var paths = report.Logs.Select(l => l.Path).Concat(new[] { "launch.json", "launch-failure.log", "result.json", "diagnostic-sources.json", "diagnostic-context.json", "intended-ModsConfig.xml", "observed-ModsConfig.xml", "workbench-probe.xml", "workbench-loaded-order.xml" }
+        var paths = report.Logs.Select(l => l.Path).Concat(new[] { "attempt-lifecycle.jsonl", "launch.json", "launch-failure.log", "steam-request.json", "steam-observation.jsonl", "steam-result.json", "log-source.json", "result.json", "diagnostic-sources.json", "diagnostic-context.json", "intended-ModsConfig.xml", "observed-ModsConfig.xml", "workbench-probe.xml", "workbench-loaded-order.xml" }
             .Select(name => Path.Combine(attemptDirectory, name)).Select(Diagnostics.StoredEvidence.Resolve).Where(File.Exists))
             .Select(Diagnostics.StoredEvidence.Resolve).Distinct().ToArray();
         var observations = report.Logs.SelectMany(log => log.Issues.OrderBy(issue =>

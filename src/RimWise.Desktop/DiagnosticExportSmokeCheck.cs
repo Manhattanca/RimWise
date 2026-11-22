@@ -114,9 +114,29 @@ internal static class DiagnosticExportSmokeCheck
             "Scan issue details or redacted location missing");
         Assert(scanIssue.GetProperty("message").GetString() == scanReason + " [REDACTED]；" + redactedScanPath,
             "Scan issue reason missing or sensitive evidence not redacted");
+        Assert(state.GetProperty("scope").GetString() == "current-ui-at-export"
+            && state.TryGetProperty("capturedUtc", out _) && state.TryGetProperty("installations", out _),
+            "Current UI scope or installation snapshot missing");
+        Assert(files.ContainsKey("diagnostic-coverage.json") && files.ContainsKey("last-automatic-run.json")
+            && files.ContainsKey("诊断说明.txt"), "Coverage or run index missing");
+        var automaticDirectory = Path.Combine(output, "automatic-exports");
+        new AutomaticSortingLogStore(UserStorage.DirectoryPath).SaveSettings(new(false, automaticDirectory));
+        var automatic = new Views.AiSortingWindow(owner.ViewModel, UserStorage.DirectoryPath) { Owner = owner };
+        try { await automatic.SaveLastLogsAsync(openFolder: false); }
+        finally { automatic.Close(); }
+        using (var automaticZip = ZipFile.OpenRead(Directory.GetFiles(automaticDirectory, "RimWise-sorting-*.zip").Single()))
+        using (var reader = new StreamReader(automaticZip.GetEntry("application.json")!.Open()))
+        using (var automaticApplication = JsonDocument.Parse(reader.ReadToEnd()))
+        {
+            var automaticState = automaticApplication.RootElement.GetProperty("currentState");
+            Assert(automaticState.GetProperty("scope").GetString() == "current-ui-at-export"
+                && automaticState.GetProperty("scanIssues")[0].GetProperty("code").GetString() == "MetadataUnreadable",
+                "Automatic log export lost scan issues/current UI state");
+        }
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new
             { passed = true, dispatcherTicks = ticks, files = result.Files, bytes = result.Bytes,
-                checks = new[] { "settings entry", "background export", "window and control events", "command events", "private inputs excluded", "keys redacted", "diagnostic details and counts", "separate scan issue details and redaction", "lifecycle journals" } }));
+                checks = new[] { "settings entry", "background export", "window and control events", "command events", "private inputs excluded", "keys redacted", "diagnostic details and counts", "separate scan issue details and redaction", "lifecycle journals",
+                    "scoped current state", "coverage and last-run index", "automatic export current state" } }));
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

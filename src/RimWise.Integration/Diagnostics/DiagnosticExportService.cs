@@ -25,15 +25,6 @@ public static class DiagnosticExportService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter(), new DiagnosticTokenUsageConverter() }
     };
-    private static readonly HashSet<string> GameFiles = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "runtime-Player.log", "Player.log", "output_log.txt", "stdout.log", "stderr.log", "launch.json", "launch-failure.log", "result.json",
-        "session.json", "process.json", "finished.json", "recovered.json",
-        "diagnostic-sources.json", "diagnostic-context.json", "ModsConfig.xml",
-        "intended-ModsConfig.xml", "observed-ModsConfig.xml",
-        "workbench-helper-failure.txt", "workbench-progress.xml", "workbench-signal.xml", "workbench-probe.xml",
-        "workbench-messages.log", "workbench-factions.txt", "workbench-startup.xml", "workbench-log-locations.xml", "workbench-loaded-order.xml"
-    };
 
     public static DiagnosticExportResult Export(string userDataDirectory, string destination,
         object? currentState = null, CancellationToken cancellationToken = default, AutomaticLogRun? run = null)
@@ -58,6 +49,9 @@ public static class DiagnosticExportService
         var entries = new List<object>();
         var exclusions = new List<object>();
         var recoveries = new List<object>();
+        var locations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var exportedEvidence = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var snapshotStarted = DateTimeOffset.UtcNow;
         var recoveredRecords = 0;
         var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -82,15 +76,19 @@ public static class DiagnosticExportService
                     writer.Write(sanitized);
                 });
                 void WriteObject(string name, object value) => Write(name, redactor.Json(JsonSerializer.Serialize(value, Json)));
-                try { WriteObject("test-storage.json", TestDataRetention.InspectStorage(root)); }
+                object storageSnapshot;
+                try { storageSnapshot = TestDataRetention.InspectStorage(root); }
                 catch (Exception ex) when (ReadFailure(ex))
                 {
                     // This is a derived disk-usage summary, not source evidence. A denied
                     // cache/junction must not prevent exporting the safe diagnostic files.
-                    WriteObject("test-storage.json", new { unavailable = true, reason = ex.GetType().Name,
-                        detail = redactor.Text(ex.Message) });
+                    storageSnapshot = new { unavailable = true, reason = ex.GetType().Name,
+                        detail = redactor.Text(ex.Message) };
                     exclusions.Add(new { file = "test-storage.json", reason = "storage-summary-unavailable" });
                 }
+                // Catch source inspection failures, never ZIP output failures. A failed
+                // write must abort atomically, not retry as a duplicate archive entry.
+                WriteObject("test-storage.json", storageSnapshot);
                 // Keep a compact summary alongside the complete request history.
                 WriteObject("token-summary.json", new
                 {
@@ -124,9 +122,21 @@ public static class DiagnosticExportService
                 foreach (var task in tasks)
                     WriteObject("tasks/" + task.Id + ".json", task);
                 if (run is not null) WriteObject("automatic-run.json", run);
+                object lastRunSnapshot;
+                try
+                {
+                    var last = new AutomaticSortingLogStore(root).LoadLastRun();
+                    lastRunSnapshot = new { status = last is null ? "not-recorded" : "available", run = last };
+                }
+                catch (Exception ex) when (ReadFailure(ex))
+                {
+                    lastRunSnapshot = new { status = "unavailable", errorType = ex.GetType().Name };
+                    exclusions.Add(new { file = "last-automatic-run.json", reason = "run-index-unavailable" });
+                }
+                WriteObject("last-automatic-run.json", lastRunSnapshot);
                 WriteObject("ai-audit.json", new AiAuditStore(root).Load().Where(a => InRun(a.Timestamp, run)).ToArray());
 
-                foreach (var file in EvidenceFiles(root, exclusions, redactor, run))
+                foreach (var file in EvidenceFiles(root, exclusions, redactor, run, locations))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var logical = TestDataRetention.LogicalPath(file);
@@ -139,7 +149,9 @@ public static class DiagnosticExportService
                             {
                                 recoveredRecords++;
                                 recoveries.Add(new { file = redactor.Text(relative), line, reason });
-                            }, run is null ? null : timestamp => InRun(timestamp, run)));
+                            }, run is null || !relative.StartsWith("Data/Diagnostics/", StringComparison.OrdinalIgnoreCase)
+                                ? null : timestamp => InRun(timestamp, run)));
+                        exportedEvidence.Add(relative);
                     }
                     catch (Exception ex) when (ReadFailure(ex))
                     {
@@ -149,6 +161,8 @@ public static class DiagnosticExportService
                             + "。请检查文件是否可读或正在被清理后重试；原日志及已有诊断包未覆盖。错误类型：" + ex.GetType().Name, ex);
                     }
                 }
+                WriteObject("diagnostic-coverage.json", DiagnosticCoverage.Create(snapshotStarted, run,
+                    locations, exportedEvidence, exclusions.Count));
                 Write("README.txt", "RimWise diagnostic export\nCompact English field names; original game errors and AI advice are preserved.\n"
                     + "Includes current order, latest validated task checkpoints, AI action audits, recent UI events and game test evidence.\n"
                     + "Token totals count each task once, including deleted-task receipts. Request records contain input, output, cache and reasoning usage when reported.\n"
@@ -158,6 +172,13 @@ public static class DiagnosticExportService
                     + "No per-file or archive-size truncation. Files are snapshots at open time. Text/JSONL are processed record by record; one JSON document or long record still requires memory proportional to that record.\n"
                     + "Malformed JSON is preserved as labelled sanitized records. See manifest recoveries and deliberate security exclusions. Unreadable evidence fails the export instead of being silently skipped.\n"
                     + "UI events before this feature was installed cannot be reconstructed. Paths and Mod names can remain; review before public sharing.\n");
+                Write("诊断说明.txt", "本包仅包含 RimWise 保留的白名单诊断，不包含密钥、账号凭据、玩家存档或模组程序文件。\n"
+                    + "diagnostic-coverage.json 列出本次导出的证据及未找到的固定证据名称；不同版本、启动方式和中断阶段生成的文件不同，缺失不等于故障，也无法据此区分从未生成与已清理。\n"
+                    + "last-automatic-run.json 标明最后一次任务索引是否可用；automatic-run.json（如有）才是本包的筛选范围。没有测试会话可能是测试前已停止，不能据此认定游戏或 AI 成功。\n"
+                    + "attempt-lifecycle.jsonl 记录阶段与中断异常结构；completed 只表示流程返回，不代表游戏无错误；没有终态时原因未知。\n"
+                    + "catalogue-snapshot.json 是测试会话开始时的清单，application.json.currentState 是导出时的界面状态，两者不可混用。\n"
+                    + "导出为逐文件快照，不是任务一致性快照；运行中或取消时可能尚未写出终态。压缩日志会还原并脱敏，恢复用归属记录仅供排查，不授予恢复或删除权限。\n"
+                    + "malformed 恢复项及安全链接排除见 manifest.json；不可读证据会使导出失败并保留已有诊断包。分享前请检查仍保留的路径、模组名称及原始错误。\n");
                 WriteObject("manifest.json", new { format = "RimWiseDiagnostic/1", createdUtc = DateTimeOffset.UtcNow,
                     maximumFileBytes = (long?)null, maximumArchiveBytes = (long?)null,
                     entries = entries.ToArray(), omissions = Array.Empty<object>(), recoveries = recoveries.ToArray(), exclusions = exclusions.ToArray() });
@@ -173,7 +194,8 @@ public static class DiagnosticExportService
     private static bool InRun(DateTimeOffset timestamp, AutomaticLogRun? run) => run is null
         || timestamp >= run.StartedUtc && timestamp <= (run.EndedUtc ?? DateTimeOffset.UtcNow);
 
-    private static IEnumerable<string> EvidenceFiles(string root, List<object> exclusions, DiagnosticRedactor redactor, AutomaticLogRun? run)
+    private static IEnumerable<string> EvidenceFiles(string root, List<object> exclusions, DiagnosticRedactor redactor,
+        AutomaticLogRun? run, HashSet<string> locations)
     {
         var result = new List<string>();
         bool Ordinary(string path)
@@ -189,8 +211,10 @@ public static class DiagnosticExportService
         void Visit(string path, int depth)
         {
             if (!Ordinary(path)) return;
+            if (depth == 3 || Path.GetFileName(path).StartsWith("attempt-", StringComparison.OrdinalIgnoreCase))
+                locations.Add(Path.GetRelativePath(root, path).Replace('\\', '/'));
             foreach (var file in Directory.EnumerateFiles(path))
-                if (IsGameEvidence(Path.GetFileName(TestDataRetention.LogicalPath(file))) && Ordinary(file)) result.Add(file);
+                if (GameEvidenceCatalog.Exportable(Path.GetFileName(TestDataRetention.LogicalPath(file))) && Ordinary(file)) result.Add(file);
             if (depth > 0) foreach (var directory in Directory.EnumerateDirectories(path)) Visit(directory, depth - 1);
         }
         foreach (var group in new[] { "Data/Diagnostics", "Data/GameTests" })
@@ -216,11 +240,6 @@ public static class DiagnosticExportService
         }
         return result.Select(TestDataRetention.LogicalPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(StoredEvidence.Resolve);
     }
-
-    private static bool IsGameEvidence(string name) => GameFiles.Contains(name)
-        || System.Text.RegularExpressions.Regex.IsMatch(name,
-            @"^(external-startup-[0-9]+\.log|crash-[0-9]+-(error\.log|Player\.log|output_log\.txt|crash\.log|crash-[a-zA-Z0-9_-]+\.txt))$",
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
     private static bool ReadFailure(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
         or ArgumentException or System.Text.RegularExpressions.RegexMatchTimeoutException;

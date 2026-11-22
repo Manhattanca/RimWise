@@ -38,6 +38,9 @@ internal static class AutomaticLogChecks
         }
         var earlier = Session("OLDER_GAME_SENTINEL");
         var recent = Session("RECENT_GAME_SENTINEL SyntheticLogSecret629481");
+        foreach (var name in new[] { "steam-request.json", "steam-result.json", "steam-observation.jsonl" })
+            File.WriteAllText(Path.Combine(recent, "attempt-01 测试数据", name),
+                JsonSerializer.Serialize(new { Phase = "steam-arguments-mismatch", Detail = "SyntheticLogSecret629481" }) + "\n");
         foreach (var name in new[] { "intended-ModsConfig.xml", "observed-ModsConfig.xml" })
             File.WriteAllText(Path.Combine(recent, "attempt-01 测试数据", name),
                 "<ModsConfigData><activeMods><li>test.reset.evidence</li></activeMods></ModsConfigData>");
@@ -75,6 +78,8 @@ internal static class AutomaticLogChecks
             Assert(zip.GetEntry("token-summary.json") is not null && zip.GetEntry("automatic-run.json") is not null);
             Assert(zip.GetEntry("tasks/" + recentId + ".json") is not null && zip.GetEntry("tasks/" + oldId + ".json") is null);
             foreach (var name in new[] { "intended-ModsConfig.xml", "observed-ModsConfig.xml" })
+                Assert(zip.Entries.Any(entry => entry.FullName.EndsWith("/" + name, StringComparison.Ordinal)));
+            foreach (var name in new[] { "steam-request.json", "steam-result.json", "steam-observation.jsonl" })
                 Assert(zip.Entries.Any(entry => entry.FullName.EndsWith("/" + name, StringComparison.Ordinal)));
             var content = string.Join('\n', zip.Entries.Select(e => { using var reader = new StreamReader(e.Open()); return reader.ReadToEnd(); }));
             Assert(content.Contains("RECENT_GAME_SENTINEL") && content.Contains("RECENT_UI_SENTINEL")

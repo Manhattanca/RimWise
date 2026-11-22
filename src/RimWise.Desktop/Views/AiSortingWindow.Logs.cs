@@ -68,13 +68,14 @@ public partial class AiSortingWindow
             var run = lastLogRun ?? logStore.LoadLastRun();
             if (run is { EndedUtc: null }) run = await Task.Run(() => logStore.Capture(run.StartedUtc, DateTimeOffset.UtcNow, run.TaskIds.FirstOrDefault()));
             if (DiagnosticEventLog.Current is { } log) await log.FlushAsync();
+            var snapshot = editor.CaptureDiagnosticSnapshot();
             var result = await Task.Run(() =>
             {
                 using var operation = logStore.AcquireExportLease();
                 // Read the destination under the same lease as migration, including other app windows.
                 directory = logStore.ValidateDirectory(logStore.LoadSettings().Directory);
                 var destination = Path.Combine(directory, $"RimWise-sorting-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zip");
-                return DiagnosticExportService.Export(dataDirectory, destination, run: run);
+                return DiagnosticExportService.Export(dataDirectory, destination, snapshot, run: run);
             });
             savedPath = result.Path;
             if (!closed) LogStatusText.Text = $"已保存{(run is null ? "最近可用" : "本次排障")}日志：{result.Path}"

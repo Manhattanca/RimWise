@@ -138,6 +138,28 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
             OriginalConfigHash = originalHash, InitialOrder = current, options.MaximumSeconds, LanguageFolder = languageFolder,
             GameLaunchCallsAI = false, WritesPersonalConfiguration = false
         });
+        // Capture the exact session input, not whatever the UI happens to show when
+        // the user exports later. No Mod descriptions, code or arbitrary files.
+        try
+        {
+            var snapshot = new
+            {
+                Schema = 1, CapturedUtc = DateTimeOffset.UtcNow, Version = options.Version.ToString(),
+                Order = current, Retained = retained, Rules = rules, catalogue.UnverifiedOrderIdentifiers,
+                Installations = catalogue.Installations.Select(mod => new
+                {
+                    mod.PackageId, mod.Name, mod.Directory, mod.Source, mod.WorkshopId,
+                    MetadataReadable = mod.Metadata is not null, mod.RecoveredIdentity,
+                    mod.Metadata?.ReleaseVersion, mod.Metadata?.SupportedVersions, mod.Metadata?.Requirements, mod.Diagnostics
+                }).ToArray()
+            };
+            using var document = System.Text.Json.JsonDocument.Parse(new DiagnosticRedactor().Json(
+                System.Text.Json.JsonSerializer.Serialize(snapshot)));
+            OrdinaryGameRunner.WriteNew(ScopedPaths.Child(SessionDirectory, "catalogue-snapshot.json"), document.RootElement);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+            or System.Text.Json.JsonException or System.Text.RegularExpressions.RegexMatchTimeoutException)
+        { DiagnosticEventLog.Current?.Record("game-test", "catalogue-evidence-unavailable", ex.GetType().Name); }
         return Task.CompletedTask;
     }
 
@@ -151,9 +173,14 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         TestDataRetention.EnsureTestSpace(options.TestRoot);
         var data = ScopedPaths.Child(SessionDirectory, "attempt-" + (++attempts).ToString("D2") + " 测试数据");
         Directory.CreateDirectory(data);
+        var journal = new GameAttemptJournal(data);
+        var phase = "prepare-helper";
+        journal.Record(phase);
+        Task? analysis = null;
         try
         {
         if (options.UseFixedHelper) helper = new(options, SessionDirectory);
+        journal.Record(phase = "prepare-configuration");
         var testOrder = options.UseFixedHelper ? order.Append(GameProbe.PackageId).ToArray() : order;
         var knownExpansions = catalogue.Installations.Where(mod => mod.Source == ModSource.Game
             && mod.PackageId.StartsWith("ludeon.rimworld.", StringComparison.OrdinalIgnoreCase))
@@ -163,12 +190,15 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         var runner = new OrdinaryGameRunner();
         var timeout = TimeSpan.FromSeconds(options.MaximumSeconds);
         var runtimeLog = GameTestLogCapture.RuntimeLogForConfiguration(options.PersonalConfigPath);
+        journal.Record(phase = "launch-and-capture");
         LastReport = SteamGameLaunch.IsSteamInstallation(options.GameDirectory)
             ? await runner.RunSteamAsync(SteamGameLaunch.CreateRequest(GameTestLaunch.Arguments(data)),
                 executable, data, catalogue, timeout, progress, token, runtimeLog, options.WarnOnSlowStartup)
             : await runner.RunAsync(GameTestLaunch.Create(executable, data), data, catalogue, timeout, progress, token, runtimeLog, options.WarnOnSlowStartup);
+        journal.Record(phase = "verify-personal-configuration");
         CheckPersonalConfig();
         token.ThrowIfCancellationRequested();
+        journal.Record(phase = "analyze-evidence");
         progress?.Report(new(LastReport.ProcessId, 0, LastReport.Logs.Sum(log => (long)log.Text.Length))
         { Phase = "diagnostics", StartupReady = LastReport.StartupObserved });
         var completed = LastReport;
@@ -181,21 +211,29 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
                     ScopedPaths.Child(options.TestRoot, "AnalysisCache"), token);
             return logContext;
         }, token);
-        await Task.WhenAll(startupTask, logsTask);
+        analysis = Task.WhenAll(startupTask, logsTask);
+        await analysis;
         var startup = await startupTask;
         var context = await logsTask;
         // Save the exact sanitized selection for local review/replay; never save an API key or
         // authorize a second paid request just because the first diagnosis was inconclusive.
+        journal.Record(phase = "save-diagnostics");
         OrdinaryGameRunner.WriteNew(ScopedPaths.Child(data, "diagnostic-context.json"), new
         { Schema = 1, Startup = startup.Context, Logs = context });
         var feedback = CreateFeedback(completed, context, data, startup);
-        return options.CollectInsertionEvidence ? feedback with { InsertionEvidence = CaptureInsertionEvidence(LastReport) } : feedback;
+        var result = options.CollectInsertionEvidence ? feedback with { InsertionEvidence = CaptureInsertionEvidence(LastReport) } : feedback;
+        journal.Record("attempt", "completed");
+        return result;
         }
+        catch (OperationCanceledException ex) { journal.Record(phase, "cancelled", ex); throw; }
+        catch (Exception ex) { journal.Record(phase, "faulted", analysis?.Exception ?? ex); throw; }
         finally
         {
             // Detach as soon as this round has stopped, including cancellation or a
             // diagnostic exception. No helper remains mounted while AI considers a plan.
-            helper?.Dispose(); helper = null;
+            journal.Record("cleanup-helper");
+            try { helper?.Dispose(); helper = null; journal.Record("cleanup-helper", "returned"); }
+            catch (Exception ex) { journal.Record("cleanup-helper", "faulted", ex); throw; }
             // The runner has captured its evidence and stopped the owned process before
             // returning. A failed cleanup never replaces the actual game/test exception.
             TestDataRetention.MaintainAfterTest(options.TestRoot);

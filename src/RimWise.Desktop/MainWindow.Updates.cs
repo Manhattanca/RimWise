@@ -60,9 +60,10 @@ public partial class MainWindow
         {
             await Task.Run(PreparedBinaryUpdate.ReclaimExpired, token);
             token.ThrowIfCancellationRequested();
-            if (manual) ShowUpdateNotification("正在检查更新", "正在连接 GitHub，不影响当前操作。", false);
+            if (manual) ShowUpdateNotification("正在检查更新", "正在连接更新源，不影响当前操作。", false);
             using var http = GitHubReleaseUpdater.CreateHttpClient();
-            var updater = new GitHubReleaseUpdater(http);
+            using var mirror = GitHubReleaseUpdater.CreateMirrorHttpClient();
+            var updater = new GitHubReleaseUpdater(http, mirror);
             var version = ApplicationBuildIdentity.ProductVersion(typeof(MainWindow).Assembly) ?? "0.0.0";
             var release = await updater.CheckAsync(version, token);
             token.ThrowIfCancellationRequested();
@@ -78,7 +79,9 @@ public partial class MainWindow
             var progress = new Progress<DownloadProgress>(value =>
             {
                 if (reportProgress && !token.IsCancellationRequested)
-                    UpdateNoticeText.Text = $"正在后台下载：{value.Received * 100 / value.Total}% ，不影响当前操作。";
+                    UpdateNoticeText.Text = value.UsingMirror
+                        ? $"已切换服务器源，正在后台下载：{value.Received * 100 / value.Total}%，不影响当前操作。"
+                        : $"正在后台下载：{value.Received * 100 / value.Total}%，不影响当前操作。";
             });
             var cache = Path.Combine(UserStorage.DirectoryPath, "Updates");
             var fullRelease = release;
@@ -129,10 +132,10 @@ public partial class MainWindow
             {
                 UpdateDownloadException failure => failure.Message,
                 OperationCanceledException => "网络等待超时，请稍后重试。",
-                HttpRequestException => "无法连接 GitHub，请检查网络后重试。",
+                HttpRequestException => "更新源暂时不可用，请检查网络后重试。",
                 UnauthorizedAccessException => "无法写入更新缓存，请检查用户数据目录权限。",
                 IOException => "更新文件无法读写，可能正在被其他程序使用，请稍后重试。",
-                JsonException or InvalidOperationException or KeyNotFoundException or FormatException => "GitHub 返回的版本信息无法读取。",
+                JsonException or InvalidOperationException or KeyNotFoundException or FormatException => "更新源返回的版本信息无法读取。",
                 _ => "本次更新未完成，请稍后重试。"
             };
             ShowUpdateNotification(downloading ? "更新下载失败" : "更新检测失败", reason + " 当前功能可继续使用。", true);
@@ -222,7 +225,8 @@ public partial class MainWindow
         ShowUpdateNotification("正在改用完整更新", "增量文件未通过复核，正在下载完整安装包。当前软件仍可使用。", false);
         DiagnosticEventLog.Current?.Record("update", "delta-install-fallback", reason.GetType().Name);
         using var http = GitHubReleaseUpdater.CreateHttpClient();
-        var updater = new GitHubReleaseUpdater(http);
+        using var mirror = GitHubReleaseUpdater.CreateMirrorHttpClient();
+        var updater = new GitHubReleaseUpdater(http, mirror);
         var cache = Path.Combine(UserStorage.DirectoryPath, "Updates");
         var token = lifetime.Token;
         var path = await Task.Run(() => updater.DownloadAsync(release, cache, null, token), token);

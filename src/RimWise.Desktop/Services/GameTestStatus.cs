@@ -9,6 +9,11 @@ internal static class GameTestStatus
         var stage = progress.Phase switch
         {
             "steam-request" => "已请求 Steam 启动游戏，正在确认测试进程；请留意 Steam 的启动提示",
+            "steam-identity-unavailable" => "发现游戏进程，正在重试身份核验；请检查游戏与 RimWise 的运行权限是否一致",
+            "steam-arguments-mismatch" => "发现游戏进程，但启动参数不属于本轮测试；请检查 Steam 启动确认窗口，不会接管该进程",
+            "steam-existing-process" => "发现此前已运行的游戏进程，不会将其当作本轮测试；正在等待本轮进程",
+            "steam-installation-mismatch" => "发现其他安装目录的同名游戏进程，不会接管；正在等待当前安装的测试进程",
+            "steam-cancelling" => "正在取消 Steam 启动等待并核对迟到的测试进程；不会关闭 Steam 或其他游戏",
             "process-start" => "正在启动游戏测试进程",
             "launch-failed" => "未能确认游戏测试进程；请检查 Steam 登录及启动提示，测试未通过",
             "diagnostics" => "本轮游戏测试已结束，正在整理日志与模组关联证据…",
@@ -28,6 +33,10 @@ internal static class GameTestStatus
             _ => progress.StartupReady ? "主界面已加载，正在检查测试阶段" : "测试进程已启动，正在加载游戏"
         };
         var status = stage + $"\n本轮已等待 {TimeSpan.FromSeconds(progress.ElapsedSeconds):mm\\:ss} · 日志 {progress.LogBytes / 1024:N0} KB";
+        if (progress.ProcessId == 0 && progress.Phase?.StartsWith("steam-", StringComparison.Ordinal) == true)
+            status += progress.Phase == "steam-cancelling"
+                ? "\n正在完成最多 45 秒的安全收尾，请勿在此期间手动启动游戏。"
+                : "\n最多等待 3 分钟确认启动；Steam 的确认窗口可能在后台，可取消测试。";
         if (progress.ProcessId > 0 && (progress.Phase is null or "loading") && !progress.StartupReady)
             status += progress.LogBytes == 0
                 ? "\n尚未收到游戏日志和测试阶段信号；可继续等待，或取消后导出日志。"

@@ -11,11 +11,23 @@ public sealed record ReleaseDownload(string Version, string FileName, Uri Url, l
     public string? FromVersion { get; init; }
     public ReleaseDownload? Delta { get; init; }
 }
-public sealed record DownloadProgress(long Received, long Total);
+public sealed record DownloadProgress(long Received, long Total)
+{
+    public bool UsingMirror { get; init; }
+}
 
 /// <summary>Reads public GitHub releases and downloads verified assets. Never installs or restarts.</summary>
-public sealed class GitHubReleaseUpdater(HttpClient http)
+public sealed class GitHubReleaseUpdater(HttpClient http, HttpClient? mirror = null)
 {
+    private bool preferMirror;
+    private static Uri MirrorRoot => new(Marketplace.MarketApiConnection.DefaultOrigin, "api/updates/");
+
+    public static HttpClient CreateMirrorHttpClient()
+    {
+        var handler = Marketplace.MarketApiConnection.CreateHandler(Marketplace.MarketApiConnection.DefaultOrigin);
+        handler.UseCookies = false; // Public update traffic never shares a market login or credentials.
+        return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+    }
     public const string Repository = "Manhattanca/RimWise";
     public const string ReleasePage = "https://github.com/" + Repository + "/releases/latest";
     private const long MaximumAssetSize = 1024L * 1024 * 1024;
@@ -26,12 +38,21 @@ public sealed class GitHubReleaseUpdater(HttpClient http)
 
     public async Task<ReleaseDownload?> CheckAsync(string installedVersion, CancellationToken cancellationToken)
     {
+        return await FastUpdateSource.RunAsync(
+            (token, _) => CheckSourceAsync(http, new Uri("https://api.github.com/repos/" + Repository + "/releases/latest"), installedVersion, token),
+            mirror is null ? null : token => CheckSourceAsync(mirror, new Uri(MirrorRoot, "latest"), installedVersion, token),
+            () => preferMirror = true, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<ReleaseDownload?> CheckSourceAsync(HttpClient client, Uri uri,
+        string installedVersion, CancellationToken cancellationToken)
+    {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        using var request = Request(new Uri("https://api.github.com/repos/" + Repository + "/releases/latest"));
+        using var request = Request(uri);
         request.Headers.Accept.ParseAdd("application/vnd.github+json");
         request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
             throw new UpdateDownloadException("暂时无法取得公开发布版本，请稍后重试。");
         if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
@@ -121,16 +142,41 @@ public sealed class GitHubReleaseUpdater(HttpClient http)
         using var gate = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         EnsureNoLink(destination);
         if (await IsVerifiedAsync(destination, release, cancellationToken).ConfigureAwait(false)) return destination;
-        var partial = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".partial");
+        string? partial = null;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(20));
         try
         {
-            using var response = await GetAssetAsync(release.Url, timeout.Token).ConfigureAwait(false);
+            partial = mirror is not null && preferMirror
+                ? await DownloadAttemptAsync(release, directory, progress, true, _ => { }, timeout.Token).ConfigureAwait(false)
+                : await FastUpdateSource.RunAsync(
+                    (token, received) => DownloadAttemptAsync(release, directory, progress, false, received, token),
+                    mirror is null ? null : token => DownloadAttemptAsync(release, directory, progress, true, _ => { }, token),
+                    () => { preferMirror = true; progress?.Report(new(0, release.Size) { UsingMirror = true }); },
+                    DeletePartial, timeout.Token).ConfigureAwait(false);
+            timeout.Token.ThrowIfCancellationRequested();
+            EnsureNoLink(destination);
+            File.Move(partial, destination, overwrite: true);
+            CleanupPrevious(directory, release.FileName);
+            return destination;
+        }
+        finally { if (partial is not null) DeletePartial(partial); }
+    }
+
+    private async Task<string> DownloadAttemptAsync(ReleaseDownload release, string directory,
+        IProgress<DownloadProgress>? progress, bool usingMirror, Action<long> receivedBytes, CancellationToken token)
+    {
+        var partial = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".partial");
+        var keep = false;
+        try
+        {
+            using var response = usingMirror
+                ? await GetMirrorAssetAsync(release, token).ConfigureAwait(false)
+                : await GetAssetAsync(release.Url, token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength is { } length && length != release.Size)
                 throw new UpdateDownloadException("更新包大小与发布记录不符。");
-            await using (var input = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false))
+            await using (var input = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false))
             await using (var output = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                 65536, FileOptions.Asynchronous | FileOptions.SequentialScan))
             using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
@@ -139,33 +185,52 @@ public sealed class GitHubReleaseUpdater(HttpClient http)
                 long received = 0;
                 var lastReport = Environment.TickCount64;
                 int count;
-                while ((count = await ReadWithTimeoutAsync(input, buffer, timeout.Token).ConfigureAwait(false)) > 0)
+                while ((count = await ReadWithTimeoutAsync(input, buffer, token).ConfigureAwait(false)) > 0)
                 {
+                    token.ThrowIfCancellationRequested();
                     received += count;
+                    receivedBytes(count);
                     if (received > release.Size) throw new UpdateDownloadException("更新包超过发布记录中的大小。");
                     hash.AppendData(buffer, 0, count);
-                    await output.WriteAsync(buffer.AsMemory(0, count), timeout.Token).ConfigureAwait(false);
+                    await output.WriteAsync(buffer.AsMemory(0, count), token).ConfigureAwait(false);
                     if (Environment.TickCount64 - lastReport >= 1000 || received == release.Size)
                     {
-                        progress?.Report(new(received, release.Size));
+                        token.ThrowIfCancellationRequested();
+                        progress?.Report(new(received, release.Size) { UsingMirror = usingMirror });
                         lastReport = Environment.TickCount64;
                     }
                 }
                 if (received != release.Size || !Convert.ToHexString(hash.GetHashAndReset()).Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new UpdateDownloadException("更新包未下载完整或校验失败，请重试。");
-                await output.FlushAsync(timeout.Token).ConfigureAwait(false);
+                await output.FlushAsync(token).ConfigureAwait(false);
             }
-            timeout.Token.ThrowIfCancellationRequested();
-            EnsureNoLink(destination);
-            File.Move(partial, destination, overwrite: true);
-            CleanupPrevious(directory, release.FileName);
-            return destination;
+            token.ThrowIfCancellationRequested();
+            keep = true;
+            return partial;
         }
-        finally
+        finally { if (!keep) DeletePartial(partial); }
+    }
+
+    private static void DeletePartial(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private async Task<HttpResponseMessage> GetMirrorAssetAsync(ReleaseDownload release, CancellationToken token)
+    {
+        // The asset is derived from an already validated release, never from a redirect or user setting.
+        var uri = new Uri(MirrorRoot, $"files/{release.Version}/{release.FileName}");
+        using var request = Request(uri);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        var response = await mirror!.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+        if ((int)response.StatusCode is >= 300 and < 400)
         {
-            try { File.Delete(partial); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            response.Dispose();
+            throw new UpdateDownloadException("服务器更新源不允许下载跳转。");
         }
+        return response;
     }
 
     private static bool IsReleaseAsset(Uri uri, string version, string name) =>

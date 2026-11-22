@@ -56,8 +56,8 @@ internal sealed class OrdinaryGameRunner
         TimeSpan timeout, IProgress<OrdinaryGameProgress>? progress, CancellationToken token, string? runtimeLog = null,
         bool warnOnSlowStartup = false) =>
         RunCoreAsync(t => SteamTestProcess.StartAsync(request, executable, data,
-            timeout < TimeSpan.FromSeconds(45) ? timeout : TimeSpan.FromSeconds(45), t,
-            seconds => progress?.Report(new(0, seconds, 0) { Phase = "steam-request" })),
+            SteamLaunchDeadline.Limit(timeout), t,
+            (seconds, phase) => progress?.Report(new(0, seconds, 0) { Phase = phase })),
             executable, "steam", false, data, catalogue, timeout, progress, token, runtimeLog, warnOnSlowStartup);
 
     private static async Task<OrdinaryGameReport> RunCoreAsync(Func<CancellationToken, Task<Process>> start,

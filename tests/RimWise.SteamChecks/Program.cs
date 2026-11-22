@@ -8,6 +8,27 @@ if (File.Exists(Path.Combine(AppContext.BaseDirectory, "helper-session-fixture.t
     return;
 }
 
+if (args.Length == 2 && args[0] == "--fast-update-live-probe")
+{
+    await FastUpdateChecks.ProbeLiveAsync(args[1]);
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--fast-update-checks")
+{
+    var passed = new List<string>(); var failures = new List<string>();
+    void Record(string name, Action test)
+    {
+        try { test(); passed.Add(name); Console.WriteLine("PASS " + name); }
+        catch (Exception ex) { failures.Add(name + ": " + ex); Console.WriteLine("FAIL " + name + ": " + ex); }
+    }
+    ReleaseUpdateChecks.Run(Record);
+    FastUpdateChecks.Run(Record);
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = passed.Count, Failed = failures.Count, Checks = passed, Failures = failures }));
+    Environment.ExitCode = failures.Count == 0 ? 0 : 1;
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--ordering-cycle-checks")
 {
     Directory.CreateDirectory(args[1]);
@@ -265,6 +286,7 @@ AiServiceConfigurationChecks.Run(Check);
 AiTokenEstimationChecks.Run(Check);
 StorageMigrationChecks.Run(Check);
 ReleaseUpdateChecks.Run(Check);
+FastUpdateChecks.Run(Check);
 SaveImportChecks.Run(Check);
 if (args.Length == 2 && args[0] == "--diagnostic-replay") MaintenanceDiagnosisChecks.Replay(args[1]);
 if (args.Length > 1 && args[0] == "--metadata-no-dependencies")

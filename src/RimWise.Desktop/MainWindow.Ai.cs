@@ -57,6 +57,13 @@ public partial class MainWindow
         AutomaticSortingNotice.ShowIfNeeded(this, UserStorage.DirectoryPath);
         var window = new AiSortingWindow(ViewModel, UserStorage.DirectoryPath, lifetime.Token, gamePaths: () => paths,
             prepareSave: PrepareAutomaticOrderSave, prepareCatalogue: PrepareAutomaticCatalogueAsync);
+        window.OpenReadIssues = () =>
+        {
+            ModsPageTab.IsChecked = true;
+            ScanIssuesExpander.IsExpanded = true;
+            ScanIssuesExpander.BringIntoView();
+            ScanIssuesExpander.Focus();
+        };
         aiSortingWindow = window;
         AiSortingHost.Content = window.Embed(this, () => ModsPageTab.IsChecked = true);
         return window;

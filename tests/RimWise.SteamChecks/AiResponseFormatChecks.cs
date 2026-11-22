@@ -59,7 +59,10 @@ internal static class AiResponseFormatChecks
                     && !payload.RootElement.TryGetProperty(parameter == "max_tokens" ? "max_completion_tokens" : "max_tokens", out _)
                     && !payload.RootElement.TryGetProperty("response_format", out _));
                 var messages = payload.RootElement.GetProperty("messages");
-                Assert(messages.GetArrayLength() == 3 && messages[2].GetProperty("content").GetString()!.Contains("final JSON object"));
+                var deepSeek = model.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
+                Assert(messages.GetArrayLength() == (deepSeek ? 4 : 3)
+                    && messages[messages.GetArrayLength() - 1].GetProperty("content").GetString()!.Contains("final JSON object"));
+                if (deepSeek) Assert(messages[2].GetProperty("content").GetString()!.Contains("DeepSeek 专项证据摘要"));
                 var expected = AiPrompt.Messages(Request(model, progress));
                 Assert(messages.EnumerateArray().Select(m => m.GetProperty("content").GetString())
                     .SequenceEqual(expected.Select(m => m.Content)));

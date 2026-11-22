@@ -2,6 +2,8 @@ using System.Text.Json;
 using RimWise.Core;
 using RimWise.Integration.AI;
 using RimWise.Integration.Game;
+using RimWise.Integration.Steam;
+using System.Reflection;
 
 internal static class AutomaticPreparationChecks
 {
@@ -18,6 +20,91 @@ internal static class AutomaticPreparationChecks
     }
     internal static void Run(Action<string, Action> check)
     {
+        check("Download failures preserve only unresolved opaque tokens", () =>
+        {
+            var duplicate = Mod("test.duplicate");
+            var catalogue = new ModCatalogue([Mod("test.readable"), duplicate,
+                duplicate with { Directory = duplicate.Directory + "-other" }],
+                ["test.opaque", "test.readable", "test.duplicate"]);
+            var calls = 0;
+            Task<IReadOnlyList<WorkshopItemState>> Fail(string _, CancellationToken token)
+            { calls++; throw new IOException("synthetic offline"); }
+            var result = AutomaticModDownloads.RunAsync([new("test.download", "123")], catalogue,
+                Version, AppContext.BaseDirectory, Fail,
+                (_, _) => throw new Exception("Failed enqueue must not wait"), default).GetAwaiter().GetResult();
+            Assert(calls == 1 && result.Failures.ContainsKey("test.download"));
+            Assert(result.Catalogue.UnverifiedOrderIdentifiers.SequenceEqual(["test.opaque"]));
+            Assert(result.Catalogue.Resolve("test.opaque", Version).Candidates.Count == 0
+                && result.Catalogue.Resolve("test.duplicate", Version).Candidates.Count == 2);
+        });
+        check("Workshop reread recovers exact previous identity without dependencies or opaque rebinding", () =>
+        {
+            var root = Path.Combine(AppContext.BaseDirectory, "metadata-download 中文", Guid.NewGuid().ToString("N"));
+            var directory = Path.Combine(root, "123");
+            Directory.CreateDirectory(Path.Combine(directory, "About"));
+            File.WriteAllText(Path.Combine(directory, "About", "About.xml"), "<ModMetaData><broken>");
+            var previous = Mod("test.download", ["test.old.dependency"]) with
+                { Directory = directory, FolderName = "123", Source = ModSource.Workshop, WorkshopId = "123" };
+            Task<IReadOnlyList<WorkshopItemState>> Complete(string id, CancellationToken token)
+                => Task.FromResult<IReadOnlyList<WorkshopItemState>>([new(id, true, true, directory)]);
+            var result = AutomaticModDownloads.RunAsync([new("test.download", "123")],
+                new([previous], ["test.opaque", "test.download"]), Version, root, Complete, Complete, default)
+                .GetAwaiter().GetResult();
+            var mod = result.Catalogue.Resolve("test.download", Version).UniqueInstallation;
+            Assert(result.Failures.Count == 0 && mod is { Metadata: null, RecoveredIdentity: not null });
+            Assert(mod!.Diagnostics.Any(d => d.Code == "MetadataUnreadable"));
+            Assert(result.Catalogue.UnverifiedOrderIdentifiers.SequenceEqual(["test.opaque"])
+                && result.Catalogue.Resolve("test.opaque", Version).Candidates.Count == 0);
+            Assert(AiOrderPlanner.ExpandRequiredOrder(["test.download"], result.Catalogue, Version)
+                .SequenceEqual(["test.download"]));
+        });
+        check("Dependency callback scope loss never schedules an opaque token and resolved scope is retired", () =>
+        {
+            var owner = Mod("test.owner") with { Metadata = Mod("test.owner").Metadata! with
+                { Requirements = new([new("test.base", "Base", "123")], [], [], []) } };
+            var calls = 0;
+            var result = RequiredDependencyPreparation.RunAsync(new([owner], ["test.opaque"]),
+                ["test.owner", "test.opaque"], [], Version, null, [], (source, pending, _) =>
+                {
+                    calls++;
+                    Assert(pending.Count == 1 && pending[0].Identifier == "test.base");
+                    var duplicate = Mod("test.duplicate");
+                    return Task.FromResult(new AutomaticDownloadResult(new([owner, Mod("test.base"), duplicate,
+                        duplicate with { Directory = duplicate.Directory + "-other" }], ["test.callback", "test.base", "test.duplicate"]),
+                        new Dictionary<string, string>()));
+                }, default).GetAwaiter().GetResult();
+            Assert(calls == 1 && result.Failures.Count == 0);
+            Assert(result.Catalogue.UnverifiedOrderIdentifiers.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                .SetEquals(["test.opaque", "test.callback"]));
+            Assert(result.Catalogue.Resolve("test.opaque", Version).Candidates.Count == 0
+                && result.Catalogue.Resolve("test.duplicate", Version).Candidates.Count == 2);
+        });
+        check("Both test installation gates allow zero-candidate tokens but reject scoped duplicates", () =>
+        {
+            var root = Path.Combine(AppContext.BaseDirectory, "metadata-gates 中文", Guid.NewGuid().ToString("N"));
+            var game = Path.Combine(root, "game"); Directory.CreateDirectory(game);
+            // Constructor-only fixture: this file is never launched.
+            File.WriteAllText(Path.Combine(game, "RimWorldWin64.exe"), "synthetic fixture, never execute");
+            var profile = Path.Combine(root, "profile"); Directory.CreateDirectory(profile);
+            var personal = Path.Combine(profile, "ModsConfig.xml"); File.WriteAllText(personal, "<ModsConfigData />");
+            var options = new OrdinaryGameTestOptions(game, personal, Path.Combine(root, "test-output"), Version);
+            var gate = typeof(AutomaticGameMaintenance).GetMethod("ValidateInstallations", BindingFlags.Static | BindingFlags.NonPublic)!;
+            void Validate(ModCatalogue catalogue, string id)
+            {
+                try { gate.Invoke(null, [catalogue, new[] { id }, Version]); }
+                catch (TargetInvocationException ex) when (ex.InnerException is InvalidDataException)
+                    { throw (InvalidDataException)ex.InnerException; }
+            }
+            var opaque = new ModCatalogue([], ["test.opaque"]);
+            Validate(opaque, "test.opaque");
+            _ = new OrdinaryGameTestSession(options, opaque, ["test.opaque"], [], []);
+            Reject(() => Validate(new([]), "test.missing"));
+            Reject(() => { _ = new OrdinaryGameTestSession(options, new([]), ["test.missing"], [], []); });
+            var mod = Mod("test.duplicate");
+            var duplicates = new ModCatalogue([mod, mod with { Directory = mod.Directory + "-other" }], [mod.PackageId]);
+            Reject(() => Validate(duplicates, mod.PackageId));
+            Reject(() => { _ = new OrdinaryGameTestSession(options, duplicates, [mod.PackageId], [], []); });
+        });
         check("Self dependency and self ordering do not produce impossible cycles", () =>
         {
             var self = Mod("test.self", ["TEST.SELF"]);

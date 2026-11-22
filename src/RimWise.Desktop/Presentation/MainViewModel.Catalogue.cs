@@ -107,7 +107,7 @@ public sealed partial class MainViewModel
             or "VersionReadFailed" or "NoScanPaths" or "MetadataUnreadable").Select(issue => new DiagnosticRow(issue)));
         RefreshCatalogueMatches();
         foreach (var property in new[] { nameof(HasCatalogue), nameof(GameVersionLabel), nameof(HasScanIssues), nameof(ScanIssuesLabel) }) OnPropertyChanged(property);
-        Status = $"已读取 {result.Catalogue.Installations.Count} 个模组" + (HasScanIssues ? $"，{ScanIssues.Count} 条读取记录" : "");
+        Status = $"已读取 {result.Catalogue.Installations.Count} 个模组" + (HasScanIssues ? $"，{ScanIssues.Count} 条读取记录（请展开检查；单项读取异常不阻断自动测试）" : "");
         RefreshCommands();
     }
 

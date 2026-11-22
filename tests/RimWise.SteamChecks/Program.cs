@@ -145,8 +145,21 @@ if (args.Length == 1 && args[0] == "--ai-response-checks")
 {
     var results = new List<string>();
     DeepSeekCompatibilityChecks.Run((name, test) => { test(); results.Add(name); });
+    DeepSeekMaintenanceChecks.Run((name, test) => { test(); results.Add(name); });
     AiResponseFormatChecks.Run((name, test) => { test(); results.Add(name); });
     Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--deepseek-diagnostic-replay")
+{
+    DeepSeekMaintenanceChecks.Replay(args[1]);
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--deepseek-live-reply-replay")
+{
+    DeepSeekMaintenanceChecks.ReplayProviderReply(args[1]);
     return;
 }
 

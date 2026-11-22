@@ -20,6 +20,8 @@ public partial class AiSortingWindow
         installationOriginalOrder = null;
         installationSelectionCommitted = false;
         installationNotices.Clear();
+        MetadataReadWarning.Visibility = Visibility.Collapsed;
+        MetadataReadWarningText.Text = "";
         AcceptedList.ItemsSource = null;
         RejectedList.ItemsSource = null;
         SummaryText.Text = "";

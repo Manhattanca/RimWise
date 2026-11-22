@@ -138,6 +138,7 @@ public partial class MainWindow : Window
         }
         else if (ViewModel.HasChanges && !ConfirmDiscard()) e.Cancel = true;
         base.OnClosing(e);
+        if (!e.Cancel) CancelContentEnrichment();
         StartPendingUpdate(e);
     }
 
@@ -153,6 +154,7 @@ public partial class MainWindow : Window
             try { editorRecovery.ClearCurrent(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
+        CancelContentEnrichment();
         lifetime.Cancel();
         preparedDelta?.Dispose();
         aiSortingWindow?.DisposeEmbedded();
@@ -224,7 +226,8 @@ public partial class MainWindow : Window
         if (ViewModel.HasChanges) return "请先保存当前排序，再更换用户数据目录。";
         if (marketplacePage?.IsBusy == true)
             return "请等待市场下载或提交结束后再更换用户数据目录。";
-        if (aiSortingWindow?.IsWorking == true || importCancellation is not null || scanTask is { IsCompleted: false })
+        if (aiSortingWindow?.IsWorking == true || importCancellation is not null || scanTask is { IsCompleted: false }
+            || contentTasks.Any(task => !task.IsCompleted))
             return "请等待刷新、下载或 AI 任务结束后再更换用户数据目录。";
         if (OwnedWindows.Cast<Window>().Any(window => window is not PathSettingsWindow))
             return "请先关闭其他设置和任务窗口，再更换用户数据目录。";
@@ -288,6 +291,7 @@ public partial class MainWindow : Window
     internal async Task RestartScanAsync()
     {
         var generation = ++scanGeneration;
+        CancelContentEnrichment();
         scanCancellation?.Cancel();
         if (scanTask is not null) await scanTask;
         if (generation != scanGeneration || lifetime.IsCancellationRequested) return;
@@ -309,13 +313,15 @@ public partial class MainWindow : Window
         });
         try
         {
-            var result = await Task.Run(() => new ModScanner().Scan(selectedPaths, cancellation.Token, progress), cancellation.Token);
+            var result = await Task.Run(() => new ModScanner().Scan(selectedPaths, cancellation.Token, progress, inspectContent: false), cancellation.Token);
             if (result.Diagnostics.Any(issue => issue.Code is "ScanLimit" or "ScanRootUnreadable"))
                 throw new IOException("模组目录未完整读取，请检查路径设置后重试。");
+            result = WithCachedContent(result);
             var records = await ReadActivityAsync(result, observe: true);
             if (generation != scanGeneration || cancellation.IsCancellationRequested) return;
             ViewModel.ApplyScan(result, records);
             ViewModel.IsShowingCache = false;
+            BeginContentEnrichment(generation, selectedPaths, null, result);
         }
         catch (OperationCanceledException)
         {

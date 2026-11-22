@@ -142,8 +142,9 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
             // Merely obtaining a green test result never grants permission to remove from their order.
             if (token.IsCancellationRequested || ContextProblem(request, settings, getPaths, paths, revision, catalogue) is not null)
                 return result with { Maintenance = result.Maintenance with { Message = "试排除结果已保留；当前清单或设置已变化，原排序保持不变。" } };
-            if (limits.ConfirmModRemoval && confirmTrials is null) return result;
-            var approved = !limits.ConfirmModRemoval || await confirmTrials!(result.Maintenance, token);
+            var readFailureOnly = result.Maintenance.TrialExclusions.All(t => t.ReadFailureRemoval);
+            if (!readFailureOnly && limits.ConfirmModRemoval && confirmTrials is null) return result;
+            var approved = readFailureOnly || !limits.ConfirmModRemoval || await confirmTrials!(result.Maintenance, token);
             token.ThrowIfCancellationRequested();
             if (result.Maintenance.TaskId is { } id)
             {
@@ -155,7 +156,8 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
                 // rather than asking again or treating a declined removal as a new test task.
                 task.Save(task.Current with { TrialRemovalsApproved = approved, TrialDecisionRecorded = true,
                     CandidatePendingApply = true,
-                    Message = approved ? (limits.ConfirmModRemoval ? "玩家已确认移除模组，等待保存。" : "按自动移出设置记录已验证方案，等待保存。") : "玩家选择保留模组，等待保存已完成的排序调整。" });
+                    Message = readFailureOnly ? "按读取失败且游戏关联报错策略记录已验证排除方案，等待保存。"
+                        : approved ? (limits.ConfirmModRemoval ? "玩家已确认移除模组，等待保存。" : "按自动移出设置记录已验证方案，等待保存。") : "玩家选择保留模组，等待保存已完成的排序调整。" });
             }
             result = result with { Maintenance = result.Maintenance with { TrialRemovalsApproved = approved, TrialDecisionRecorded = true,
                 Message = approved ? result.Maintenance.Message : "保留试排除模组，继续保存已完成的排序调整。" } };
@@ -174,7 +176,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         stoppedOrder = new(request, settings, getPaths, paths, revision, catalogue, database, saveOrder, result.Maintenance, confirmModRemoval);
 
     internal bool NeedsStoppedRemovalConfirmation(AutomaticMaintenanceResult result) =>
-        stoppedOrder is { ConfirmModRemoval: true } && result.Maintenance.TrialExclusions.Count > 0;
+        stoppedOrder is { ConfirmModRemoval: true } && result.Maintenance.TrialExclusions.Any(t => !t.ReadFailureRemoval);
 
     internal static bool HasOrderChanges(IReadOnlyList<string> before, IReadOnlyList<string> after) =>
         !before.SequenceEqual(after, StringComparer.OrdinalIgnoreCase);
@@ -186,6 +188,8 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
     {
         if (ReferenceEquals(expected, current)) return true;
         if (current is null) return false;
+        if (!expected.UnverifiedOrderIdentifiers.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            .SetEquals(current.UnverifiedOrderIdentifiers)) return false;
         static byte[] Snapshot(ModCatalogue catalogue) => SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
             catalogue.Installations.OrderBy(mod => mod.Directory, StringComparer.Ordinal).Select(mod => mod with
             { CodeKind = ModCodeKind.Unknown, ContentKinds = ModContentKinds.None }).ToArray()));
@@ -360,7 +364,8 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         var constraints = database?.WithRequiredDependencies(catalogue, saved.OriginalOrder, version) ?? catalogue;
         var expanded = AiOrderPlanner.ExpandRequiredOrder(saved.OriginalOrder, constraints, version, allowMissing: true);
         var effectiveRules = database?.Rules(constraints, expanded, version, rules) ?? rules;
-        var baseline = new LoadOrderSorter().Sort(constraints, expanded, version, version, effectiveRules, deferAdvisoryCycles: true);
+        var baseline = new LoadOrderSorter().Sort(constraints, expanded, version, version, effectiveRules,
+            deferAdvisoryCycles: true, allowUnreadableMetadata: true);
         if (baseline.Complete && saved.Attempts > 0 && request.CurrentOrder.SequenceEqual(baseline.Order, StringComparer.Ordinal))
             return original;
         // Completed publications have separate original/target checks in the caller.

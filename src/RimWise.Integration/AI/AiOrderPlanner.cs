@@ -35,20 +35,35 @@ public static class AiOrderPlanner
             trials, true, validationCatalogue);
         if (verified.Rejected.Count > 0) return verified;
         var full = tested.ToArray();
+        var permanent = trials.Where(t => t.ReadFailureRemoval).SelectMany(t => t.RemovedIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var trial in trials.Reverse())
         {
+            // This narrow local policy has its own recorded authority. Declining ordinary
+            // trials must not undo metadata-failure removals already requested by the player.
+            if (trial.ReadFailureRemoval) continue;
             var removed = trial.RemovedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var template = trial.TestedOrder.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var templateOrder = trial.TestedOrder.Where(id => !permanent.Contains(id)).ToArray();
+            var template = templateOrder.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var survivors = new Queue<string>(full.Where(template.Contains));
             // Reinsert excluded rows in their previous slots, preserving the latest relative order
             // of survivors. Dependencies added later remain present and are sorted below.
-            full = trial.TestedOrder.Select(id => removed.Contains(id) ? id : survivors.Dequeue())
+            full = templateOrder.Select(id => removed.Contains(id) ? id : survivors.Dequeue())
                 .Concat(full.Where(id => !template.Contains(id))).ToArray();
         }
         var constraints = validationCatalogue ?? catalogue;
         full = ExpandRequiredOrder(full, constraints, version);
-        var sorted = new LoadOrderSorter().Sort(constraints, full, version, version, rules, deferAdvisoryCycles: true);
-        return PreparedOrder(original, sorted.Order, catalogue, retained, version, rules, approvals, constraints);
+        var sorted = new LoadOrderSorter().Sort(constraints, full, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
+        if (permanent.Count == 0) return PreparedOrder(original, sorted.Order, catalogue, retained, version, rules, approvals, constraints);
+        // The complete historical trial sequence was revalidated above. Keeping normal
+        // trials changes only which authorized removals are published, not their evidence.
+        var allowed = DeclaredConflictResolution.Replay(constraints,
+            ExpandRequiredOrder(original, constraints, version, allowMissing: true), retained, version, approvals)
+            .Except(permanent, StringComparer.OrdinalIgnoreCase).ToArray();
+        var rejected = !sorted.Complete || !allowed.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(sorted.Order)
+            ? new[] { "保留普通试排除后的排序未通过读取异常移出范围与依赖校验。" } : [];
+        return new(original.ToArray(), rejected.Length == 0 ? sorted.Order.ToArray() : original.ToArray(),
+            Fingerprint(original, catalogue, retained, rules, version), rejected,
+            trials.Where(t => t.ReadFailureRemoval).Select(t => MetadataReadFailureTrials.ReadFailureRemovalReason + "：" + t.SelectedId).ToArray());
     }
 
     /// <summary>Final publication of an experimentally tested combination requires a separate player decision.</summary>
@@ -80,7 +95,7 @@ public static class AiOrderPlanner
             rejected.Add("候选排序包含非必要新增项或未经用户确认的移出项。");
         if (rejected.Count == 0)
         {
-            var verified = new LoadOrderSorter().Validate(constraints, target, version, version, rules, deferAdvisoryCycles: true);
+            var verified = new LoadOrderSorter().Validate(constraints, target, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
             deferred.AddRange(verified.Diagnostics.Where(d => d.Code is "OrderingCycleDeferred" or "InsertionOrderAdjusted").Select(d => d.Message).Distinct());
             if (!verified.Complete || verified.Changed) rejected.Add(verified.FailureReason ?? "候选排序仍违反先后关系。");
         }
@@ -100,6 +115,7 @@ public static class AiOrderPlanner
         foreach (var id in original)
         {
             var match = catalogue.Resolve(id, version);
+            if (match.Candidates.Count == 0 && catalogue.IsUnverifiedOrderIdentifier(id)) { packages.Add(id); continue; }
             if (allowMissing && match.Candidates.Count == 0) { packages.Add(id); continue; }
             var mod = match.UniqueInstallation ?? throw new InvalidDataException("模组未安装或安装不唯一：" + id);
             if (!directories.Add(mod.Directory)) throw new InvalidDataException("排序含同一安装的重复标识。");
@@ -108,11 +124,15 @@ public static class AiOrderPlanner
         for (var index = 0; index < result.Count; index++)
         {
             var mod = catalogue.Resolve(result[index], version).UniqueInstallation;
+            if (mod is null && catalogue.IsUnverifiedOrderIdentifier(result[index])) continue;
             if (allowMissing && mod is null) continue;
             foreach (var dependency in (mod ?? throw new InvalidDataException("模组未安装：" + result[index])).Metadata?.Requirements.Dependencies ?? [])
             {
                 if (packages.Contains(dependency.PackageId)) continue;
                 var match = catalogue.Resolve(dependency.PackageId, version);
+                if (match.Candidates.Count == 0 && catalogue.IsUnverifiedOrderIdentifier(dependency.PackageId)
+                    && original.Contains(dependency.PackageId, StringComparer.OrdinalIgnoreCase))
+                { packages.Add(dependency.PackageId); continue; }
                 if (allowMissing && match.Candidates.Count == 0)
                 {
                     packages.Add(dependency.PackageId); result.Add(dependency.PackageId);
@@ -130,10 +150,15 @@ public static class AiOrderPlanner
     }
 
     public static string Fingerprint(IEnumerable<string> order, ModCatalogue catalogue, IEnumerable<string> retained,
-        IEnumerable<CustomOrderRule> rules, GameVersion? version) => Convert.ToHexString(SHA256.HashData(
-        JsonSerializer.SerializeToUtf8Bytes(new { Order = order.ToArray(), Version = version?.ToString(),
+        IEnumerable<CustomOrderRule> rules, GameVersion? version)
+    {
+        var legacy = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { Order = order.ToArray(), Version = version?.ToString(),
             Retained = retained.Order(StringComparer.OrdinalIgnoreCase).ToArray(), Rules = rules.ToArray(),
             Mods = catalogue.Installations.Select(mod => new { mod.Directory, mod.FolderName, mod.PackageId, mod.Source, mod.Metadata }).ToArray() })));
+        // Preserve historical hashes unless this task explicitly carries unresolved input tokens.
+        return catalogue.UnverifiedOrderIdentifiers.Count == 0 ? legacy : Convert.ToHexString(SHA256.HashData(
+            JsonSerializer.SerializeToUtf8Bytes(new { Legacy = legacy, UnverifiedOrder = catalogue.UnverifiedOrderIdentifiers.Order(StringComparer.OrdinalIgnoreCase) })));
+    }
 
     public static AiOrderPlan Plan(IEnumerable<AiAction> actions, AiPermissionLevel level, IReadOnlyList<string> order,
         ModCatalogue catalogue, IReadOnlyList<string> retained, GameVersion? version,
@@ -204,7 +229,11 @@ public static class AiOrderPlanner
         foreach (var id in current)
         {
             var mod = Resolve(id);
-            if (mod is null) { Reject(AiPlanIssue.Target, $"模组未安装或安装不唯一：{id}"); continue; }
+            if (mod is null)
+            {
+                if (original.Contains(id, StringComparer.OrdinalIgnoreCase) && catalogue.IsUnverifiedOrderIdentifier(id)) continue;
+                Reject(AiPlanIssue.Target, $"模组未安装或安装不唯一：{id}"); continue;
+            }
             foreach (var dep in mod?.Metadata?.Requirements.Dependencies ?? [])
                 if (!activePackages.Contains(dep.PackageId)) Reject(AiPlanIssue.Dependency, $"{id} 缺少启用的前置：{dep.PackageId}");
         }
@@ -215,7 +244,7 @@ public static class AiOrderPlanner
         // pairwise check would reject the same cycles again at apply time.
         if (rejected.Count == 0)
         {
-            var verified = new LoadOrderSorter().Validate(catalogue, current, version, version, rules, deferAdvisoryCycles: true);
+            var verified = new LoadOrderSorter().Validate(catalogue, current, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
             notices.AddRange(verified.Diagnostics.Where(d => d.Code is "OrderingCycleDeferred" or "InsertionOrderAdjusted")
                 .Select(d => d.Message).Distinct());
             if (!verified.Complete) Reject(AiPlanIssue.Constraints, verified.FailureReason ?? "无法验证 AI 排序结果。");

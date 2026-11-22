@@ -40,6 +40,187 @@ internal static class SortingInstallationChecks
 
     internal static void Run(Action<string, Action> check)
     {
+        check("Recovered identity rejects paths controls and markup but keeps opaque punctuation", () =>
+        {
+            var f = new Fixture(); var mod = f.Mod("test.identity", "identity-keys");
+            var file = Path.Combine(mod.Directory, "About", "About.xml");
+            foreach (var id in new[] { "../escape", @"a\b", "C:escape", "&lt;inject&gt;", "a&#10;b", "&#9;test.id" })
+            {
+                File.WriteAllText(file, "<ModMetaData><packageId>" + id + "</packageId></ModMetaData>");
+                Assert(new ModMetadataReader().ReadIdentity(file, mod.Directory) is null);
+            }
+            foreach (var id in new[] { "Author.Mod-1_steam", "legacy alias (v2)!", "模组.身份" })
+            {
+                File.WriteAllText(file, "<ModMetaData><packageId>" + id + "</packageId></ModMetaData>");
+                Assert(new ModMetadataReader().ReadIdentity(file, mod.Directory)?.PackageId == id);
+            }
+            File.WriteAllText(file, "<ModMetaData>");
+            var previous = mod with { Metadata = mod.Metadata! with { PackageId = "../invalid" } };
+            Assert(new ModScanner().Scan(f.Paths, inspectContent: false, previousCatalogue: new([previous]))
+                .Catalogue.Installations.Single().RecoveredIdentity is null);
+        });
+        check("Metadata-only copy failure stays testable while Defs XML and DLL errors still block", () =>
+        {
+            var f = new Fixture(); var old = f.Mod("test.copy", "101", ModSource.Workshop);
+            File.WriteAllText(Path.Combine(old.Directory, "About", "About.xml"), "<ModMetaData>");
+            var mod = new ModScanner().Scan(f.Paths, inspectContent: false, previousCatalogue: new([old]))
+                .Catalogue.Installations.Single();
+            var active = new HashSet<string>(["test.copy"], StringComparer.OrdinalIgnoreCase);
+            var inspected = DuplicateCopyInspector.Inspect(mod, Version, active, default);
+            Assert(!inspected.HasFileErrors && inspected.Limited && inspected.Status.Contains("元数据"));
+            File.WriteAllText(Path.Combine(mod.Directory, "Defs", "test.xml"), "<Defs>");
+            Assert(DuplicateCopyInspector.Inspect(mod, Version, active, default).HasFileErrors);
+            File.WriteAllText(Path.Combine(mod.Directory, "Defs", "test.xml"), "<Defs/>");
+            System.IO.Directory.CreateDirectory(Path.Combine(mod.Directory, "Assemblies"));
+            File.WriteAllText(Path.Combine(mod.Directory, "Assemblies", "bad.dll"), "not a PE");
+            Assert(DuplicateCopyInspector.Inspect(mod, Version, active, default).HasFileErrors);
+        });
+        check("Unreadable backup can reattach retry and restore without old dependencies", () =>
+        {
+            var f = new Fixture(); var a = f.Mod("test.copy", "101", ModSource.Workshop);
+            var b = f.Mod("test.copy", "102", ModSource.Workshop, dependencies: ["old.dep"]);
+            File.WriteAllText(Path.Combine(b.Directory, "About", "About.xml"), "<ModMetaData>");
+            var before = new ModScanner().Scan(f.Paths, inspectContent: false, previousCatalogue: new([a, b])).Catalogue;
+            f.Selection.Prepare(before, ["test.copy"], default);
+            var journal = f.Store.List().Single();
+            Assert(journal.Selected == a.Directory && journal.Moves.Single().Original == b.Directory);
+            var current = f.Scan(); var resumed = f.Selection;
+            resumed.AttachForRecovery(current, ["test.copy"], default);
+            var retry = resumed.Retry(current, ["test.copy"], "test.copy", default);
+            Assert(retry.Order.SequenceEqual(["test.copy"]) && retry.RemovedIds.Length == 0
+                && f.Store.List().Single().Selected == b.Directory);
+            var refreshed = new ModScanner().Scan(f.Paths, inspectContent: false, previousCatalogue: before).Catalogue;
+            Assert(refreshed.Installations.Single().Metadata is null);
+            f.Selection.Prepare(refreshed, retry.Order, default);
+            f.Store.Restore(f.Store.List().Single().Id, default);
+            Assert(System.IO.Directory.Exists(a.Directory) && System.IO.Directory.Exists(b.Directory));
+        });
+        check("All copies with metadata-only schema errors remain selectable", () =>
+        {
+            var f = new Fixture(); var a = f.Mod("test.copy", "101", ModSource.Workshop);
+            var b = f.Mod("test.copy", "102", ModSource.Workshop);
+            foreach (var mod in new[] { a, b })
+                File.WriteAllText(Path.Combine(mod.Directory, "About", "About.xml"),
+                    "<ModMetaData><packageId>test.copy</packageId><modDependencies><bad/></modDependencies></ModMetaData>");
+            var catalogue = f.Scan(); var selection = f.Selection;
+            var result = selection.Prepare(catalogue, ["test.copy"], default);
+            Assert(result.Order.SequenceEqual(["test.copy"]) && result.RemovedIds.Length == 0
+                && selection.Messages.Any(m => m.Contains("保留待测试")));
+            var current = f.Scan();
+            f.Selection.AttachForRecovery(current, ["test.copy"], default);
+            Assert(current.Installations.Single().Metadata is null);
+            f.Store.Restore(f.Store.List().Single().Id, default);
+        });
+        check("Readable changed backup identity is rejected on recovery", () =>
+        {
+            var f = new Fixture(); var a = f.Mod("test.copy", "101", ModSource.Workshop);
+            var b = f.Mod("test.copy", "102", ModSource.Workshop);
+            f.Selection.Prepare(new([a, b]), ["test.copy"], default);
+            var journal = f.Store.List().Single();
+            File.WriteAllText(Path.Combine(journal.Moves.Single().Backup, "About", "About.xml"),
+                "<ModMetaData><packageId>test.changed</packageId></ModMetaData>");
+            try { f.Selection.AttachForRecovery(f.Scan(), ["test.copy"], default);
+                throw new Exception("Accepted changed backup identity"); }
+            catch (InvalidDataException) { }
+            f.Store.Restore(journal.Id, default);
+        });
+        check("Unreadable schema salvages identity without inventing metadata", () =>
+        {
+            var f = new Fixture(); var original = f.Mod("test.opaque", "opaque", dependencies: ["old.dep"]);
+            File.WriteAllText(Path.Combine(original.Directory, "About", "About.xml"),
+                "<ModMetaData><name>Opaque</name><packageId>test.opaque</packageId><modDependencies><bad/></modDependencies></ModMetaData>");
+            var mod = f.Scan().Installations.Single();
+            Assert(mod.Metadata is null && mod.PackageId == "test.opaque" && mod.RecoveredIdentity is not null
+                && mod.Diagnostics.Any(d => d.Code == "MetadataUnreadable"));
+            var sorter = new LoadOrderSorter(); var catalogue = new ModCatalogue([mod]);
+            Assert(!sorter.Sort(catalogue, ["test.opaque"], Version, Version).Complete);
+            Assert(sorter.Sort(catalogue, ["test.opaque"], Version, Version, allowUnreadableMetadata: true).Complete);
+        });
+        check("Unowned unreadable installation retains active tokens within explicit scope", () =>
+        {
+            var f = new Fixture(); var mod = f.Mod("test.opaque", "opaque");
+            File.WriteAllText(Path.Combine(mod.Directory, "About", "About.xml"), "<ModMetaData>");
+            var catalogue = f.Scan(); var result = f.Selection.Prepare(catalogue, ["test.opaque"], default);
+            Assert(result.Order.SequenceEqual(["test.opaque"]) && result.RemovedIds.Length == 0
+                && result.UnverifiedOrderIdentifiers.SequenceEqual(["test.opaque"])
+                && result.Messages.Any(m => m.Contains("归属待核对")));
+            var scoped = new ModCatalogue(catalogue.Installations, result.UnverifiedOrderIdentifiers);
+            Assert(!new LoadOrderSorter().Sort(scoped, result.Order, Version, Version).Complete);
+            Assert(new LoadOrderSorter().Sort(scoped, result.Order, Version, Version, allowUnreadableMetadata: true).Complete);
+            Assert(!new LoadOrderSorter().Sort(scoped, ["other.missing"], Version, Version, allowUnreadableMetadata: true).Complete);
+        });
+        check("Opaque active prerequisite exception preserves other dependency gates", () =>
+        {
+            var f = new Fixture(); var mod = f.Mod("test.consumer", "consumer", dependencies: ["test.opaque"]);
+            var catalogue = new ModCatalogue([mod], ["test.opaque"]); var sorter = new LoadOrderSorter();
+            Assert(sorter.Sort(catalogue, ["test.opaque", "test.consumer"], Version, Version, allowUnreadableMetadata: true).Complete);
+            Assert(!sorter.Sort(catalogue, ["test.consumer"], Version, Version, allowUnreadableMetadata: true).Complete);
+            var sorted = sorter.Sort(catalogue, ["test.consumer", "test.opaque"], Version, Version, allowUnreadableMetadata: true);
+            Assert(sorted.Complete && sorted.Order.SequenceEqual(["test.opaque", "test.consumer"])
+                && sorted.Diagnostics.Any(d => d.Code == "DependencyNotInstalled"));
+            Assert(!sorter.Validate(catalogue, ["test.consumer", "test.opaque"], Version, Version,
+                allowUnreadableMetadata: true).Complete);
+            var bad = mod with { Metadata = mod.Metadata! with { Requirements = mod.Metadata!.Requirements with
+                { Dependencies = [new("other.missing", "missing")] } } };
+            Assert(!sorter.Sort(new([bad], ["test.opaque"]), ["test.opaque", "test.consumer"], Version, Version,
+                allowUnreadableMetadata: true).Complete);
+        });
+        check("Identity-only reader rejects ambiguous nested truncated and unsafe XML", () =>
+        {
+            var f = new Fixture(); var mod = f.Mod("test.original", "identity");
+            var file = Path.Combine(mod.Directory, "About", "About.xml");
+            foreach (var xml in new[] {
+                "<ModMetaData><packageId>test.a</packageId><packageId>test.b</packageId></ModMetaData>",
+                "<ModMetaData><nested><packageId>test.a</packageId></nested></ModMetaData>",
+                "<ModMetaData xmlns='other'><packageId>test.a</packageId></ModMetaData>",
+                "<ModMetaData><packageId>test.a</packageId>",
+                "<!DOCTYPE ModMetaData [<!ENTITY id 'test.a'>]><ModMetaData><packageId>&id;</packageId></ModMetaData>",
+                "<ModMetaData><packageId>test.a</packageId><description>" + new string('x', 2 * 1024 * 1024) + "</description></ModMetaData>" })
+            {
+                File.WriteAllText(file, xml);
+                RecoveredIdentity? identity = null;
+                try { identity = new ModMetadataReader().ReadIdentity(file, mod.Directory); }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or System.Xml.XmlException) { }
+                Assert(identity is null);
+            }
+            File.WriteAllText(file, "<ModMetaData><packageId>test.a</packageId></ModMetaData>");
+            try { new ModMetadataReader().ReadIdentity(file, Path.Combine(mod.Directory, "Defs"));
+                throw new Exception("Accepted identity outside boundary"); }
+            catch (IOException) { }
+        });
+        check("Previous catalogue recovers only exact installation identity without old dependencies", () =>
+        {
+            var f = new Fixture(); var old = f.Mod("test.previous", "previous", dependencies: ["old.dep"]);
+            System.IO.Directory.CreateDirectory(f.Paths.WorkshopDirectory);
+            File.WriteAllText(Path.Combine(old.Directory, "About", "About.xml"), "<ModMetaData>");
+            ModInstallation Read(ModInstallation previous) => new ModScanner().Scan(f.Paths, inspectContent: false,
+                previousCatalogue: new([previous])).Catalogue.Installations.Single();
+            var recovered = Read(old);
+            Assert(recovered.Metadata is null && recovered.PackageId == old.PackageId && recovered.RecoveredIdentity is not null);
+            foreach (var mismatch in new[] { old with { Source = ModSource.Workshop }, old with { WorkshopId = "123" },
+                old with { FolderName = "different" }, old with { Directory = Path.Combine(f.Directory, "different") } })
+                Assert(Read(mismatch).RecoveredIdentity is null);
+            var ambiguous = new ModScanner().Scan(f.Paths, inspectContent: false, previousCatalogue: new([old, old])).Catalogue;
+            Assert(ambiguous.Installations.Single().RecoveredIdentity is null);
+        });
+        check("Recovered metadata keeps genuine dependency blockers and diagnostics", () =>
+        {
+            var f = new Fixture(); var old = f.Mod("test.valid", "valid", dependencies: ["missing.real"]);
+            File.WriteAllText(Path.Combine(old.Directory, "About", "PublishedFileId.txt"), new string('9', 129));
+            var mod = f.Scan().Installations.Single();
+            Assert(mod.Metadata is not null && mod.Diagnostics.Any(d => d.Code == "MetadataUnreadable"));
+            var result = new LoadOrderSorter().Sort(new([mod]), ["test.valid"], Version, Version, allowUnreadableMetadata: true);
+            Assert(!result.Complete && result.Diagnostics.Any(d => d.Code == "DependencyNotInstalled")
+                && result.Diagnostics.Any(d => d.Code == "MetadataUnreadable"));
+        });
+        check("Unverified scope is a readonly copy and never resolves an installation", () =>
+        {
+            var ids = new[] { "test.opaque" }; var catalogue = new ModCatalogue([], ids);
+            ids[0] = "changed";
+            Assert(catalogue.UnverifiedOrderIdentifiers.Single() == "test.opaque"
+                && catalogue.IsUnverifiedOrderIdentifier("TEST.OPAQUE")
+                && catalogue.Resolve("test.opaque", Version).Candidates.Count == 0);
+        });
         check("Sorting drops confirmed missing entries, reports them and leaves survivors in original order", () =>
         {
             var f = new Fixture(); var a = f.Mod("test.a", "a"); var b = f.Mod("test.b", "b");

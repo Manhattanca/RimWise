@@ -28,6 +28,14 @@ internal static class StartupCacheSmokeCheck
         var cachedConfig = new PrototypeFileService().Read(file);
         var scan = new ModScanner().Scan(paths);
         Assert(store.TrySave(paths, cachedConfig, scan), "Could not seed cache");
+        var originalCache = File.ReadAllBytes(store.CachePath);
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            try { store.TrySave(paths, cachedConfig, scan, cancelled.Token); throw new InvalidOperationException("Cancelled cache write was accepted"); }
+            catch (OperationCanceledException) { }
+        }
+        Assert(originalCache.SequenceEqual(File.ReadAllBytes(store.CachePath)), "Cancelled cache write replaced the last good snapshot");
         File.WriteAllText(file, "<ModsConfigData><version>1.7</version><activeMods><li>test.cache</li></activeMods></ModsConfigData>");
         var freshBytes = File.ReadAllBytes(file);
         var watch = Stopwatch.StartNew();

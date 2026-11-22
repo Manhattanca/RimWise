@@ -26,7 +26,7 @@ public static class OfflineSorting
         var code = LocalCodeTopology.Prepare(catalogue, expanded, version, cacheDirectory, token);
         token.ThrowIfCancellationRequested();
         var sorted = new LoadOrderSorter().Sort(catalogue, expanded, version, version, rules,
-            deferAdvisoryCycles: true, preferredOrder: code.PreferredOrder);
+            deferAdvisoryCycles: true, preferredOrder: code.PreferredOrder, allowUnreadableMetadata: true);
         token.ThrowIfCancellationRequested();
         // Describe the resulting order rather than warnings fixed by this sorting pass.
         var diagnostics = sorted.Complete

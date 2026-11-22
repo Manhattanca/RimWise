@@ -18,7 +18,7 @@ public sealed class ModScanner
 
     /// <summary>Reads only confirmed downloaded items; never enumerates the workshop library.</summary>
     public IReadOnlyList<ModInstallation> ReadWorkshopItems(string workshopRoot, IEnumerable<string> ids,
-        GameVersion? target, CancellationToken cancellationToken = default)
+        GameVersion? target, CancellationToken cancellationToken = default, ModCatalogue? previousCatalogue = null)
     {
         var requested = ids.Distinct(StringComparer.Ordinal).ToArray();
         if (requested.Any(id => !ulong.TryParse(id, out var number) || number == 0
@@ -34,7 +34,7 @@ public sealed class ModScanner
             var directory = Path.Combine(workshopRoot, id);
             ReadOnlyMetadata.CheckPath(directory, workshopRoot);
             var installation = ReadInstallation(directory, workshopRoot, ModSource.Workshop,
-                Path.Combine(directory, "About", "About.xml"), target)
+                Path.Combine(directory, "About", "About.xml"), target, previousCatalogue)
                 ?? throw new InvalidDataException($"工坊模组 {id} 的文件尚未完整下载，或已经移除；请等待 Steam 完成下载后重试。");
             var content = ModContentReader.Read(directory, cancellationToken, times.SteamTime(installation));
             result.Add(installation with { LastUpdatedUtc = content.LastUpdatedUtc,
@@ -61,11 +61,12 @@ public sealed class ModScanner
             }
             if (installations.Count % 25 == 0) progress?.Report(new(installations.Count, ""));
         }
-        return metadata with { Catalogue = new(installations) };
+        return metadata with { Catalogue = new(installations, metadata.Catalogue.UnverifiedOrderIdentifiers) };
     }
 
     public ModScanResult Scan(GamePaths paths, CancellationToken cancellationToken = default,
-        IProgress<ScanProgress>? progress = null, GameVersion? targetOverride = null, bool inspectContent = true)
+        IProgress<ScanProgress>? progress = null, GameVersion? targetOverride = null, bool inspectContent = true,
+        ModCatalogue? previousCatalogue = null)
     {
         paths = paths.Normalize();
         cancellationToken.ThrowIfCancellationRequested();
@@ -106,7 +107,7 @@ public sealed class ModScanner
                     }
                     var about = Path.Combine(directory, "About", "About.xml");
                     if (root.Source == ModSource.Game && !File.Exists(about)) continue;
-                    var installation = ReadInstallation(directory, root.Path, root.Source, about, target);
+                    var installation = ReadInstallation(directory, root.Path, root.Source, about, target, previousCatalogue);
                     if (installation is null) continue;
                     if (inspectContent && root.Source != ModSource.Game)
                     {
@@ -135,10 +136,12 @@ public sealed class ModScanner
         }
     }
 
-    private static ModInstallation? ReadInstallation(string directory, string boundary, ModSource source, string about, GameVersion? target)
+    private static ModInstallation? ReadInstallation(string directory, string boundary, ModSource source, string about,
+        GameVersion? target, ModCatalogue? previousCatalogue = null)
     {
         var issues = new List<CatalogueDiagnostic>();
         ModMetadata? metadata = null;
+        RecoveredIdentity? recoveredIdentity = null;
         var folder = Path.GetFileName(directory);
         var workshopId = source == ModSource.Workshop && folder.All(char.IsAsciiDigit) ? folder : string.Empty;
         try
@@ -164,8 +167,39 @@ public sealed class ModScanner
             && ex is FileNotFoundException or DirectoryNotFoundException)
         { return null; }
         catch (Exception ex) when (ReadFailure(ex))
-        { issues.Add(new("MetadataUnreadable", DiagnosticSeverity.Warning, $"{folder} 信息未完整读取：{ex.Message}", directory)); }
-        return new(directory, folder, source, workshopId, metadata, issues.AsReadOnly());
+        {
+            issues.Add(new("MetadataUnreadable", DiagnosticSeverity.Warning, $"{folder} 信息未完整读取：{ex.Message}", directory));
+            if (metadata is null)
+            {
+                try { recoveredIdentity = new ModMetadataReader().ReadIdentity(about, boundary); }
+                catch (Exception identityError) when (ReadFailure(identityError)) { }
+                if (recoveredIdentity is null && previousCatalogue is not null)
+                {
+                    // PublishedFileId is independent of a malformed About.xml; do not
+                    // substitute a previous value when the current value cannot be read.
+                    var published = Path.Combine(directory, "About", "PublishedFileId.txt");
+                    var workshopIdentityReadable = true;
+                    if (workshopId.Length == 0 && File.Exists(published))
+                    {
+                        try
+                        {
+                            var value = ReadOnlyMetadata.ReadText(published, boundary, 128);
+                            if (value.Length > 0 && value.All(char.IsAsciiDigit)) workshopId = value;
+                        }
+                        catch (Exception publishedError) when (ReadFailure(publishedError)) { workshopIdentityReadable = false; }
+                    }
+                    var known = previousCatalogue.Installations.Where(mod =>
+                        Path.TrimEndingDirectorySeparator(Path.GetFullPath(mod.Directory)).Equals(
+                            Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)), StringComparison.OrdinalIgnoreCase)
+                        && mod.Source == source && mod.WorkshopId.Equals(workshopId, StringComparison.OrdinalIgnoreCase)
+                        && mod.FolderName.Equals(folder, StringComparison.OrdinalIgnoreCase)).Take(2).ToArray();
+                    if (workshopIdentityReadable && known.Length == 1
+                        && ModMetadataReader.IsValidRecoveredPackageId(known[0].PackageId))
+                        recoveredIdentity = new(known[0].Name, known[0].PackageId, "Previous catalogue exact installation");
+                }
+            }
+        }
+        return new(directory, folder, source, workshopId, metadata, issues.AsReadOnly()) { RecoveredIdentity = recoveredIdentity };
     }
 
     private static bool ReadFailure(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException or XmlException or ArgumentException;

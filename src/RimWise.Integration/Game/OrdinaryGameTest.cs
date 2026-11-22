@@ -77,7 +77,7 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
         // Older identifier/configuration layouts require their own runtime validation before using this adapter.
         if (options.Version.Major != 1 || options.Version.Minor is < 1 or > 7)
             throw new NotSupportedException("该版本尚未适配自动运行测试；仍可使用基础排序功能。");
-        this.catalogue = new(catalogue.Installations.ToArray());
+        this.catalogue = new(catalogue.Installations.ToArray(), catalogue.UnverifiedOrderIdentifiers);
         this.retained = retained.ToArray(); this.rules = rules.ToArray(); this.progress = progress;
         this.downloads = downloads?.ToArray();
         this.approvedRemovals = new(approvedRemovals ?? [], StringComparer.OrdinalIgnoreCase);
@@ -346,8 +346,16 @@ internal sealed class OrdinaryGameTestSession : ILevelOneGameSession, IMaintenan
     {
         if (order.Count is < 1 or > 20000 || order.Distinct(StringComparer.OrdinalIgnoreCase).Count() != order.Count)
             throw new InvalidDataException("测试排序为空、过大或含重复项。");
-        var mods = order.Select(id => catalogue.Resolve(id, options.Version).UniqueInstallation
-            ?? throw new InvalidDataException("测试模组未安装或有多份安装。")).ToArray();
+        if (order.Any(id => !AiModIdentifier.IsValid(id))) throw new InvalidDataException("测试排序含无效模组标识。");
+        // Unknown identities are existing order tokens, not fabricated installations. The
+        // game's actual loaded-order check remains strict and will expose skipped tokens.
+        var mods = order.Select(id =>
+        {
+            var match = catalogue.Resolve(id, options.Version);
+            return match.UniqueInstallation ?? (match.Candidates.Count == 0 && catalogue.IsUnverifiedOrderIdentifier(id)
+                ? null : throw new InvalidDataException("测试模组未安装或有多份安装。"));
+        })
+            .OfType<ModInstallation>().ToArray();
         foreach (var mod in mods)
         {
             try { ScopedPaths.Ordinary(mod.Directory, true); }

@@ -69,7 +69,7 @@ public sealed class DatabaseSnapshot
             foreach (var dependency in dependencies) pending.Enqueue(dependency.PackageId);
         }
         return replacements.Count == 0 ? catalogue : new(catalogue.Installations
-            .Select(m => replacements.GetValueOrDefault(m.Directory, m)).ToArray());
+            .Select(m => replacements.GetValueOrDefault(m.Directory, m)).ToArray(), catalogue.UnverifiedOrderIdentifiers);
     }
 
     internal void ValidateRequiredWorkshopId(string packageId, string workshopId)

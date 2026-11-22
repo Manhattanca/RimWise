@@ -42,7 +42,7 @@
 
 ### 构建分发包
 
-运行 `scripts/Publish-Preview.ps1 -Version 0.7.0` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.7.0 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
+运行 `scripts/Publish-Preview.ps1 -Version 0.7.1` 可生成 ZIP。制作中文安装包时，另行安装 Inno Setup 6.7.4，并从微软官网下载 .NET Desktop Runtime 10.0.14 x64 安装程序，再运行 `scripts/Build-Installer.ps1 -Version 0.7.1 -Compiler <ISCC.exe路径> -RuntimeInstaller <运行时安装程序路径>`。脚本核对运行时散列和微软签名；中文消息和安装脚本随源码提供。分发目录位于源码目录的同级 `releases` 中。
 
 仅当源、目标是同一主、次版本的相邻正式补丁版时，可以在完整安装包和 ZIP 之外运行 `scripts/Build-DeltaUpdate.ps1 -FromVersion <已发布源版本> -ToVersion <目标版本> -Compiler <ISCC.exe路径>`。它使用 Windows MSDelta，读取 `releases` 下的两份完整载荷，输出名称包含源、目标版本的差异 ZIP；不比全量包小时不输出。Release 说明须注明差分包的准确源版本。跳过补丁版或跨主、次版本不打差分包。旧客户端仍下载完整安装包。
 

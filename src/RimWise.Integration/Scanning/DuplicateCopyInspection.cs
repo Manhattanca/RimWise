@@ -19,15 +19,30 @@ public static class DuplicateCopyInspector
         IReadOnlySet<string> active, CancellationToken token)
     {
         var issues = new List<string>();
+        var metadataIssues = new List<string>();
         var limited = false;
         var version = "";
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         try
         {
-            var metadata = new ModMetadataReader().Read(Path.Combine(mod.Directory, "About", "About.xml"), mod.Directory, gameVersion);
-            if (!metadata.PackageId.Equals(mod.PackageId, StringComparison.OrdinalIgnoreCase))
+            ScopedPaths.Ordinary(mod.Directory, true);
+            var about = Path.Combine(mod.Directory, "About", "About.xml");
+            ModMetadata? metadata = null;
+            RecoveredIdentity? identity = null;
+            try { metadata = new ModMetadataReader().Read(about, mod.Directory, gameVersion); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or XmlException)
+            {
+                limited = true;
+                metadataIssues.Add("About/About.xml 元数据未完整读取，保留副本待测试：" + ex.Message);
+                try { identity = new ModMetadataReader().ReadIdentity(about, mod.Directory); }
+                catch (Exception identityError) when (identityError is IOException or InvalidDataException or UnauthorizedAccessException or XmlException) { }
+            }
+            var packageId = metadata?.PackageId ?? identity?.PackageId;
+            if (packageId is not null && !packageId.Equals(mod.PackageId, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("包名已变化，请刷新后重试。");
-            version = metadata.ReleaseVersion;
+            if (!ModMetadataReader.IsValidRecoveredPackageId(mod.PackageId))
+                throw new InvalidDataException("副本组标识无效，请刷新后重试。");
+            version = metadata?.ReleaseVersion ?? "";
             var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { Path.Combine(mod.Directory, "About", "About.xml") };
             var load = Path.Combine(mod.Directory, "LoadFolders.xml");
@@ -56,37 +71,47 @@ public static class DuplicateCopyInspector
             foreach (var file in files.Order(StringComparer.Ordinal))
             {
                 token.ThrowIfCancellationRequested();
-                using var parent = PinnedDirectory.Open(Path.GetDirectoryName(file)!);
-                ScopedPaths.Ordinary(file, true);
-                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
-                if (stream.Length > 64L * 1024 * 1024 || (bytes += stream.Length) > 256L * 1024 * 1024)
-                { limited = true; continue; }
-                hash.AppendData(Encoding.UTF8.GetBytes(Path.GetRelativePath(mod.Directory, file) + "\0"));
-                hash.AppendData(SHA256.HashData(stream));
-                stream.Position = 0;
+                var isMetadata = file.Equals(about, StringComparison.OrdinalIgnoreCase);
                 try
                 {
-                    if (Path.GetExtension(file).Equals(".xml", StringComparison.OrdinalIgnoreCase))
+                    using var parent = PinnedDirectory.Open(Path.GetDirectoryName(file)!);
+                    ScopedPaths.Ordinary(file, true);
+                    using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    if (stream.Length > 64L * 1024 * 1024 || (bytes += stream.Length) > 256L * 1024 * 1024)
+                    { limited = true; continue; }
+                    hash.AppendData(Encoding.UTF8.GetBytes(Path.GetRelativePath(mod.Directory, file) + "\0"));
+                    hash.AppendData(SHA256.HashData(stream));
+                    // About.xml was already parsed through the stricter metadata reader.
+                    // Its syntax failure must not mask genuine errors in Defs/Patches/DLLs.
+                    if (isMetadata) continue;
+                    stream.Position = 0;
+                    try
                     {
-                        using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit,
-                            XmlResolver = null, MaxCharactersInDocument = 64L * 1024 * 1024 });
-                        while (reader.Read()) token.ThrowIfCancellationRequested();
+                        if (Path.GetExtension(file).Equals(".xml", StringComparison.OrdinalIgnoreCase))
+                        {
+                            using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit,
+                                XmlResolver = null, MaxCharactersInDocument = 64L * 1024 * 1024 });
+                            while (reader.Read()) token.ThrowIfCancellationRequested();
+                        }
+                        else
+                        {
+                            using var pe = new PEReader(stream, PEStreamOptions.LeaveOpen);
+                            if (pe.HasMetadata) _ = pe.GetMetadataReader().GetAssemblyDefinition();
+                            else limited = true; // Native libraries are not managed assemblies, not necessarily damaged.
+                        }
                     }
-                    else
-                    {
-                        using var pe = new PEReader(stream, PEStreamOptions.LeaveOpen);
-                        if (pe.HasMetadata) _ = pe.GetMetadataReader().GetAssemblyDefinition();
-                        else limited = true; // Native libraries are not managed assemblies, not necessarily damaged.
-                    }
+                    catch (Exception ex) when (ex is XmlException or BadImageFormatException)
+                    { issues.Add(Path.GetRelativePath(mod.Directory, file) + "：" + ex.Message); }
                 }
-                catch (Exception ex) when (ex is XmlException or BadImageFormatException)
-                { issues.Add(Path.GetRelativePath(mod.Directory, file) + "：" + ex.Message); }
+                catch (Exception ex) when (isMetadata && ex is (IOException or InvalidDataException or UnauthorizedAccessException or XmlException))
+                { limited = true; metadataIssues.Add("About/About.xml 读取受限，保留副本待测试：" + ex.Message); }
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or XmlException)
         { issues.Add(ex.Message); }
         var status = issues.Count > 0 ? string.Join("\n", issues.Take(4)) : limited
             ? "检查不完整，运行情况待测试" : "文件结构检查通过，运行情况待测试";
+        if (metadataIssues.Count > 0) status += "\n" + string.Join("\n", metadataIssues.Take(2));
         return new(mod, version, Convert.ToHexString(hash.GetHashAndReset()), status, issues.Count > 0, limited);
     }
 

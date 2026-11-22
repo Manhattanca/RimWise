@@ -20,29 +20,48 @@ public sealed class LoadOrderSorter
 {
     public LoadOrderSortResult Sort(ModCatalogue catalogue, IReadOnlyList<string> currentOrder,
         GameVersion? configurationVersion, GameVersion? targetVersion, IReadOnlyList<CustomOrderRule>? customRules = null,
-        bool deferAdvisoryCycles = false, IReadOnlyList<string>? preferredOrder = null)
+        bool deferAdvisoryCycles = false, IReadOnlyList<string>? preferredOrder = null, bool allowUnreadableMetadata = false)
         => Evaluate(catalogue, currentOrder, configurationVersion, targetVersion, customRules,
-            deferAdvisoryCycles, preferredOrder, validateOnly: false);
+            deferAdvisoryCycles, preferredOrder, validateOnly: false, allowUnreadableMetadata: allowUnreadableMetadata);
 
     /// <summary>Check graph constraints without treating a different valid tie order as a violation.</summary>
     public LoadOrderSortResult Validate(ModCatalogue catalogue, IReadOnlyList<string> currentOrder,
         GameVersion? configurationVersion, GameVersion? targetVersion, IReadOnlyList<CustomOrderRule>? customRules = null,
-        bool deferAdvisoryCycles = false)
+        bool deferAdvisoryCycles = false, bool allowUnreadableMetadata = false)
         => Evaluate(catalogue, currentOrder, configurationVersion, targetVersion, customRules,
-            deferAdvisoryCycles, null, validateOnly: true);
+            deferAdvisoryCycles, null, validateOnly: true, allowUnreadableMetadata: allowUnreadableMetadata);
 
     private static LoadOrderSortResult Evaluate(ModCatalogue catalogue, IReadOnlyList<string> currentOrder,
         GameVersion? configurationVersion, GameVersion? targetVersion, IReadOnlyList<CustomOrderRule>? customRules,
-        bool deferAdvisoryCycles, IReadOnlyList<string>? preferredOrder, bool validateOnly)
+        bool deferAdvisoryCycles, IReadOnlyList<string>? preferredOrder, bool validateOnly, bool allowUnreadableMetadata)
     {
         ArgumentNullException.ThrowIfNull(catalogue);
         ArgumentNullException.ThrowIfNull(currentOrder);
         var original = currentOrder.ToArray();
+        var opaqueActive = original.Where(id => catalogue.IsUnverifiedOrderIdentifier(id)
+            && catalogue.Resolve(id, configurationVersion).Candidates.Count == 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool AllowedUnreadable(CatalogueDiagnostic issue)
+        {
+            if (!allowUnreadableMetadata) return false;
+            if (issue.Code == "OrderModMissing") return opaqueActive.Contains(issue.Identifier);
+            var mod = catalogue.Resolve(issue.Identifier, configurationVersion).UniqueInstallation;
+            if (issue.Code == "MetadataUnreadable") return mod is not null
+                && mod.Diagnostics.Any(d => d.Code == "MetadataUnreadable");
+            if (issue.Code is not ("DependencyNotInstalled" or "DependencyNotResolvedInOrder") || mod?.Metadata is null) return false;
+            var activePackages = original.Select(id => catalogue.Resolve(id, configurationVersion).UniqueInstallation?.PackageId)
+                .OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var unresolved = mod.Metadata.Requirements.Dependencies.Where(dependency =>
+                issue.Code == "DependencyNotInstalled" ? catalogue.FindPackage(dependency.PackageId).Count == 0
+                : !activePackages.Contains(dependency.PackageId)).ToArray();
+            // Diagnostics identify the consumer, not a dependency. Require every affected
+            // declaration to match an explicit opaque active token before waiving its gate.
+            return unresolved.Length > 0 && unresolved.All(dependency => opaqueActive.Contains(dependency.PackageId));
+        }
         var diagnostics = CatalogueAnalysis.InspectSelectedOrder(catalogue, original, configurationVersion, targetVersion).ToList();
-        var blockers = diagnostics.Where(issue => issue.Code is
+        var blockers = diagnostics.Where(issue => !AllowedUnreadable(issue) && issue.Code is (
             "OrderModMissing" or "OrderModAmbiguous" or "DuplicateOrderEntry" or
             "DuplicateActiveInstallation" or "DependencyNotInstalled" or
-            "DependencyNotResolvedInOrder" or "DeclaredConflict" or "MetadataUnreadable" or "TargetVersionUnknown").ToArray();
+            "DependencyNotResolvedInOrder" or "DeclaredConflict" or "MetadataUnreadable" or "TargetVersionUnknown")).ToArray();
         if (blockers.Length > 0)
             return new(original, diagnostics.AsReadOnly(), false, false,
                 "自动排序未执行：" + string.Join("；", blockers.Take(3).Select(issue => issue.Message)));

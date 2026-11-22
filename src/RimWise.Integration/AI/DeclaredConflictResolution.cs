@@ -31,7 +31,9 @@ public static class DeclaredConflictResolution
     public static DeclaredConflict? Find(ModCatalogue catalogue, IReadOnlyList<string> order,
         IReadOnlyList<string> retained, GameVersion version)
     {
-        var mods = order.ToDictionary(id => id, id => catalogue.Resolve(id, version).UniqueInstallation
+        var mods = order.Where(id => !catalogue.IsUnverifiedOrderIdentifier(id)
+            || catalogue.Resolve(id, version).Candidates.Count > 0).ToDictionary(id => id,
+            id => catalogue.Resolve(id, version).UniqueInstallation
             ?? throw new InvalidDataException("冲突检查需要唯一的已安装模组：" + id), StringComparer.OrdinalIgnoreCase);
         var packages = mods.GroupBy(item => item.Value.PackageId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().Key, StringComparer.OrdinalIgnoreCase);

@@ -229,6 +229,17 @@ namespace RimWise.TestHelper
                 var actual = ((IEnumerable)Read(game.GetType("Verse.LoadedModManager", true), "RunningModsListForReading"))
                     .Cast<object>().Select(m => Convert.ToString(Read(m, "PackageId"))).ToArray();
                 var expected = manifest.SelectNodes("/probe/order/li").Cast<XmlNode>().Select(n => n.InnerText).ToArray();
+                // Preserve both lists before reporting a mismatch. Never normalize aliases,
+                // reorder, or accept a different installed copy merely to pass this check.
+                // A failed optional snapshot cannot turn a mismatch into a successful test.
+                try
+                {
+                    var snapshot = ProbeOrderEvidence.Create(nonce, Process.GetCurrentProcess().Id, expected, actual);
+                    string temporary = Path.Combine(data, "workbench-loaded-order.tmp");
+                    string target = Path.Combine(data, "workbench-loaded-order.xml");
+                    if (!File.Exists(target)) { snapshot.Save(temporary); File.Move(temporary, target); }
+                }
+                catch { /* Strict order comparison below remains authoritative. */ }
                 if (!actual.SequenceEqual(expected, StringComparer.OrdinalIgnoreCase)) { Write("order-mismatch", tick-firstTick, colonists, 1); return; }
                 // A failed faction validation is retained while map/pawn coverage continues.
                 // It must still prevent a completed map from becoming a clean pass.

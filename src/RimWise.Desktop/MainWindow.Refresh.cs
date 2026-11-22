@@ -10,9 +10,10 @@ public partial class MainWindow
 {
     private async Task RestartRefreshAsync(
         Func<string, CancellationToken, Task<ModsConfigDocument>>? reader = null,
-        Func<GamePaths, CancellationToken, IProgress<ScanProgress>, Task<ModScanResult>>? scanner = null, bool deferContent = false)
+        Func<GamePaths, CancellationToken, IProgress<ScanProgress>, Task<ModScanResult>>? scanner = null, bool deferContent = true)
     {
         var generation = ++scanGeneration;
+        CancelContentEnrichment();
         scanCancellation?.Cancel();
         if (scanTask is not null) await scanTask;
         if (generation != scanGeneration || lifetime.IsCancellationRequested) return;
@@ -27,6 +28,7 @@ public partial class MainWindow
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         scanCancellation = cancellation;
         var revision = ViewModel.ContentRevision;
+        var previousCatalogue = ViewModel.CurrentCatalogue;
         ViewModel.IsScanning = true;
         ViewModel.Status = "正在刷新模组和当前排序…";
         var progress = new Progress<ScanProgress>(value =>
@@ -52,10 +54,12 @@ public partial class MainWindow
             ModScanResult? result = null;
             if (selectedPaths.GameDirectory.Length > 0 || selectedPaths.LocalModsDirectory.Length > 0 || selectedPaths.WorkshopDirectory.Length > 0)
                 result = await (scanner?.Invoke(selectedPaths, cancellation.Token, progress)
-                    ?? Task.Run(() => new ModScanner().Scan(selectedPaths, cancellation.Token, progress, inspectContent: !deferContent), cancellation.Token));
+                    ?? Task.Run(() => new ModScanner().Scan(selectedPaths, cancellation.Token, progress, inspectContent: !deferContent,
+                        previousCatalogue: previousCatalogue), cancellation.Token));
             cancellation.Token.ThrowIfCancellationRequested();
             if (result?.Diagnostics.Any(issue => issue.Code is "ScanLimit" or "ScanRootUnreadable") == true)
                 throw new IOException("模组目录未完整读取，请检查路径设置后重试。");
+            if (deferContent && result is not null) result = WithCachedContent(result);
             var records = result is null ? null : await ReadActivityAsync(result, observe: true);
             cancellation.Token.ThrowIfCancellationRequested();
             if (generation != scanGeneration || lifetime.IsCancellationRequested) return;
@@ -67,7 +71,9 @@ public partial class MainWindow
                 {
                     ViewModel.ApplyScan(result, records);
                     ViewModel.IsShowingCache = false;
-                    await SaveStartupSnapshotAsync(selectedPaths, loaded, result);
+                    await SaveStartupSnapshotAsync(selectedPaths, loaded, result, cancellation.Token);
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    if (deferContent) BeginContentEnrichment(generation, selectedPaths, loaded, result);
                 }
                 ViewModel.Status = "刷新期间清单已修改，已保留当前编辑；可再次刷新";
                 return;
@@ -86,40 +92,26 @@ public partial class MainWindow
             if (ViewModel.SelectedRow is null && ViewModel.SelectedAvailable is null)
                 ViewModel.SelectedRow = ViewModel.Rows.FirstOrDefault();
             if (loaded is not null && result is not null)
-                await SaveStartupSnapshotAsync(selectedPaths, loaded, result);
+                await SaveStartupSnapshotAsync(selectedPaths, loaded, result, cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
             if (deferContent && result is not null)
-            {
-                ViewModel.IsEnrichingContent = true;
-                ViewModel.Status = "列表已载入，正在补充模组类型与更新时间…";
-                // Yield a frame before doing content I/O, so a cold start does not wait for every texture and DLL.
-                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-                var metadata = result;
-                result = await InspectStartupContentAsync(metadata, cancellation.Token);
-                cancellation.Token.ThrowIfCancellationRequested();
-                records = await ReadActivityAsync(result, observe: true);
-                cancellation.Token.ThrowIfCancellationRequested();
-                if (generation != scanGeneration || lifetime.IsCancellationRequested) return;
-                ViewModel.ApplyContentScan(result, records);
-                ViewModel.Status = $"已载入 {result.Catalogue.Installations.Count} 个模组";
-                if (loaded is not null) await SaveStartupSnapshotAsync(selectedPaths, loaded, result);
-            }
+                BeginContentEnrichment(generation, selectedPaths, loaded, result);
         }
         catch (OperationCanceledException)
         {
             if (generation == scanGeneration && !lifetime.IsCancellationRequested)
-                ViewModel.Status = deferContent && ViewModel.HasCatalogue ? "已取消详细读取，保留当前列表；可刷新补全" : "已取消刷新，保留上次结果";
+                ViewModel.Status = "已取消刷新，保留上次结果";
         }
         catch (Exception ex)
         {
             if (generation == scanGeneration && !lifetime.IsCancellationRequested)
-                ViewModel.Status = (deferContent && ViewModel.HasCatalogue ? "详细读取未完成，保留当前列表：" : "刷新未完成，保留上次结果：") + ex.Message;
+                ViewModel.Status = "刷新未完成，保留上次结果：" + ex.Message;
         }
         finally
         {
             if (ReferenceEquals(scanCancellation, cancellation))
             {
                 ViewModel.IsScanning = false;
-                ViewModel.IsEnrichingContent = false;
                 scanCancellation = null;
             }
         }
@@ -127,12 +119,10 @@ public partial class MainWindow
 
     internal async Task PrepareAutomaticCatalogueAsync()
     {
-        if (ViewModel.IsEnrichingContent)
-        {
-            scanCancellation?.Cancel();
-            if (scanTask is not null) await scanTask;
-        }
+        CancelContentEnrichment();
         if (pathInitialization is not null) await pathInitialization;
+        // Startup may have started an optional scan while initialization was awaited.
+        CancelContentEnrichment();
         lifetime.Token.ThrowIfCancellationRequested();
         var selectedPaths = paths;
         var installed = await Task.Run(() => GameVersionDetector.Detect(selectedPaths.GameDirectory).Version, lifetime.Token);
@@ -166,5 +156,7 @@ public partial class MainWindow
         if (loadCache) await LoadStartupSnapshotAsync();
         await RestartRefreshAsync(scanner: metadataScanner, deferContent: true);
     }
+    internal Task ContentEnrichmentForCheck => contentTask ?? Task.CompletedTask;
+    internal void CancelContentForCheck() => CancelContentEnrichment();
 #endif
 }

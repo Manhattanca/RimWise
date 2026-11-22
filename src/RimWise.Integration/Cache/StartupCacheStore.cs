@@ -55,11 +55,15 @@ public sealed class StartupCacheStore(string applicationDirectory)
         catch (Exception ex) when (CacheFailure(ex)) { return null; }
     }
 
-    public bool TrySave(GamePaths paths, ModsConfigDocument configuration, ModScanResult scan)
+    public bool TrySave(GamePaths paths, ModsConfigDocument configuration, ModScanResult scan) =>
+        TrySave(paths, configuration, scan, CancellationToken.None);
+
+    public bool TrySave(GamePaths paths, ModsConfigDocument configuration, ModScanResult scan, CancellationToken cancellation)
     {
         string? temporary = null;
         try
         {
+            cancellation.ThrowIfCancellationRequested();
             if (configuration.Order.PackageIds.Count > MaximumEntries || scan.Catalogue.Installations.Count > MaximumEntries) return false;
             var mods = scan.Catalogue.Installations.Select(mod => new CachedMod(mod.Directory, mod.FolderName, mod.Source, mod.WorkshopId,
                 mod.Metadata is not { } meta ? null : new(meta.Name, meta.Author, meta.PackageId, meta.SupportedVersions.ToArray(), meta.LegacyTargetVersion,
@@ -72,6 +76,7 @@ public sealed class StartupCacheStore(string applicationDirectory)
             if (payload.Length > MaximumBytes / 2) return false;
             var bytes = JsonSerializer.SerializeToUtf8Bytes(new Envelope(1, Convert.ToHexString(SHA256.HashData(payload)), payload), Options);
             if (bytes.Length > MaximumBytes) return false;
+            cancellation.ThrowIfCancellationRequested();
             RejectLinks(CachePath);
             Directory.CreateDirectory(Path.GetDirectoryName(CachePath)!);
             temporary = Path.Combine(Path.GetDirectoryName(CachePath)!, ".startup-" + Guid.NewGuid().ToString("N") + ".tmp");
@@ -81,6 +86,7 @@ public sealed class StartupCacheStore(string applicationDirectory)
                 output.Flush(flushToDisk: true);
             }
             RejectLinks(CachePath);
+            cancellation.ThrowIfCancellationRequested();
             File.Move(temporary, CachePath, overwrite: true);
             return true;
         }

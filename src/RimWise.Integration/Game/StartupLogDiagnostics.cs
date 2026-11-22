@@ -51,6 +51,8 @@ internal static partial class StartupLogDiagnostics
     internal static StartupFailureDetails Create(OrdinaryGameReport report, string attemptDirectory)
     {
         var evidence = new List<AiStartupEvidence>();
+        // This is an executor observation, not a pawn failure or a model judgement.
+        if (report.ProbeStage == "order-mismatch") evidence.Add(new("TestOrderMismatch"));
         var faction = report.ProbeStage == "faction-failed" ? FactionFailure(attemptDirectory) : null;
         if (faction is not null) evidence.Add(faction);
         foreach (var log in report.Logs)
@@ -110,7 +112,7 @@ internal static partial class StartupLogDiagnostics
                 or "starting-pawns" or "game-configuration" => "NewGameConfigurationFailure", "world-generation" => "WorldGenerationFailure",
             "faction-check" => "FactionGenerationFailure", "waiting-map" => "MapGenerationFailure",
             "pawn-test" or "map-running" => "PawnTestFailure", _ => null };
-        if (!report.MapSuccessVerified && phaseCode is not null) evidence.Add(new(phaseCode));
+        if (!report.MapSuccessVerified && report.ProbeStage != "order-mismatch" && phaseCode is not null) evidence.Add(new(phaseCode));
         if (!report.CaptureCompleted || report.StopReason == GameTestStopReason.LogLimit || report.Logs.Any(l => l.Truncated)) evidence.Add(new("LogIncomplete"));
         if (!report.MapSuccessVerified) evidence.Add(new("NoMapSignal"));
         // Reserve source status and spread the limited payload across all three inputs.
@@ -123,7 +125,7 @@ internal static partial class StartupLogDiagnostics
                 .Concat(groups.OrderByDescending(g => g.Any(e => e.Source == "general")).SelectMany(g => g)).Take(96).ToArray())
             { BoundedErrorCaptureVerified = report.BoundedErrorCaptureVerified }.CopyValidated();
         // These paths come only from the trusted attempt directory, never from AI prose.
-        var paths = report.Logs.Select(l => l.Path).Concat(new[] { "launch.json", "launch-failure.log", "result.json", "diagnostic-sources.json", "diagnostic-context.json", "intended-ModsConfig.xml", "observed-ModsConfig.xml" }
+        var paths = report.Logs.Select(l => l.Path).Concat(new[] { "launch.json", "launch-failure.log", "result.json", "diagnostic-sources.json", "diagnostic-context.json", "intended-ModsConfig.xml", "observed-ModsConfig.xml", "workbench-probe.xml", "workbench-loaded-order.xml" }
             .Select(name => Path.Combine(attemptDirectory, name)).Select(Diagnostics.StoredEvidence.Resolve).Where(File.Exists))
             .Select(Diagnostics.StoredEvidence.Resolve).Distinct().ToArray();
         var observations = report.Logs.SelectMany(log => log.Issues.OrderBy(issue =>

@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\RimWise.TestHelper\ProbeOrderEvidence.cs" Link="Game\ProbeOrderEvidence.cs" />
     <EmbeddedResource Include="Resources\database.snapshot.gz" LogicalName="RimWise.Databases.snapshot.gz" />
     <EmbeddedResource Include="Resources\market-api-root.crt" LogicalName="RimWise.MarketApi.Root" />
     <ProjectReference Include="..\RimWise.Core\RimWise.Core.csproj" />
@@ -16,6 +17,6 @@
     <MakeDir Directories="$(HelperOutput)" />
     <ItemGroup><HelperReferences Include="$(FrameworkRuntime)\mscorlib.dll;$(FrameworkRuntime)\System.dll;$(FrameworkRuntime)\System.Core.dll;$(FrameworkRuntime)\System.Xml.dll" /></ItemGroup>
     <Csc Sources="..\RimWise.TestHelper\VerseCompileContracts.cs" References="@(HelperReferences)" OutputAssembly="$(HelperOutput)Assembly-CSharp.dll" TargetType="Library" NoStandardLib="true" NoConfig="true" Deterministic="true" UseSharedCompilation="false" />
-    <Csc Sources="..\RimWise.TestHelper\ProbeComponent.cs;..\RimWise.TestHelper\NewGameJourney.cs" References="@(HelperReferences);$(HelperOutput)Assembly-CSharp.dll" OutputAssembly="$(HelperOutput)RimWise.TestHelper.dll" TargetType="Library" NoStandardLib="true" NoConfig="true" Deterministic="true" UseSharedCompilation="false" />
+    <Csc Sources="..\RimWise.TestHelper\ProbeComponent.cs;..\RimWise.TestHelper\NewGameJourney.cs;..\RimWise.TestHelper\ProbeOrderEvidence.cs" References="@(HelperReferences);$(HelperOutput)Assembly-CSharp.dll" OutputAssembly="$(HelperOutput)RimWise.TestHelper.dll" TargetType="Library" NoStandardLib="true" NoConfig="true" Deterministic="true" UseSharedCompilation="false" />
   </Target>
 </Project>

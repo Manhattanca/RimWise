@@ -1,4 +1,4 @@
-using RimWise.Core;
+﻿using RimWise.Core;
 
 namespace RimWise.Integration.AI;
 
@@ -6,6 +6,8 @@ namespace RimWise.Integration.AI;
 public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, string[] TestedOrder,
     string[] DiagnosticCodes, int Attempt)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ReadFailureRemoval { get; init; } = false;
     public string? FailureFingerprint { get; init; }
     public string[] ErrorSignatures { get; init; } = [];
     internal void Validate()
@@ -136,7 +138,12 @@ internal static class TrialExclusionPlanning
             trial.Validate();
             if (!current.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(trial.TestedOrder))
                 throw new InvalidDataException("临时试排除的测试组合已变化。");
-            var option = DeclaredConflictResolution.Options(catalogue, trial.TestedOrder, retained, version, [trial.SelectedId]).Single();
+            if (trial.ReadFailureRemoval && (!MetadataReadFailureTrials.IsAffected(catalogue, trial.SelectedId, version)
+                || !MetadataReadFailureTrials.SafeRemoval(catalogue, current, retained, version, trial.SelectedId, trial.RemovedIds)))
+                throw new InvalidDataException("读取失败试排除的元数据标记或依赖保护已变化。");
+            var option = trial.ReadFailureRemoval
+                ? MetadataReadFailureTrials.Option(catalogue, trial.TestedOrder, retained, version, trial.SelectedId)
+                : DeclaredConflictResolution.Options(catalogue, trial.TestedOrder, retained, version, [trial.SelectedId]).Single();
             if (option.BlockedReason is not null || !option.RemovedIds.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(trial.RemovedIds))
                 throw new InvalidDataException("临时试排除的保护或连带依赖已变化。");
             current = current.Except(trial.RemovedIds, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -160,12 +167,14 @@ internal static class TrialExclusionPlanning
             rejected.Add("试排除候选包含未授权增删。");
         if (rejected.Count == 0)
         {
-            var verified = new LoadOrderSorter().Validate(constraints, target, version, version, rules, deferAdvisoryCycles: true);
+            var verified = new LoadOrderSorter().Validate(constraints, target, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
             if (!verified.Complete || verified.Changed) rejected.Add(verified.FailureReason ?? "试排除候选违反排序规则。");
         }
         return new(before.ToArray(), rejected.Count == 0 ? target.ToArray() : before.ToArray(),
             AiOrderPlanner.Fingerprint(before, catalogue, retained, rules, version), rejected.ToArray(),
-            trials.Select(t => "临时试排除（未证明根因）：" + t.SelectedId).ToArray());
+            trials.Select(t => (t.ReadFailureRemoval ? MetadataReadFailureTrials.ReadFailureRemovalReason + "：" : "临时试排除（未证明根因）：") + t.SelectedId)
+                .Concat(trials.Any(t => t.ReadFailureRemoval) && MetadataReadFailureTrials.HasUnknownDependencies(constraints, target, version)
+                    ? [MetadataReadFailureTrials.UnknownDependenciesNotice] : Array.Empty<string>()).ToArray());
     }
 }
 

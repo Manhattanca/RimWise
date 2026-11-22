@@ -27,6 +27,15 @@ internal static class AiChatCompatibility
         if (limit is { } value)
             payload[host == "api.openai.com" || openAiModel ? "max_completion_tokens" : "max_tokens"] = value;
         // Omit optional sampling settings: several reasoning models reject temperature=0.
+        // Do not assume a relay's implicit thinking mode. Request the documented
+        // DeepSeek mode explicitly only for the endpoint and exact models exercised
+        // in live development acceptance, not arbitrary compatible providers.
+        if (host == "relayrax.com" && model is "deepseek-v4-pro" or "deepseek-v4.1-flash")
+        {
+            payload["thinking"] = new { type = "enabled" };
+            payload["reasoning_effort"] = "high";
+            payload["response_format"] = new { type = "json_object" };
+        }
         // Current official DeepSeek defaults to high reasoning. Keep thinking enabled but
         // reserve more of the bounded output allowance for an actual, structured proposal.
         if (host == "api.deepseek.com" && (model == "deepseek-flash" || model.StartsWith("deepseek-v4")))

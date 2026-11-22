@@ -49,6 +49,23 @@ internal static class DeepSeekCompatibilityChecks
                     && (thinking == 0 || thinking is >= 128 and <= 8192));
             }
         });
+        check("The validated RelayRax V4 profile is exact-host and exact-model scoped, never a global DeepSeek or GPT override", () =>
+        {
+            foreach (var host in new[] { "relayrax.com", "relayrax.com.relay.invalid", "relay.invalid" })
+            foreach (var model in new[] { "deepseek-v4-pro", "deepseek-v4.1-flash", "deepseek-r1", "gpt-6.2-sol" })
+            {
+                var (_, handler, _) = Call(host, model, Envelope(), false);
+                using var json = JsonDocument.Parse(handler.Payload!); var body = json.RootElement;
+                var explicitMode = host == "relayrax.com" && model is "deepseek-v4-pro" or "deepseek-v4.1-flash";
+                Assert(body.TryGetProperty("thinking", out var thinking) == explicitMode
+                    && body.TryGetProperty("reasoning_effort", out _) == explicitMode
+                    && body.TryGetProperty("response_format", out _) == explicitMode);
+                if (explicitMode) Assert(thinking.GetProperty("type").GetString() == "enabled"
+                    && body.GetProperty("reasoning_effort").GetString() == "high"
+                    && body.GetProperty("response_format").GetProperty("type").GetString() == "json_object");
+                Assert(!body.TryGetProperty("enable_thinking", out _) && !body.TryGetProperty("thinking_budget", out _));
+            }
+        });
         check("SiliconFlow authentication failure is Chinese, provider-specific and never retried", () =>
         {
             var (reply, handler, updates) = Call("api.siliconflow.cn", "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -129,6 +146,23 @@ internal static class DeepSeekCompatibilityChecks
                 Assert(!invalid.Succeeded && invalid.Failure == AiReplyFailure.InvalidStructure && invalidHandler.Calls == 1);
             }
         });
+        check("DeepSeek alone accepts repeated identical display suggestions without relaxing any control field", () =>
+        {
+            const string answer = """{"schemaVersion":1,"summary":"合成未知归属","actions":[],"warnings":[],"conflicts":[],"startupDiagnosis":{"category":"unknown","reason":"无归属","suggestions":["保留日志"],"suggestions":["保留日志"]}}""";
+            var (accepted, handler, _) = Call("relayrax.com", "deepseek-v4-pro", Envelope(answer), false);
+            Assert(accepted.Succeeded && accepted.Response is { Actions.Count: 0, Conflicts.Count: 0,
+                StartupDiagnosis.Category: "unknown", StartupDiagnosis.Suggestions.Count: 1 } && handler.Calls == 1);
+            foreach (var (model, malformed) in new[] {
+                ("gpt-6.2-sol", answer),
+                ("deepseek-v4-pro", answer.Replace("\"suggestions\":[\"保留日志\"],\"suggestions\":[\"保留日志\"]", "\"suggestions\":[\"保留日志\"],\"suggestions\":[\"另一条\"]")),
+                ("deepseek-v4-pro", answer.Replace("\"actions\":[]", "\"actions\":[],\"actions\":[]")),
+                ("deepseek-v4-pro", answer.Replace("\"category\":\"unknown\"", "\"category\":\"unknown\",\"category\":\"unknown\"")),
+                ("deepseek-v4-pro", answer.Replace("\"reason\":\"无归属\"", "\"reason\":\"无归属\",\"startupDiagnosis\":null")) })
+            {
+                var (reply, calls, _) = Call("relayrax.com", model, Envelope(malformed), false);
+                Assert(!reply.Succeeded && reply.Failure == AiReplyFailure.InvalidStructure && calls.Calls == 1);
+            }
+        });
         check("Only DeepSeek model names get active Workshop alias normalization", () =>
         {
             var catalogue = new ModCatalogue([new("fixture", "fixture", ModSource.Workshop, "123",
@@ -141,11 +175,153 @@ internal static class DeepSeekCompatibilityChecks
             foreach (var model in new[] { "gpt-6.2-sol", "relay/gpt-6.2-sol", "other-model" })
                 Assert(AiChatCompatibility.NormalizePlanActions(model, actions, order, catalogue, version).Single().PackageId == "test.mod");
         });
+        check("DeepSeek receives a compact verified-order focus without changing GPT prompts", () =>
+        {
+            var requirements = new[]
+            {
+                new AiModRequirementFact("owner.mod", ["dependency.mod"], [], [], []),
+                new AiModRequirementFact("dependency.mod", [], [], [], [])
+            };
+            var deepSeek = Request("deepseek-flash") with
+            {
+                CurrentOrder = ["owner.mod", "dependency.mod"],
+                InstalledMods = ["owner.mod", "dependency.mod"],
+                ModRequirements = requirements,
+                DiagnosticFacts = [new AiDiagnosticFact("GameLogError", "owner.mod")]
+            };
+            var deepMessages = AiPrompt.Messages(deepSeek);
+            using var focus = Focus(deepSeek);
+            var edge = focus.RootElement.GetProperty("OrderObservations").EnumerateArray().Single();
+            Assert(deepMessages.Count == 4
+                && edge.GetProperty("Kind").GetString() == "dependency"
+                && edge.GetProperty("Before").GetString() == "dependency.mod"
+                && edge.GetProperty("After").GetString() == "owner.mod"
+                && edge.GetProperty("BeforeIndex").GetInt32() == 2 && edge.GetProperty("AfterIndex").GetInt32() == 1
+                && edge.GetProperty("State").GetString() == "wrong-order"
+                && edge.GetProperty("Required").GetBoolean() && edge.GetProperty("DiagnosticRelated").GetBoolean()
+                && deepMessages[2].Content.Contains("必须生成精确 reorder/add action", StringComparison.Ordinal));
+            var gptMessages = AiPrompt.Messages(deepSeek with { Settings = deepSeek.Settings with { Model = "gpt-test" } });
+            Assert(gptMessages.Count == 3 && gptMessages.All(message => !message.Content.Contains("DeepSeek 专项证据摘要", StringComparison.Ordinal)));
+            Assert(gptMessages[0] == deepMessages[0] && gptMessages[1] == deepMessages[1]);
+        });
+        check("DeepSeek distinguishes installed inactive dependencies from unavailable ones without changing the order", () =>
+        {
+            var order = new[] { "owner.mod" };
+            var request = Request("deepseek-flash") with { CurrentOrder = order, InstalledMods = ["owner.mod", "inactive.mod"],
+                ModRequirements = [new("owner.mod", ["inactive.mod", "missing.mod"], [], [], [])] };
+            using var focus = Focus(request);
+            var edges = focus.RootElement.GetProperty("OrderObservations").EnumerateArray().ToArray();
+            Assert(edges.Length == 2 && edges[0].GetProperty("State").GetString() == "installed-inactive"
+                && edges[1].GetProperty("State").GetString() == "not-installed"
+                && edges.All(e => e.GetProperty("BeforeIndex").GetInt32() == 0)
+                && request.CurrentOrder.SequenceEqual(order));
+        });
+        check("DeepSeek does not promote deferred advisory cycles or original-order preferences to required repairs", () =>
+        {
+            using var focus = Focus(Request("deepseek-flash") with { CurrentOrder = ["a.mod", "b.mod"],
+                ModRequirements = [new("a.mod", ["b.mod"], [], ["b.mod"], [])],
+                DiagnosticFacts = [new("OrderingCycleDeferred", "a.mod"), new("OrderingCycleDeferred", "b.mod")],
+                OrderRules = [new("b.mod", "a.mod") { OriginalOrderIndex = 1 }, new("b.mod", "a.mod") { Required = true }] });
+            var edges = focus.RootElement.GetProperty("OrderObservations").EnumerateArray().ToArray();
+            Assert(edges.Length == 3 && edges.Count(e => e.GetProperty("Required").GetBoolean()) == 2
+                && edges.Single(e => !e.GetProperty("Required").GetBoolean()).GetProperty("DeferredCycleReviewRequired").GetBoolean()
+                && edges.Where(e => e.GetProperty("Required").GetBoolean()).All(e => !e.GetProperty("DeferredCycleReviewRequired").GetBoolean()));
+        });
+        check("DeepSeek sees satisfied adjacent dependency links and exact active alias spelling", () =>
+        {
+            using var focus = Focus(Request("deepseek-flash") with { CurrentOrder = ["BASE.Mod_steam", "owner.mod"],
+                InstalledMods = ["base.mod_steam", "owner.mod"], DiagnosticFacts = [new("GameLogError", "owner.mod")],
+                ModRequirements = [new("owner.mod", ["base.mod_steam"], [], [], [])] });
+            Assert(focus.RootElement.GetProperty("OrderObservations").GetArrayLength() == 0);
+            var relation = focus.RootElement.GetProperty("RelatedRelationships").EnumerateArray().Single();
+            Assert(relation.GetProperty("Before").GetString() == "BASE.Mod_steam"
+                && relation.GetProperty("State").GetString() == "satisfied");
+        });
+        check("DeepSeek focus stays bounded while prioritizing late error-related dependencies and reporting omissions", () =>
+        {
+            var owners = Enumerable.Range(0, 100).Select(i => "owner." + i).ToArray();
+            var dependencies = Enumerable.Range(0, 100).Select(i => "dependency." + i).ToArray();
+            using var focus = Focus(Request("deepseek-flash") with { CurrentOrder = [.. owners, .. dependencies],
+                DiagnosticFacts = [new("GameLogError", owners[^1])], ModRequirements = owners.Select((o, i) =>
+                    new AiModRequirementFact(o, [dependencies[i]], [], [], [])).ToArray() });
+            var root = focus.RootElement;
+            Assert(root.GetProperty("OrderObservations").GetArrayLength() == 64
+                && root.GetProperty("OrderObservationsOmitted").GetInt32() == 36
+                && root.GetProperty("OrderObservations")[0].GetProperty("After").GetString() == owners[^1]);
+        });
+        check("DeepSeek hard-constraint coverage is separate from the smaller diagnostic focus and never truncated silently", () =>
+        {
+            var owners = Enumerable.Range(0, 150).Select(i => "consumer." + i).ToArray();
+            var dependencies = Enumerable.Range(0, 150).Select(i => "provider." + i).ToArray();
+            using var focus = Focus(Request("deepseek-flash") with { CurrentOrder = [.. owners, .. dependencies],
+                DiagnosticFacts = [new("GameLogError", owners[^1])], ModRequirements = owners.Select((o, i) =>
+                    new AiModRequirementFact(o, [dependencies[i]], [], [], [])).ToArray() });
+            var root = focus.RootElement;
+            Assert(root.GetProperty("RequiredOrderViolationCount").GetInt32() == 150
+                && root.GetProperty("RequiredOrderViolations").GetArrayLength() == 128
+                && root.GetProperty("RequiredOrderViolationsOmitted").GetInt32() == 22
+                && root.GetProperty("OrderObservations").GetArrayLength() == 64
+                && root.GetProperty("OrderObservationsOmitted").GetInt32() == 86);
+            var first = root.GetProperty("RequiredOrderViolations")[0];
+            Assert(first.GetProperty("Before").GetString() == dependencies[0]
+                && first.GetProperty("After").GetString() == owners[0]
+                && first.GetProperty("BeforeIndex").GetInt32() == 151 && first.GetProperty("AfterIndex").GetInt32() == 1);
+        });
+        check("DeepSeek focus uses validated package owners rather than matching startup symbols and quotes untrusted IDs", () =>
+        {
+            const string id = "author.\"quoted\" mod";
+            var request = Request("deepseek-flash") with { CurrentOrder = ["symbol.mod", id],
+                StartupContext = new("ProbeCompleted", true, true, [new("MissingType", "symbol.mod", "startup")]),
+                LogContext = new([], [], false) { BlockingError = "synthetic blocking exception",
+                    CodeStatus = "available", Code = [new("code-0", id, "Fixture.Method", new string('A', 64), "return 0;", false)] } };
+            using var focus = Focus(request);
+            Assert(focus.RootElement.GetProperty("HasBlockingError").GetBoolean()
+                && focus.RootElement.GetProperty("Stage").GetString() == "ProbeCompleted"
+                && focus.RootElement.GetProperty("AssociatedPackageIds").EnumerateArray().Select(e => e.GetString()).SequenceEqual([id]));
+            var text = AiPrompt.Messages(request)[2].Content;
+            Assert(!text.Contains("synthetic blocking exception") && !text.Contains("return 0;"));
+        });
+        check("DeepSeek evidence focus never reads raw legacy diagnostics, secrets, or log-only requests", () =>
+        {
+            var request = Request("deepseek-flash") with { ApiKey = "private-credential-sentinel", Diagnostics = ["private-legacy-sentinel"] };
+            Assert(AiPrompt.Messages(request).All(m => !m.Content.Contains("private-credential-sentinel") && !m.Content.Contains("private-legacy-sentinel")));
+            Assert(AiPrompt.Messages(request with { LogDiagnosisOnly = true,
+                LogContext = new([new("game-errors", "synthetic error")], [], false) })
+                .All(m => !m.Content.Contains("DeepSeek 专项证据摘要")));
+        });
+        check("DeepSeek sees the full inactive prerequisite chain without inventing an active order violation", () =>
+        {
+            using var focus = Focus(Request("deepseek-flash") with { CurrentOrder = ["leaf.mod", "base.mod"],
+                InstalledMods = ["leaf.mod", "middle.mod", "base.mod", "bottom.mod"],
+                ModRequirements = [new("leaf.mod", ["middle.mod"], [], [], []),
+                    new("middle.mod", ["base.mod", "bottom.mod"], ["leaf.mod"], [], []), new("bottom.mod", ["missing.mod"], [], [], [])] });
+            var edges = focus.RootElement.GetProperty("OrderObservations").EnumerateArray().ToArray();
+            Assert(edges.Length == 4 && edges.All(e => e.GetProperty("Kind").GetString() == "dependency")
+                && edges.Any(e => e.GetProperty("Before").GetString() == "base.mod"
+                    && e.GetProperty("State").GetString() == "dependent-inactive" && e.GetProperty("AfterIndex").GetInt32() == 0)
+                && edges.Any(e => e.GetProperty("Before").GetString() == "missing.mod" && e.GetProperty("State").GetString() == "not-installed"));
+        });
+        check("DeepSeek focus exposes an order mismatch as a diagnostic-only constraint", () =>
+        {
+            using var focus = Focus(Request("deepseek-flash") with { StartupContext = new("ProbeCompleted", true, true, [new("TestOrderMismatch")]) });
+            Assert(focus.RootElement.GetProperty("TestOrderMismatch").GetBoolean()
+                && !focus.RootElement.GetProperty("StartupAllowsOrderChanges").GetBoolean());
+        });
+        check("DeepSeek self references do not crowd real actionable relations, including inactive prerequisites", () =>
+        {
+            using var focus = Focus(Request("deepseek-flash") with { CurrentOrder = ["leaf.mod"], InstalledMods = ["leaf.mod", "middle.mod"],
+                ModRequirements = [new("leaf.mod", ["leaf.mod", "middle.mod"], ["leaf.mod"], [], []), new("middle.mod", ["middle.mod"], [], [], [])] });
+            Assert(focus.RootElement.GetProperty("IgnoredSelfReferences").GetInt32() == 3
+                && focus.RootElement.GetProperty("OrderObservations").GetArrayLength() == 1);
+        });
     }
 
     private static string Envelope(string answer = Answer) => JsonSerializer.Serialize(new { choices = new[] { new {
         message = new { content = answer, reasoning_content = "private-fixture-secret" }, finish_reason = "stop" } },
         usage = new { prompt_tokens = 10, completion_tokens = 20, total_tokens = 30 } });
+    private static AiRequest Request(string model) => new(AiSettings.Default with { Enabled = true, Model = model },
+        "synthetic-key", "1.7", [], [], [], []);
+    private static JsonDocument Focus(AiRequest request) => JsonDocument.Parse(AiPrompt.Messages(request)[2].Content.Split('\n')[1]);
     private static (AiClientResult, Handler, Capture) Call(string host, string model, string body, bool stream,
         HttpStatusCode status = HttpStatusCode.OK, int limit = 16384)
     {

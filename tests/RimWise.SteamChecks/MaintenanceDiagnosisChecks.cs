@@ -187,6 +187,18 @@ internal static class MaintenanceDiagnosisChecks
             var environment = FailedReport() with { Logs = [FailedReport().Logs[0] with { Text = "Unable to initialize Vulkan" }] };
             Assert(TrialExclusionPlanning.Candidates(Feedback(environment), Catalogue(), Order, [], new(1, 7), 1).Count == 0);
         });
+        check("Order mismatch reaches the AI and user as an explicit non-actionable observation, not a pawn failure", () =>
+        {
+            var report = FailedReport() with { StopReason = GameTestStopReason.ProbeCompleted, ProbeStage = "order-mismatch", FailedPhase = "map-running" };
+            var feedback = Feedback(report); var startup = feedback.StartupFailure!;
+            Assert(!feedback.CanDiagnose && !feedback.StartupVerified && !startup.Context.CanAdjustOrder
+                && startup.Context.Evidence.Any(e => e.Code == "TestOrderMismatch")
+                && !startup.Context.Evidence.Any(e => e.Code == "PawnTestFailure")
+                && startup.LocalReason().Contains("实际加载顺序"));
+            var restored = JsonSerializer.Deserialize<MaintenanceFeedback>(JsonSerializer.Serialize(
+                MaintenanceFeedback.Capture(1, Order, feedback, new string('A', 64))))!.Restore();
+            Assert(!restored.CanDiagnose && !restored.StartupFailure!.Context.CanAdjustOrder);
+        });
         check("Log-limit feedback survives recovery without becoming complete or successful", () =>
         {
             var saved = MaintenanceFeedback.Capture(1, Order, Feedback(FailedReport()), new string('A', 64));

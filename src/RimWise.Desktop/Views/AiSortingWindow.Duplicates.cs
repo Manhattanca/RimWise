@@ -67,7 +67,8 @@ public partial class AiSortingWindow
         var revision = editor.ContentRevision;
         var previous = editor.CurrentCatalogue;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, ownerLifetime);
-        var scan = await Task.Run(() => new ModScanner().Scan(paths, linked.Token, inspectContent: false), linked.Token);
+        var scan = await Task.Run(() => new ModScanner().Scan(paths, linked.Token, inspectContent: false,
+            previousCatalogue: previous), linked.Token);
         linked.Token.ThrowIfCancellationRequested();
         if (closed || revision != editor.ContentRevision || paths != gamePaths() || !ReferenceEquals(previous, editor.CurrentCatalogue))
             throw new InvalidOperationException("排序或路径已改变，请返回后重新开始。");
@@ -75,9 +76,13 @@ public partial class AiSortingWindow
             throw new IOException("部分安装目录未读取完整，保留上次结果。请检查路径与访问权限。");
         // This refresh needs only metadata. Preserve already inspected badges and times.
         var known = previous?.Installations.ToDictionary(mod => mod.Directory, StringComparer.OrdinalIgnoreCase);
+        var unknown = scan.Catalogue.Installations.Any(mod => mod.PackageId.Length == 0
+            && mod.Diagnostics.Any(d => d.Code == "MetadataUnreadable"))
+            ? editor.Rows.Select(row => row.PackageId).Where(id => scan.Catalogue.Resolve(id, scan.TargetVersion).Candidates.Count == 0
+                && RimWise.Integration.AI.AiModIdentifier.IsValid(id)).ToArray() : [];
         scan = scan with { Catalogue = new(scan.Catalogue.Installations.Select(mod =>
             known?.GetValueOrDefault(mod.Directory) is { } old ? mod with
-            { CodeKind = old.CodeKind, ContentKinds = old.ContentKinds, LastUpdatedUtc = old.LastUpdatedUtc } : mod).ToArray()) };
+            { CodeKind = old.CodeKind, ContentKinds = old.ContentKinds, LastUpdatedUtc = old.LastUpdatedUtc } : mod).ToArray(), unknown) };
         editor.ApplyScan(scan);
         return RequiredDuplicateInstallations();
     }

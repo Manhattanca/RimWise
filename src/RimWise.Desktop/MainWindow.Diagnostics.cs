@@ -64,6 +64,7 @@ public partial class MainWindow
             installedVersion = ViewModel.CurrentDetectedVersion?.ToString(),
             ViewModel.WarningCount, ViewModel.ErrorCount,
             diagnostics = ViewModel.Diagnostics.Select(row => row.Diagnostic).ToArray(),
+            scanIssues = ViewModel.ScanIssues.Select(row => row.Diagnostic).ToArray(),
             order = ViewModel.Rows.Select(r => new { r.PackageId, r.Name }).ToArray() };
         ViewModel.Status = "正在导出诊断日志…";
         if (DiagnosticEventLog.Current is { } log) await log.FlushAsync();

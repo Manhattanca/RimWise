@@ -33,6 +33,9 @@
                 <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
             </Style>
             <Style x:Key="NavigationTab" TargetType="RadioButton">
+                <!-- The template supplies a themed keyboard-focus background; suppress
+                     the additional system dotted focus adorner, not keyboard focus. -->
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                 <Setter Property="Padding" Value="16,7"/><Setter Property="Margin" Value="0,0,6,0"/>
                 <Setter Property="Cursor" Value="Hand"/>

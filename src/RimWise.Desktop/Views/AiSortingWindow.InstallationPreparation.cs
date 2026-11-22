@@ -20,8 +20,9 @@ public partial class AiSortingWindow
         if (gamePaths is null) throw new InvalidOperationException("游戏路径尚未配置。");
         if (session.ReadinessProblem is { } readiness) throw new InvalidOperationException(readiness);
         await RefreshDuplicateInstallationsAsync(token);
-        if (editor.ScanIssues.Any(i => i.Diagnostic.Code is "ScanRootUnreadable" or "ScanLimit" or "NoScanPaths" or "MetadataUnreadable"))
+        if (editor.ScanIssues.Any(i => i.Diagnostic.Code is "ScanRootUnreadable" or "ScanLimit" or "NoScanPaths"))
             throw new IOException("模组扫描未完成，不能将未读取到的模组当作未安装。请检查路径后刷新。");
+        RecordMetadataReadNotices();
         var paths = gamePaths();
         var version = editor.EffectiveGameVersion ?? throw new InvalidOperationException("请先确认游戏版本。");
         if (!reset && automaticCopies is not null && paths != installationPaths)
@@ -95,6 +96,36 @@ public partial class AiSortingWindow
         // Batch live-text updates; thousands of missing rows must not force thousands of layouts.
         if (!closed && added.Count > 0) AppendAutomaticReport("\n" + string.Join("\n", added) + "\n");
     }
+
+    private void RecordMetadataReadNotices()
+    {
+        var added = new List<string>();
+        foreach (var row in editor.ScanIssues.Where(i => i.Diagnostic.Code == "MetadataUnreadable"))
+        {
+            var issue = row.Diagnostic;
+            var notice = "模组读取异常（不阻断自动排序）：" + issue.Message
+                + "\n位置：" + issue.Location
+                + "\n请展开主界面模组列表下方的“读取记录”，检查该模组文件、下载状态及访问权限。"
+                + "当前排序中的异常项仍保留；进行游戏测试时，仅本轮报错关联到该项才定向排除，安装文件保留。";
+            if (installationNotices.Contains(notice, StringComparer.Ordinal)) continue;
+            installationNotices.Add(notice);
+            added.Add(notice);
+            DiagnosticEventLog.Current?.Record("sorting-installations", "metadata-read-warning", notice);
+        }
+        if (added.Count == 0) return;
+        MetadataReadWarning.Visibility = System.Windows.Visibility.Visible;
+        MetadataReadWarningText.Text = $"检测到 {editor.ScanIssues.Count(i => i.Diagnostic.Code == "MetadataUnreadable")} 项模组读取异常。"
+            + (IsOfflineMode ? "离线排序继续并保留异常项；本模式不进行游戏测试，也不会据此剔除模组。"
+                : "自动排序继续；异常项先参加游戏测试，仅在本轮红字有关联时定向排除。")
+            + "请检查对应模组，详细原因已记录在下方回报中。";
+        AppendAutomaticReport("\n" + string.Join("\n\n", added) + "\n");
+        MetadataReadNotice?.Invoke(added);
+    }
+
+    // Notification only: it never asks for consent to continue or creates removal authority.
+    internal Action<IReadOnlyList<string>>? MetadataReadNotice { get; set; }
+    internal Action? OpenReadIssues { get; set; }
+    private void ReadIssues_Click(object sender, System.Windows.RoutedEventArgs e) => OpenReadIssues?.Invoke();
 
     private string InstallationSummary => installationNotices.Count == 0 ? "" : "\n\n模组处理汇总：\n"
         + string.Join("\n", installationNotices.Take(80))

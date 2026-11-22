@@ -74,6 +74,10 @@ internal static class DiagnosticExportSmokeCheck
         await File.WriteAllTextAsync(Path.Combine(attempt, "runtime-Player.log"), string.Concat(Enumerable.Repeat("Synthetic game diagnostic line\n", 100000)));
         owner.ViewModel.Diagnostics.ReplaceWith([new(new("SharedRule", RimWise.Core.DiagnosticSeverity.Warning,
             "Synthetic shared rule", Identifier: "fixture.a") { RelatedIdentifiers = ["fixture.b"] })]);
+        const string scanPath = "C:/Users/PRIVATE_SCAN_USER_SENTINEL/Mods/fixture.scan/About/About.xml";
+        const string scanReason = "合成读取异常：XML 格式无效";
+        owner.ViewModel.ScanIssues.ReplaceWith([new(new("MetadataUnreadable", DiagnosticSeverity.Error,
+            scanReason + " " + secret + "；" + scanPath, scanPath, "fixture.scan"))]);
         var ticks = 0;
         var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(1), DispatcherPriority.Background, (_, _) => ticks++, owner.Dispatcher);
         timer.Start();
@@ -87,7 +91,7 @@ internal static class DiagnosticExportSmokeCheck
         foreach (var operation in new[] { "button-clicked", "selection-changed", "command-executed", "window-opened", "window-closed", "automatic-sorting" })
             Assert(events.Contains(operation), "Missing event " + operation);
         var combined = string.Join('\n', files.Values);
-        foreach (var value in new[] { secret, "PRIVATE_TYPED_TEXT_SENTINEL", "PRIVATE_PASSWORD_SENTINEL" })
+        foreach (var value in new[] { secret, "PRIVATE_TYPED_TEXT_SENTINEL", "PRIVATE_PASSWORD_SENTINEL", "PRIVATE_SCAN_USER_SENTINEL" })
             Assert(!combined.Contains(value), "Private input captured");
         foreach (var name in new[] { "session.json", "process.json", "finished.json", "recovered.json" })
             Assert(files.Keys.Any(path => path.EndsWith("/" + name)), "Missing lifecycle journal " + name);
@@ -98,9 +102,21 @@ internal static class DiagnosticExportSmokeCheck
         var issue = state.GetProperty("diagnostics")[0];
         Assert(issue.GetProperty("code").GetString() == "SharedRule"
             && issue.GetProperty("relatedIdentifiers")[0].GetString() == "fixture.b", "Related diagnostic evidence missing");
+        var scanIssues = state.GetProperty("scanIssues");
+        Assert(scanIssues.GetArrayLength() == 1 && state.GetProperty("diagnostics").GetArrayLength() == 1,
+            "Scan issues must be exported separately from order diagnostics");
+        var scanIssue = scanIssues[0];
+        const string redactedScanPath = "C:/Users/[USER]/Mods/fixture.scan/About/About.xml";
+        Assert(scanIssue.GetProperty("code").GetString() == "MetadataUnreadable"
+            && scanIssue.GetProperty("severity").GetString() == "Error"
+            && scanIssue.GetProperty("identifier").GetString() == "fixture.scan"
+            && scanIssue.GetProperty("location").GetString() == redactedScanPath,
+            "Scan issue details or redacted location missing");
+        Assert(scanIssue.GetProperty("message").GetString() == scanReason + " [REDACTED]；" + redactedScanPath,
+            "Scan issue reason missing or sensitive evidence not redacted");
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new
             { passed = true, dispatcherTicks = ticks, files = result.Files, bytes = result.Bytes,
-                checks = new[] { "settings entry", "background export", "window and control events", "command events", "private inputs excluded", "keys redacted", "diagnostic details and counts", "lifecycle journals" } }));
+                checks = new[] { "settings entry", "background export", "window and control events", "command events", "private inputs excluded", "keys redacted", "diagnostic details and counts", "separate scan issue details and redaction", "lifecycle journals" } }));
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

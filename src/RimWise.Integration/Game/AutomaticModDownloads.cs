@@ -20,6 +20,12 @@ internal static class AutomaticModDownloads
         var failures = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
         var queued = new HashSet<string>(StringComparer.Ordinal);
         var installed = catalogue.Installations.ToList();
+        ModCatalogue WithScope(IReadOnlyList<ModInstallation> items)
+        {
+            var resolved = new ModCatalogue(items);
+            return new(items, catalogue.UnverifiedOrderIdentifiers
+                .Where(id => resolved.Resolve(id, version).Candidates.Count == 0).ToArray());
+        }
         foreach (var group in pending.GroupBy(item=>item.WorkshopId,StringComparer.Ordinal))
         {
             token.ThrowIfCancellationRequested();
@@ -34,9 +40,10 @@ internal static class AutomaticModDownloads
             {
                 var states = await wait(group.Key,token);
                 token.ThrowIfCancellationRequested();
-                var changed = new ModScanner().ReadWorkshopItems(workshop,[group.Key],version,token);
+                var changed = new ModScanner().ReadWorkshopItems(workshop,[group.Key],version,token,
+                    previousCatalogue: WithScope(installed));
                 var paths = changed.Select(mod=>mod.Directory).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var candidate = new ModCatalogue(installed.Where(mod=>!paths.Contains(mod.Directory)).Concat(changed).ToArray());
+                var candidate = WithScope(installed.Where(mod=>!paths.Contains(mod.Directory)).Concat(changed).ToArray());
                 var plan = new ImportDownloadPlan(group.ToArray(),[]);
                 ImportedOrderDownloads.VerifyInstallations(candidate,plan,version,states);
                 WorkshopDependencyDownloads.VerifyInstalled(candidate,workshop,version,group.Select(i=>new RequiredModDownload(i.Identifier,i.WorkshopId) { DiscoverPackageId = i.DiscoverPackageId }));
@@ -45,7 +52,7 @@ internal static class AutomaticModDownloads
             catch (Exception ex) when (Recoverable(ex))
             { token.ThrowIfCancellationRequested(); foreach(var item in group) failures[item.Identifier]=ex.Message; }
         }
-        return new(new(installed),failures);
+        return new(WithScope(installed),failures);
     }
 
     private static bool Recoverable(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException

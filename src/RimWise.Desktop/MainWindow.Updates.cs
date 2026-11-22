@@ -166,6 +166,7 @@ public partial class MainWindow
         try
         {
             if (!CanInstallUpdate()) return;
+            CancelContentEnrichment();
             var release = downloadedRelease;
             var path = downloadedUpdatePath;
             UpdateNoticeText.Text = "正在校验安装包…";
@@ -235,9 +236,12 @@ public partial class MainWindow
         or JsonException or Win32Exception or HttpRequestException or OperationCanceledException or InvalidOperationException
         or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
 
+    internal bool HasUpdateBlockingWork => aiSortingWindow?.IsWorking == true || ViewModel.IsScanning || settingsOpen
+        || importCancellation is not null || marketplacePage?.IsBusy == true || pathInitialization is { IsCompleted: false };
+
     private bool CanInstallUpdate()
     {
-        if (aiSortingWindow?.IsWorking == true || ViewModel.IsScanning || settingsOpen || pathInitialization is { IsCompleted: false })
+        if (HasUpdateBlockingWork)
         {
             ShowUpdateNotification("更新已就绪", "请在当前排序、测试或刷新完成后点击更新，软件不会中断正在进行的任务。", false, ready: true);
             return false;

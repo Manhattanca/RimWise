@@ -25,10 +25,11 @@ internal static class RequiredDependencyPreparation
             expanded = DeclaredConflictResolution.Replay(catalogue, expanded, retained, version, approvals);
             // Inactive mods must not supply or contradict an active dependency's download origin.
             var active = new ModCatalogue(expanded.Select(id => catalogue.Resolve(id, version).UniqueInstallation)
-                .OfType<ModInstallation>().ToArray());
+                .OfType<ModInstallation>().ToArray(), catalogue.UnverifiedOrderIdentifiers);
             var reasons = RequiredDependencyReasons.Build(catalogue, order, expanded, version);
             reportReasons?.Invoke(reasons.Values.ToArray());
-            var plan = ImportedOrderDownloads.Plan(expanded, [], active, version, database, automatic: true);
+            var plan = ImportedOrderDownloads.Plan(expanded.Where(id => !catalogue.IsUnverifiedOrderIdentifier(id)).ToArray(),
+                [], active, version, database, automatic: true);
             foreach (var issue in plan.Issues) failures[issue.Identifier] = issue.Reason;
             var pending = plan.Downloads.Where(item => !attempted.Contains(item.WorkshopId))
                 .Select(item => item with { Reason = reasons.GetValueOrDefault(item.Identifier, "原排序缺失模组：" + item.Identifier) }).ToArray();
@@ -39,7 +40,11 @@ internal static class RequiredDependencyPreparation
             var batch = await download(catalogue, pending, token);
             token.ThrowIfCancellationRequested();
             foreach (var failure in batch.Failures) failures[failure.Key] = failure.Value;
-            catalogue = batch.Catalogue;
+            // A download adapter may rebuild installations without carrying the original
+            // opaque input tokens. Losing them must not authorize guessed downloads.
+            catalogue = new(batch.Catalogue.Installations, catalogue.UnverifiedOrderIdentifiers
+                .Concat(batch.Catalogue.UnverifiedOrderIdentifiers).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(id => batch.Catalogue.Resolve(id, version).Candidates.Count == 0).ToArray());
         }
     }
 }

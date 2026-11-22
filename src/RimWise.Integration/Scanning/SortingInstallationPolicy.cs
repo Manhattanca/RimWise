@@ -5,11 +5,22 @@ namespace RimWise.Integration.Scanning;
 public sealed record SortingInstallationOrder(string[] Order, string[] RemovedIds, IReadOnlyList<string> Messages)
 {
     public IReadOnlyDictionary<string, string> IdentifierMap { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyList<string> UnverifiedOrderIdentifiers { get; init; } = [];
 }
 
 /// <summary>Opt-in sorting policy. Does not change ordinary imports or the game's identifier resolution.</summary>
 public static class SortingInstallationPolicy
 {
+    internal static bool RetainUnverified(ModCatalogue catalogue, string id, GameVersion version) =>
+        Candidates(catalogue, id, version).Count == 0 && IsLegalActiveToken(id)
+        && (catalogue.IsUnverifiedOrderIdentifier(id) || catalogue.Installations.Any(mod =>
+            mod.Metadata is null && mod.PackageId.Length == 0
+            && mod.Diagnostics.Any(d => d.Code == "MetadataUnreadable")));
+
+    private static bool IsLegalActiveToken(string id) => id.Length is > 0 and <= 512
+        && id == id.Trim() && !id.Any(char.IsControl)
+        && id.IndexOfAny(['<', '>', '/', '\\', ':']) < 0;
+
     public static IReadOnlyList<ModInstallation> Candidates(ModCatalogue catalogue, string id, GameVersion version)
     {
         var match = catalogue.Resolve(id, version);
@@ -26,10 +37,12 @@ public static class SortingInstallationPolicy
         var result = new List<string>(); var removed = new List<string>(); var messages = new List<string>();
         var mapping = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unverified = order.Where(id => RetainUnverified(before, id, version) && Candidates(after, id, version).Count == 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         // An unavailable dependency must not be silently re-added by the preparation closure.
-        var unavailable = new HashSet<string>(unusablePackages, StringComparer.OrdinalIgnoreCase);
+        var unavailable = new HashSet<string>(unusablePackages.Where(id => !unverified.Contains(id)), StringComparer.OrdinalIgnoreCase);
         foreach (var id in order)
-            if (Candidates(before, id, version).Count == 0) unavailable.Add(id);
+            if (Candidates(before, id, version).Count == 0 && !unverified.Contains(id)) unavailable.Add(id);
         var dependents = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in after.Installations.GroupBy(m => m.PackageId, StringComparer.OrdinalIgnoreCase))
         {
@@ -49,6 +62,13 @@ public static class SortingInstallationPolicy
                     if (unavailable.Add(child)) pending.Enqueue(child);
         foreach (var id in order)
         {
+            if (unverified.Contains(id))
+            {
+                mapping[id] = id;
+                if (seen.Add(id)) result.Add(id);
+                messages.Add("归属待核对，保留原排序项以供测试：" + id);
+                continue;
+            }
             var candidates = Candidates(before, id, version);
             var name = candidates.FirstOrDefault()?.Name ?? id;
             var package = candidates.FirstOrDefault()?.PackageId ?? id;
@@ -69,6 +89,7 @@ public static class SortingInstallationPolicy
             if (seen.Add(next)) result.Add(next);
             else messages.Add("重复启用同一模组，已合并排序项：" + name);
         }
-        return new(result.ToArray(), removed.ToArray(), messages) { IdentifierMap = mapping };
+        return new(result.ToArray(), removed.ToArray(), messages) { IdentifierMap = mapping,
+            UnverifiedOrderIdentifiers = Array.AsReadOnly(result.Where(unverified.Contains).ToArray()) };
     }
 }

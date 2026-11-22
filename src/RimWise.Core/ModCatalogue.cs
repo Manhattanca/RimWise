@@ -44,6 +44,8 @@ public sealed record CatalogueDiagnostic(
         .Where(id => id.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase);
 }
 
+public sealed record RecoveredIdentity(string Name, string PackageId, string Basis);
+
 public sealed record ModInstallation(
     string Directory,
     string FolderName,
@@ -52,11 +54,13 @@ public sealed record ModInstallation(
     ModMetadata? Metadata,
     IReadOnlyList<CatalogueDiagnostic> Diagnostics)
 {
+    public RecoveredIdentity? RecoveredIdentity { get; init; }
     public DateTimeOffset? LastUpdatedUtc { get; init; }
     public ModCodeKind CodeKind { get; init; }
     public ModContentKinds ContentKinds { get; init; }
-    public string Name => string.IsNullOrWhiteSpace(Metadata?.Name) ? FolderName : Metadata.Name;
-    public string PackageId => Metadata?.PackageId ?? string.Empty;
+    public string Name => !string.IsNullOrWhiteSpace(Metadata?.Name) ? Metadata.Name
+        : !string.IsNullOrWhiteSpace(RecoveredIdentity?.Name) ? RecoveredIdentity.Name : FolderName;
+    public string PackageId => Metadata?.PackageId ?? RecoveredIdentity?.PackageId ?? string.Empty;
 }
 
 public sealed record OrderMatch(string Identifier, IReadOnlyList<ModInstallation> Candidates)
@@ -70,16 +74,22 @@ public sealed class ModCatalogue
     private readonly Dictionary<string, List<ModInstallation>> packages = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<ModInstallation>> folders = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<ModInstallation> Installations { get; }
+    public IReadOnlyList<string> UnverifiedOrderIdentifiers { get; }
+    private readonly HashSet<string> unverifiedOrderIdentifiers;
 
-    public ModCatalogue(IReadOnlyList<ModInstallation> installations)
+    public ModCatalogue(IReadOnlyList<ModInstallation> installations, IReadOnlyList<string>? unverifiedOrderIdentifiers = null)
     {
         Installations = installations;
+        UnverifiedOrderIdentifiers = Array.AsReadOnly((unverifiedOrderIdentifiers ?? []).ToArray());
+        this.unverifiedOrderIdentifiers = new(UnverifiedOrderIdentifiers, StringComparer.OrdinalIgnoreCase);
         foreach (var mod in installations)
         {
             if (!string.IsNullOrWhiteSpace(mod.PackageId)) Add(packages, mod.PackageId, mod);
             Add(folders, mod.FolderName, mod);
         }
     }
+
+    public bool IsUnverifiedOrderIdentifier(string id) => unverifiedOrderIdentifiers.Contains(id);
 
     public IReadOnlyList<ModInstallation> FindPackage(string id) =>
         packages.TryGetValue(id, out var found) ? found.AsReadOnly() : [];

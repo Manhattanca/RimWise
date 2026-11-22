@@ -1,4 +1,4 @@
-﻿using RimWise.Core;
+using RimWise.Core;
 using RimWise.Integration.Databases;
 using RimWise.Integration.AI;
 using RimWise.Integration.Configuration;
@@ -28,7 +28,7 @@ public static class AutomaticGameMaintenance
     {
         var missing = initiallyMissing ?? request.CurrentOrder.Where(id => catalogue.Resolve(id,version).Candidates.Count == 0).ToArray();
         var active = new ModCatalogue(request.CurrentOrder.Except(missing,StringComparer.OrdinalIgnoreCase).Select(id => catalogue.Resolve(id,version).UniqueInstallation
-            ?? throw new InvalidDataException("原排序有未安装或重复模组。")).ToArray());
+            ?? throw new InvalidDataException("原排序有未安装或重复模组。")).ToArray(), catalogue.UnverifiedOrderIdentifiers);
         var limited = request with { InstalledMods=request.CurrentOrder,
             // Keep the historical canonical hash projection for already-paid checkpoints.
             // Outbound facts are mapped to the actual order identifiers during preparation.
@@ -126,11 +126,13 @@ public static class AutomaticGameMaintenance
                 ValidateInstallations(catalogue, request.CurrentOrder, options.Version);
                 preparedCatalogue = database?.WithRequiredDependencies(catalogue, request.CurrentOrder, options.Version) ?? catalogue;
                 var installed = AiOrderPlanner.ExpandRequiredOrder(request.CurrentOrder, preparedCatalogue, options.Version, allowMissing: true)
-                    .Where(id => preparedCatalogue.Resolve(id, options.Version).UniqueInstallation is not null).ToArray();
+                    .Where(id => preparedCatalogue.Resolve(id, options.Version).UniqueInstallation is not null
+                        || preparedCatalogue.IsUnverifiedOrderIdentifier(id)).ToArray();
                 preparedRules = database?.Rules(preparedCatalogue, installed, options.Version, rules) ?? rules;
                 preparedOrder = request.CurrentOrder.ToArray();
                 inner = new(options, preparedCatalogue, preparedOrder, request.RetainedMods, preparedRules, gameProgress);
-                var evidenceCatalogue = new ModCatalogue(installed.Select(id => preparedCatalogue.Resolve(id, options.Version).UniqueInstallation!).ToArray());
+                var evidenceCatalogue = new ModCatalogue(installed.Select(id => preparedCatalogue.Resolve(id, options.Version).UniqueInstallation)
+                    .OfType<ModInstallation>().ToArray(), preparedCatalogue.UnverifiedOrderIdentifiers);
                 return new(request with { InstalledMods = installed, OrderRules = preparedRules,
                     ModRequirements = AiModRequirementFact.FromCatalogue(evidenceCatalogue, installed, options.Version) }, preparedCatalogue, preparedOrder) { Rules = preparedRules };
             }
@@ -204,7 +206,7 @@ public static class AutomaticGameMaintenance
             progress?.Report(new(task.Current.Attempts,"正在本地分析程序集关系并核对拓扑顺序（无需 AI）…",task.Current.ReportedTokens));
             codePreparation = await Task.Run(() => LocalCodeTopology.Prepare(currentCatalogue, all, options.Version, options.TestRoot, token), token);
             var sorted=new LoadOrderSorter().Sort(currentCatalogue,all,options.Version,options.Version,effectiveRules,
-                deferAdvisoryCycles: true, preferredOrder: codePreparation.PreferredOrder);
+                deferAdvisoryCycles: true, preferredOrder: codePreparation.PreferredOrder, allowUnreadableMetadata: true);
             if(!sorted.Complete) throw new InvalidDataException(sorted.Explanation + (database is null ? "" : $" 社区规则来源：{database.CommunityOrigin} {database.CommunityCommit[..7]}；自定义规则与本地依赖同时参与。"));
             preparedOrder = sorted.Order.ToArray();
             InsertionScope.ValidateOrder(limits.InsertionBaselineJson, preparedOrder,
@@ -230,7 +232,8 @@ public static class AutomaticGameMaintenance
             preparedCatalogue = currentCatalogue;
             preparedRules = effectiveRules;
             // Level one can only reorder this closure. Do not send the whole inactive library or database.
-            var activeCatalogue = new ModCatalogue(all.Select(id => currentCatalogue.Resolve(id,options.Version).UniqueInstallation!).ToArray());
+            var activeCatalogue = new ModCatalogue(all.Select(id => currentCatalogue.Resolve(id,options.Version).UniqueInstallation)
+                .OfType<ModInstallation>().ToArray(), currentCatalogue.UnverifiedOrderIdentifiers);
             return new(request with { InstalledMods=all, OrderRules=effectiveRules,
                 DiagnosticFacts=request.DiagnosticFacts.Concat(deferredRules.Select(d => new AiDiagnosticFact(d.Code, d.Identifier ?? ""))).Distinct().ToArray(),
                 ModRequirements=AiModRequirementFact.FromCatalogue(activeCatalogue,all,options.Version) },currentCatalogue,sorted.Order) { Rules=effectiveRules };
@@ -315,7 +318,7 @@ public static class AutomaticGameMaintenance
                 initial.RetainedMods, options.Version, task, chooseConflict, token);
             if (approval is null) return null;
             var remaining = current.Except(approval.RemovedIds, StringComparer.OrdinalIgnoreCase).ToArray();
-            var sorted = new LoadOrderSorter().Sort(preparedCatalogue, remaining, options.Version, options.Version, preparedRules, deferAdvisoryCycles: true);
+            var sorted = new LoadOrderSorter().Sort(preparedCatalogue, remaining, options.Version, options.Version, preparedRules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
             var plan = AiOrderPlanner.PreparedOrder(current, sorted.Order, preparedCatalogue, initial.RetainedMods,
                 options.Version, preparedRules, [approval]);
             if (!sorted.Complete || !plan.CanApply) throw new InvalidDataException("冲突选择后的排序未通过复核。");
@@ -387,7 +390,8 @@ public static class AutomaticGameMaintenance
     {
         foreach(var id in order)
         {
-            if(catalogue.Resolve(id,version).UniqueInstallation is null)
+            var match = catalogue.Resolve(id,version);
+            if(match.UniqueInstallation is null && !(match.Candidates.Count == 0 && catalogue.IsUnverifiedOrderIdentifier(id)))
                 throw new InvalidDataException("模组未安装或存在重复安装："+id);
         }
     }

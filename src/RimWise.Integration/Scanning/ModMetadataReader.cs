@@ -6,6 +6,28 @@ namespace RimWise.Integration.Scanning;
 /// <summary>Reads declarations only. It never loads mod assemblies or evaluates mod code.</summary>
 public sealed class ModMetadataReader
 {
+    // Keep the opaque-key boundary aligned with AiModIdentifier without depending on AI.
+    // Angle brackets additionally cannot form a recovered XML/package identity.
+    internal static bool IsValidRecoveredPackageId(string? value) => !string.IsNullOrWhiteSpace(value)
+        && value.Length <= 512 && !value.Any(char.IsControl)
+        && value.IndexOfAny(['/', '\\', ':', '<', '>']) < 0;
+
+    public RecoveredIdentity? ReadIdentity(string file, string boundary)
+    {
+        // Parse the entire document through the same path, DTD, size and depth boundaries.
+        var root = ReadOnlyMetadata.ReadXml(file, boundary).Root;
+        if (root is null || root.Name.NamespaceName.Length > 0
+            || !root.Name.LocalName.Equals("ModMetaData", StringComparison.OrdinalIgnoreCase)) return null;
+        var ids = root.Elements("packageId").Take(2).ToArray();
+        if (ids.Length != 1 || ids[0].HasElements || ids[0].Value.Length > 512) return null;
+        var id = ids[0].Value.Trim();
+        if (!IsValidRecoveredPackageId(id) || ids[0].Value.Any(char.IsControl)) return null;
+        var names = root.Elements("name").Take(2).ToArray();
+        var name = names.Length == 1 && !names[0].HasElements && names[0].Value.Length <= 1024
+            && !names[0].Value.Any(char.IsControl) ? names[0].Value.Trim() : "";
+        return new(name, id, "About.xml identity-only");
+    }
+
     public ModMetadata Read(string file, string boundary, GameVersion? target)
     {
         var root = ReadOnlyMetadata.ReadXml(file, boundary).Root;

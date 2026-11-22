@@ -133,7 +133,8 @@ public sealed class AiClient : IAiClient, IDisposable
             publicContent = Trim(content);
             if (!result.Streamed) request.ResponseProgress?.Report(new(content));
             var structured = StructuredAiResponse.Parse(content,
-                allowQuotedIntegers: !request.LogDiagnosisOnly && AiChatCompatibility.IsDeepSeek(settings.Model));
+                allowQuotedIntegers: !request.LogDiagnosisOnly && AiChatCompatibility.IsDeepSeek(settings.Model),
+                allowIdenticalDisplaySuggestions: !request.LogDiagnosisOnly && AiChatCompatibility.IsDeepSeek(settings.Model));
             return new(true, "已收到结构化 AI 建议，尚未应用任何动作。", structured, Trim(content)) { Usage = usage, PublicContent = publicContent, ProviderIds = result.ProviderIds };
         }
         catch (JsonException) { return new(false, "AI 返回不是有效的 JSON。", null, null)

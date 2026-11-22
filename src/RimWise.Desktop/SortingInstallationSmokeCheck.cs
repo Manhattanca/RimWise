@@ -3,6 +3,8 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Threading;
 using RimWise.Core;
 using RimWise.Desktop.Presentation;
 using RimWise.Desktop.Views;
@@ -83,6 +85,82 @@ internal static class SortingInstallationSmokeCheck
         }
         finally { panel.Close(); }
 
+        // A schema error still has a confirmed identity; an unreadable whole document
+        // must retain unresolved original tokens rather than guessing a directory.
+        var brokenAbout = Path.Combine(mods, "sample.b", "About", "About.xml");
+        File.WriteAllText(brokenAbout, "<ModMetaData><name>读取异常样例</name><packageId>sample.b</packageId>"
+            + "<modDependencies><li><displayName>缺少标识</displayName></li></modDependencies></ModMetaData>");
+        Load("sample.a", "sample.b");
+        panel = new AiSortingWindow(vm, root, gamePaths: () => paths) { Owner = main };
+        try
+        {
+            var notices = 0;
+            panel.MetadataReadNotice = messages => notices += messages.Count;
+            panel.Show();
+            var ownedWindowsBeforeWarning = main.OwnedWindows.Count;
+            await panel.PrepareSortingInstallationsAsync(default, reset: true);
+            Check(Order().SequenceEqual(["sample.a", "sample.b"]) && notices == 1, "单项读取异常独立提示且仍保留原排序参加测试");
+            Check(vm.CurrentCatalogue!.Resolve("sample.b", new(1, 7)).UniqueInstallation is { Metadata: null, PackageId: "sample.b" },
+                "读取失败仅保留核对过的身份，不复用或伪造依赖");
+            Check(panel.MetadataReadWarning.Visibility == Visibility.Visible && panel.ResponseText.Text.Contains("读取记录")
+                && panel.ResponseText.Text.Contains(brokenAbout.Replace("\\About\\About.xml", "")), "独立警告提供异常位置及查看读取记录指引");
+            var readIssuesButton = panel.MetadataReadWarning.Children.OfType<Button>().Single();
+            panel.UpdateLayout();
+            readIssuesButton.BringIntoView();
+            await panel.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            panel.UpdateLayout();
+            var buttonBounds = readIssuesButton.TransformToAncestor(panel.StatusScroll).TransformBounds(
+                new Rect(new Point(), readIssuesButton.RenderSize));
+            Check(readIssuesButton.IsVisible && readIssuesButton.IsEnabled && readIssuesButton.ActualWidth > 0
+                && buttonBounds.Top >= -1 && buttonBounds.Bottom <= panel.StatusScroll.ActualHeight + 1,
+                "读取异常按钮实际可见且在滚动视口内可操作");
+            var readIssuesOpened = 0;
+            panel.OpenReadIssues = () => readIssuesOpened++;
+            readIssuesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(readIssuesOpened == 1 && main.IsEnabled && panel.IsEnabled
+                && main.OwnedWindows.Count == ownedWindowsBeforeWarning,
+                "读取异常仅非模态提醒，查看按钮可调用且不新增确认窗口");
+            var warningPreview = Path.Combine(output, "读取异常提示.png");
+            PrototypeSmokeCheck.SavePreview(panel, warningPreview);
+            Check(new FileInfo(warningPreview).Length > 0, "读取异常可见提示已保存桌面预览");
+            File.WriteAllText(brokenAbout, "<ModMetaData>");
+            await panel.PrepareSortingInstallationsAsync(default, reset: true);
+            Check(Order().Contains("sample.b") && vm.CurrentCatalogue.Resolve("sample.b", new(1, 7)).UniqueInstallation?.Metadata is null,
+                "完整XML无法读取时仅沿用同安装身份，不误当未安装");
+            // Drop history deliberately: a fresh scan cannot bind the corrupt directory.
+            vm.ApplyScan(new ModScanner().Scan(paths, inspectContent: false), observeActivity: false);
+            await panel.PrepareSortingInstallationsAsync(default, reset: true);
+            Check(Order().Contains("sample.b") && vm.CurrentCatalogue!.IsUnverifiedOrderIdentifier("sample.b")
+                && vm.CurrentCatalogue.Resolve("sample.b", new(1, 7)).Candidates.Count == 0, "全新未知归属项只透传原标识，不伪造目录或提前剔除");
+        }
+        finally { panel.Close(); }
+        // Offline sorting has no runtime evidence and must never turn a read warning into removal authority.
+        new AutomaticSortingPreferencesStore(root).SaveMode("offline", true);
+        Load("sample.a", "sample.b");
+        var offlineOrder = Order();
+        var offlineConfig = Path.Combine(root, "ModsConfig.xml");
+        var offlineBytes = Encoding.UTF8.GetBytes("synthetic configuration must remain untouched");
+        File.WriteAllBytes(offlineConfig, offlineBytes);
+        panel = new AiSortingWindow(vm, root, gamePaths: () => paths) { Owner = main };
+        string? readFailureOfflineNotice = null;
+        var offlineSucceeded = false;
+        panel.OfflineResultNotice = (message, succeeded) => { readFailureOfflineNotice = message; offlineSucceeded = succeeded; };
+        try
+        {
+            await panel.StartOfflineAsync();
+            Check(offlineSucceeded && vm.ScanIssues.Any(issue => issue.Diagnostic.Code == "MetadataUnreadable"),
+                "离线排序容忍单项元数据读取失败并正常完成");
+            Check(Order().SequenceEqual(offlineOrder) && Order().Contains("sample.b"),
+                "离线读取异常不阻断且不删除异常项");
+            Check(readFailureOfflineNotice?.Contains("未进行游戏测试，不代表运行时无红字") == true
+                && !readFailureOfflineNotice.Contains("已从排序剔除") && !readFailureOfflineNotice.Contains("本轮测试无红字"),
+                "离线结算明确未游戏验证，不误报读取异常已剔除或运行无错");
+            Check(File.ReadAllBytes(offlineConfig).SequenceEqual(offlineBytes) && File.Exists(brokenAbout),
+                "离线读取异常保留安装文件及原配置，不自动保存");
+        }
+        finally { panel.Close(); }
+        File.WriteAllText(brokenAbout, "<ModMetaData><name>样例b</name><packageId>sample.b</packageId></ModMetaData>");
+
         Load("sample.copy_steam");
         var metadata = new ModMetadata("别名样例", "test", "sample.copy", ["1.7"], "", ModRequirements.Empty, false);
         var local = new ModInstallation(Path.Combine(root, "local"), "local", ModSource.Local, "", metadata, []);
@@ -117,6 +195,7 @@ internal static class SortingInstallationSmokeCheck
             Check(panel.SummaryText.Text.Contains("模组处理汇总"), "取消与完成路径均保留处理汇总界面");
         }
         finally { panel.Close(); }
+        await MetadataReadFailurePublicationSmokeCheck.RunAsync(main, output, Check);
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new { Passed = checks.Count, Checks = checks }, new JsonSerializerOptions { WriteIndented = true }));
     }
 }

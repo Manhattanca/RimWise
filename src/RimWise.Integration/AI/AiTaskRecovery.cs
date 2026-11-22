@@ -101,6 +101,8 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
         {
             if (trial is null) throw new InvalidDataException("临时试排除记录缺失。");
             trial.Validate();
+            if (trial.ReadFailureRemoval && Limits?.ReadFailureTrialsEnabled != true)
+                throw new InvalidDataException("读取异常排除缺少本任务授权。");
             if (trial.Attempt < lastTrialAttempt || trial.Attempt > Attempts
                 || trial.RemovedIds.Any(id => !trialRemoved.Add(id)))
                 throw new InvalidDataException("临时试排除轮次或移出项重复。");

@@ -275,7 +275,7 @@
                             </WrapPanel>
                             <TextBlock x:Name="AvailableCountText" Text="{Binding AvailableCountLabel}" Foreground="{DynamicResource MutedBrush}" Margin="10,6,0,6" VerticalAlignment="Center" />
                         </WrapPanel>
-                        <Expander DockPanel.Dock="Bottom" Header="{Binding ScanIssuesLabel}" MaxHeight="140" Margin="0,8,0,0"
+                        <Expander x:Name="ScanIssuesExpander" DockPanel.Dock="Bottom" Header="{Binding ScanIssuesLabel}" MaxHeight="140" Margin="0,8,0,0"
                                   Visibility="{Binding HasScanIssues, Converter={StaticResource BooleanVisibility}}">
                             <DataGrid Style="{StaticResource ModGrid}" ItemsSource="{Binding ScanIssues}" RowHeight="NaN">
                                 <DataGrid.Columns><DataGridTextColumn Header="读取记录" Binding="{Binding Message}" Width="*" ElementStyle="{StaticResource IssueMessage}" /></DataGrid.Columns>

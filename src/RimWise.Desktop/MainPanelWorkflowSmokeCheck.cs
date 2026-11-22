@@ -45,6 +45,7 @@ internal static class MainPanelWorkflowSmokeCheck
             checks.Add(message);
             File.WriteAllText(Path.Combine(output, "progress.json"), JsonSerializer.Serialize(checks));
         }
+        await CheckNavigationFocus(main, output, Check);
         foreach (var (address, expected) in new[]
         {
             ("https://synthetic.invalid", "https://synthetic.invalid/v1/chat/completions"),
@@ -207,6 +208,61 @@ internal static class MainPanelWorkflowSmokeCheck
             "快速往返页签后自动排序动画归位，与游戏日志共用滑动动画且不弹出排序窗口");
         main.ViewModel.MarkExported();
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new { passed = checks.Count, checks }));
+    }
+
+    private static async Task CheckNavigationFocus(MainWindow main, string output, Action<bool, string> check)
+    {
+        var style = (Style)main.FindResource("NavigationTab");
+        foreach (var tab in new[] { main.ModsPageTab, main.AiSortingPageTab, main.LogsPageTab, main.MarketPageTab })
+            check(ReferenceEquals(tab.Style, style) && tab.FocusVisualStyle is null && tab.Focusable && tab.IsTabStop,
+                $"{tab.Content}：移除系统虚线焦点框，保留键盘焦点与导航");
+
+        var tabs = new[] { "模组排序", "自动排序", "游戏日志", "排序市场（测试）" }
+            .Select(label => new RadioButton { Content = label, Style = style, GroupName = "SyntheticFocus" }).ToArray();
+        tabs[0].IsChecked = true;
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var tab in tabs) panel.Children.Add(tab);
+        var strip = new NavigationTabStrip();
+        strip.Children.Add(panel);
+        // Isolated component fixture: no actual page handlers, market request or game operation.
+        var fixture = new Window { Owner = main, Content = strip, Width = 640, Height = 120,
+            ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        try
+        {
+            fixture.Show();
+            foreach (var theme in new[] { ThemePreference.Light, ThemePreference.Dark })
+            {
+                ((App)Application.Current).Themes.Select(theme, save: false);
+                fixture.UpdateLayout();
+                var sizes = tabs.Select(tab => tab.RenderSize).ToArray();
+                for (var i = 0; i < tabs.Length; i++)
+                {
+                    Keyboard.Focus(tabs[i]);
+                    fixture.UpdateLayout();
+                    var chrome = (Border)tabs[i].Template.FindName("Tab", tabs[i]);
+                    check(tabs[i].IsKeyboardFocused && tabs[i].FocusVisualStyle is null
+                        && Equals(chrome.Background, tabs[i].FindResource("SelectionBrush")),
+                        $"{theme}/{tabs[i].Content}：无虚线，键盘焦点使用主题背景");
+                    tabs[i].RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(fixture),
+                        Environment.TickCount, Key.Space) { RoutedEvent = Keyboard.KeyDownEvent });
+                    tabs[i].RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(fixture),
+                        Environment.TickCount, Key.Space) { RoutedEvent = Keyboard.KeyUpEvent });
+                    check(tabs[i].IsChecked == true && tabs.Count(tab => tab.IsChecked == true) == 1,
+                        $"{theme}/{tabs[i].Content}：空格键可选择且保持单选");
+                    check(tabs.Select(tab => tab.RenderSize).SequenceEqual(sizes),
+                        $"{theme}/{tabs[i].Content}：焦点与选择不改变页签尺寸");
+                    await fixture.Dispatcher.InvokeAsync(fixture.UpdateLayout, DispatcherPriority.ApplicationIdle);
+                    PrototypeSmokeCheck.SavePreview(fixture, Path.Combine(output, $"{theme}-页签焦点-{i}.png"));
+                }
+                check(tabs[3].MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous))
+                    && tabs.Take(3).Any(tab => tab.IsKeyboardFocused), $"{theme}：保留反向键盘导航");
+            }
+        }
+        finally
+        {
+            fixture.Close();
+            ((App)Application.Current).Themes.Select(ThemePreference.Light, save: false);
+        }
     }
 
     private static async Task CheckModelFailure(MainWindow main, string output, Action<bool, string> check)

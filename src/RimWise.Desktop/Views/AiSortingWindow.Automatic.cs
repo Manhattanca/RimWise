@@ -35,7 +35,7 @@ public partial class AiSortingWindow
             throw new ArgumentException("测试次数限制必须是大于零的整数。");
         if (TokenLimitToggle.IsChecked == true && (!int.TryParse(BudgetInput.Text, out budget) || budget < 100))
             throw new ArgumentException("token 用量限制必须是至少 100 的整数。");
-        return new(attempts, budget, OutputTokensPerRequest: 16384) { ExpandOutputBudget = true,
+        return new(attempts, budget, OutputTokensPerRequest: 16384) { ExpandOutputBudget = true, ReadFailureTrialsEnabled = true,
             AttemptLimitEnabled = AttemptLimitToggle.IsChecked == true,
             TokenLimitEnabled = TokenLimitToggle.IsChecked == true, ConfirmModRemoval = ConfirmRemovalToggle.IsChecked == true };
     }
@@ -66,6 +66,8 @@ public partial class AiSortingWindow
         installationOriginalOrder = null;
         installationSelectionCommitted = false;
         installationNotices.Clear();
+        MetadataReadWarning.Visibility = Visibility.Collapsed;
+        MetadataReadWarningText.Text = "";
         trialDecisionShown=false;
         ResponseText.Text=resumeId is null ? "正在准备模型校验。\n" : "正在读取任务恢复记录。\n"; SummaryText.Text="";
         ShowDependencyReasons(null);
@@ -91,6 +93,10 @@ public partial class AiSortingWindow
             await usageRefreshTask.WaitAsync(cancellation.Token);
             if (AiClient.ConfigurationProblem(settings.Normalize()) is { } configurationProblem)
                 throw new InvalidOperationException(configurationProblem);
+            // Known root failures remain blocking, but a failed model preflight must
+            // stop before accessing game paths or changing the catalogue/order.
+            if (editor.ScanIssues.Any(i => i.Diagnostic.Code is "ScanRootUnreadable" or "ScanLimit" or "NoScanPaths"))
+                throw new IOException("模组扫描未完成，请检查安装路径与访问权限后刷新。单项读取异常不影响排序。");
             var initialLimits = resumeId is null ? ReadMaintenanceLimits() : null;
             var modelBudgetCharge = 0;
             string? checkedModelScope = null;
@@ -144,6 +150,8 @@ public partial class AiSortingWindow
             if (resumeId is null) await PrepareSortingInstallationsAsync(cancellation.Token, reset: true);
             else
             {
+                await RefreshDuplicateInstallationsAsync(cancellation.Token);
+                RecordMetadataReadNotices();
                 automaticCopies = new(dataDirectory, gamePaths(), editor.EffectiveGameVersion!);
                 installationPaths = gamePaths();
                 automaticCopies.AttachForRecovery(editor.CurrentCatalogue!, editor.Rows.Select(r => r.PackageId).ToArray(), cancellation.Token);
@@ -288,7 +296,7 @@ public partial class AiSortingWindow
         {
             AcceptedList.ItemsSource = order.Select((id, i) =>
                 $"{i + 1}. {ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id)}").ToArray();
-            SummaryText.Text = $"当前临时测试顺序共 {order.Count} 项，尚未保存到个人排序。测试可临时排除模组；最终移出遵循确认设置。";
+            SummaryText.Text = $"当前临时测试顺序共 {order.Count} 项，尚未保存到个人排序。普通试排除项遵循确认设置；读取失败且有本轮游戏关联报错的项按安全策略排除。";
         }
         TokenText.Text = $"本任务已报告 {progress.ReportedTokens:N0} token · 第 {progress.Attempt} 次测试";
     }
@@ -398,7 +406,10 @@ public partial class AiSortingWindow
         string Name(string id) => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id);
         RejectedList.ItemsSource=result.Subscriptions.Select(d=>$"已记录缺失模组／前置订阅：{Name(d.PackageId)}")
             .Concat(result.Maintenance.ConflictApprovals.Select(a=>"已记录移出排序："+string.Join("、",a.RemovedIds.Select(Name))+"（安装文件保留）"))
-            .Concat(result.Maintenance.TrialExclusions.Select(t=>$"第 {t.Attempt} 轮临时试排除："+string.Join("、",t.RemovedIds.Select(Name))))
+            .Concat(result.Maintenance.TrialExclusions.Select(t=>$"第 {t.Attempt} 轮" + (t.ReadFailureRemoval ? "读取异常定向排除：" : "临时试排除：")
+                + string.Join("、",t.RemovedIds.Select(Name))
+                + (t.ReadFailureRemoval ? "。" + (result.CandidateApplied || result.LastOrderKept
+                    ? MetadataReadFailureTrials.ReadFailureRemovalReason : "读取失败且本轮游戏报错有关联；仅为排除测试记录，尚未保存剔除。安装文件保留。") : "")))
             .Concat(installationNotices).ToArray();
         SummaryText.Text=result.CandidateApplied && result.Maintenance.ExistingErrorsOnly ? "新增 Mod 已定位并保存；完整对照测试仅重现已有错误。原有红字仍然存在，并非全部无红。"
             : result.CandidateApplied && result.Maintenance.HasVulkanConfigurationWarning ? "已排序完成并保存。除已忽略的 Vulkan 配置读取错误外，本轮地图生成与短时运行测试未发现其他错误；未覆盖游戏内全部内容。"
@@ -407,8 +418,8 @@ public partial class AiSortingWindow
         if (result.LastOrderDecisionRecorded) SummaryText.Text = result.LastOrderKept
             ? "已保留最后测试顺序；该组合尚未验证通过，可在主界面撤销。" : "已恢复原排序，未保留本次调整。";
         if (keptTrialMods) SummaryText.Text = result.Maintenance.Outcome == MaintenanceOutcome.Passed
-            ? "已保留模组和排序调整。通过验证的是移除候选后的组合，保留全部模组后仍可能出现原有报错。"
-            : "已保留模组和排序调整；该组合尚未验证通过，仍可能出现原有报错。";
+            ? "已保留普通试排除模组和排序调整。通过验证的是移除候选后的组合，放回普通试排除项后仍可能出现原有报错。"
+            : "已保留普通试排除模组和排序调整；该组合尚未验证通过，仍可能出现原有报错。";
         if (result.Maintenance.Analysis is { Length: > 0 } analysis)
             SummaryText.Text += "\n\nAI 分析：\n" + analysis;
         if (result.Maintenance.HasWarnings)
@@ -424,6 +435,8 @@ public partial class AiSortingWindow
                     : result.Maintenance.OriginalRestored ? "原排序已恢复。" : "尚未确认恢复，请核对恢复记录。")
                 + "\n以下仅为排查记录：\n" + TrialDescription(result.Maintenance);
         SummaryText.Text += InstallationSummary;
+        SummaryText.Text += ReadFailureResultNotice(result,
+            id => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id));
     }
 
     internal static string? CompletionNotice(AutomaticMaintenanceResult result) =>
@@ -435,7 +448,8 @@ public partial class AiSortingWindow
 
     internal void ShowTerminalNotice(AutomaticMaintenanceResult result)
     {
-        var notice = TerminalNotice(result, trialDecisionShown);
+        var notice = TerminalNotice(result, trialDecisionShown,
+            id => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id));
         if (notice is null) return;
         DiagnosticEventLog.Current?.Record("automatic-sorting", "result-dialog", notice.Value.Title);
         if (CompletionNotice(result) is not null && !result.Maintenance.ExistingErrorsOnly && installationNotices.Count == 0)
@@ -445,10 +459,23 @@ public partial class AiSortingWindow
             MessageDialog.Show(DialogOwner, notice.Value.Text + InstallationSummary, notice.Value.Title, MessageBoxButton.OK, notice.Value.Image);
     }
 
+    internal static string ReadFailureResultNotice(AutomaticMaintenanceResult result, Func<string, string>? name = null)
+    {
+        var trials = result.Maintenance.TrialExclusions.Where(t => t.ReadFailureRemoval).ToArray();
+        if (trials.Length == 0) return "";
+        name ??= id => id;
+        var saved = result.CandidateApplied || result.LastOrderKept;
+        return "\n\n读取异常处理：\n" + string.Join("\n\n", trials.Select(t => name(t.SelectedId)
+            + "：" + (saved ? MetadataReadFailureTrials.ReadFailureRemovalReason
+                : "排序软件读取失败，且本轮游戏报错与该模组有关，已作定向排除测试；尚未保存剔除，当前排序请以恢复记录为准。安装文件保留。")
+            + (t.RemovedIds.Length > 1 ? "\n连带依赖项：" + string.Join("、", t.RemovedIds
+                .Where(id => !id.Equals(t.SelectedId, StringComparison.OrdinalIgnoreCase)).Select(name)) : "")));
+    }
+
     // A trial decision already reports the passing reduced combination. Only suppress
     // its duplicate after publication succeeds; a failed save still needs a failure notice.
     internal static (string Title, string Text, MessageBoxImage Image)? TerminalNotice(
-        AutomaticMaintenanceResult result, bool decisionShown)
+        AutomaticMaintenanceResult result, bool decisionShown, Func<string, string>? name = null)
     {
         var maintenance = result.Maintenance;
         if (maintenance.Outcome == MaintenanceOutcome.Cancelled) return null;
@@ -457,16 +484,17 @@ public partial class AiSortingWindow
             if (decisionShown && maintenance.TrialDecisionRecorded) return null;
             var kept = maintenance.TrialDecisionRecorded && !maintenance.TrialRemovalsApproved;
             return (kept ? "排序已保存" : "自动排序完成", maintenance.Message
-                + (kept ? "\n\n保留全部模组的组合未验证通过，仍可能出现原有报错。"
+                + (kept ? "\n\n保留普通试排除模组的组合未验证通过，仍可能出现原有报错。"
                     : maintenance.HasVulkanConfigurationWarning ? "\n\n" + AiRuntimeContext.VulkanWarningText
-                    : maintenance.HasWarnings && !maintenance.ExistingErrorsOnly ? "\n\n仅有黄字或白字不影响排序成功。" : ""), MessageBoxImage.Information);
+                    : maintenance.HasWarnings && !maintenance.ExistingErrorsOnly ? "\n\n仅有黄字或白字不影响排序成功。" : "")
+                + ReadFailureResultNotice(result, name), MessageBoxImage.Information);
         }
         var details = maintenance.StartupFailure?.DisplayText;
         var text = maintenance.Message
             + (string.IsNullOrWhiteSpace(details) ? "" : "\n\n" + details);
         if (maintenance.LogPaths.Count > 0)
             text += "\n\n本轮日志：\n" + string.Join("\n", maintenance.LogPaths.Select(StoredEvidence.Resolve).Distinct());
-        text += "\n\n可在设置中导出诊断日志。";
+        text += ReadFailureResultNotice(result, name) + "\n\n可在设置中导出诊断日志。";
         return (maintenance.ReplyFailure != AiReplyFailure.None ? "AI 错误，自动排序已停止"
             : maintenance.Outcome == MaintenanceOutcome.Failed ? "自动排序失败" : "自动排序未完成", text, MessageBoxImage.Warning);
     }
@@ -497,14 +525,19 @@ public partial class AiSortingWindow
     private Task<bool> ConfirmTrialsAsync(MaintenanceResult result, CancellationToken token)
     {
         if (closed || token.IsCancellationRequested) return Task.FromResult(false);
-        var ids = result.TrialExclusions.SelectMany(t => t.RemovedIds).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var selected = result.TrialExclusions.Select(t => t.SelectedId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var ordinaryTrials = result.TrialExclusions.Where(t => !t.ReadFailureRemoval).ToArray();
+        var ids = ordinaryTrials.SelectMany(t => t.RemovedIds).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var selected = ordinaryTrials.Select(t => t.SelectedId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var rows = ids.Select(id =>
         {
             return new TrialRemovalRow(ResolveConflictRow(id), selected.Contains(id) ? "试排除项" : "连带依赖项");
         }).OrderBy(r => r.Mod.Index == 0 ? int.MaxValue : r.Mod.Index).ToArray();
         var dialog = new TrialExclusionWindow(rows, result.HasWarnings, editor.ShowModBadgeIcons, result.ExistingErrorsOnly,
             result.HasVulkanConfigurationWarning) { Owner = DialogOwner };
+        var readFailures = result.TrialExclusions.Where(t => t.ReadFailureRemoval).ToArray();
+        if (readFailures.Length > 0)
+            dialog.ChoiceText.Text += "\n读取失败且本轮游戏关联报错的项按安全策略单独剔除，不受此处普通试排除选择影响："
+                + string.Join("、", readFailures.Select(t => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, t.SelectedId)));
         using var registration = token.Register(() => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (dialog.IsVisible) dialog.Close();
@@ -528,6 +561,7 @@ public partial class AiSortingWindow
     {
         string Name(string id) => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id);
         return string.Join("\n\n", result.TrialExclusions.Select(t => $"第 {t.Attempt} 轮：" + Name(t.SelectedId)
+            + (t.ReadFailureRemoval ? "\n" + MetadataReadFailureTrials.ReadFailureRemovalReason : "")
             + (t.RemovedIds.Length > 1 ? "\n连带依赖项：" + string.Join("、", t.RemovedIds.Where(id => id != t.SelectedId).Select(Name)) : "")));
     }
 }

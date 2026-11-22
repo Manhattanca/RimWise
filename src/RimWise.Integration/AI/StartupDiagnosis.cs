@@ -15,13 +15,14 @@ public sealed record AiStartupContext(string Stage, bool HasLog, bool CompleteCa
         "MissingConfiguredFaction", "MissingRequiredFaction", "MissingPlayerOrFactions", "InvalidOrDuplicateFaction", "SettlementHasUnknownFaction",
         "ExceptionType", "StackMethod", "PatchTarget", "PatchOwner", "NativeModule", "NativeAccessViolation",
         "SourceAvailable", "SourceUnavailable", "XmlParent", "XmlDefinition", "XmlWorker", "ObservedGameVersion",
-        "TesterDetectedLogErrors", "TesterStoppedProcess", "StoppedBeforeHelperReady", "MainMenuObserved", "FactionsObserved", "ModsResetAfterLoadFailure"];
+        "TesterDetectedLogErrors", "TesterStoppedProcess", "StoppedBeforeHelperReady", "MainMenuObserved", "FactionsObserved", "ModsResetAfterLoadFailure", "TestOrderMismatch"];
 
     public bool EnvironmentFailure => Evidence.Any(e => e.Code is "GraphicsDriverUnavailable"
         or "GraphicsInitializationFailed" or "GraphicsManifestUnavailable" or "OutOfMemory" or "AccessDenied");
     public bool BoundedErrorCaptureVerified { get; init; }
     public bool CanAdjustOrder => HasLog && (CompleteCapture && Stage != "LogLimit"
-        || Stage == "LogLimit" && BoundedErrorCaptureVerified) && !EnvironmentFailure;
+        || Stage == "LogLimit" && BoundedErrorCaptureVerified) && !EnvironmentFailure
+        && !Evidence.Any(e => e.Code == "TestOrderMismatch");
 
     internal AiStartupContext CopyValidated()
     {
@@ -68,6 +69,7 @@ public sealed record StartupFailureDetails(AiStartupContext Context, IReadOnlyLi
     {
         Context.Evidence.Any(e => e.Code == "TesterDetectedLogErrors")
             ? "测试器检测到日志错误后结束了本轮测试；这不代表游戏自行崩溃。" : "",
+        Context.Evidence.Any(e => e.Code == "TestOrderMismatch") ? "测试校验：" + LocalReason() : "",
         Observations.Count > 0 ? "本轮捕获的具体错误：" + Environment.NewLine + string.Join(Environment.NewLine, Observations) : "",
         "启动排障：" + (Diagnosis?.Reason ?? LocalReason()),
         Diagnosis is null ? "尚无经过确认的 AI 诊断结论。" : "AI 分析仅供排查，尚未证明根因。",
@@ -77,7 +79,9 @@ public sealed record StartupFailureDetails(AiStartupContext Context, IReadOnlyLi
         HelpReminder
     }.Where(s => s.Length > 0));
 
-    public string LocalReason() => Context.Evidence.Any(e => e.Code == "GraphicsManifestUnavailable")
+    public string LocalReason() => Context.Evidence.Any(e => e.Code == "TestOrderMismatch")
+        ? "游戏实际加载顺序与本轮提交测试的顺序不一致，不能用这份日志验证候选排序。已停止自动调整并保留原排序；请查看测试清单及实际加载顺序记录，排查游戏或模组加载器是否改动了顺序。"
+        : Context.Evidence.Any(e => e.Code == "GraphicsManifestUnavailable")
         ? "本轮剩余错误仅为 Vulkan 无法读取已登记的图形层或驱动 JSON 配置，调整模组顺序无法修复。请修复或重新安装日志中对应的覆盖层／驱动软件；原排序与完整日志已保留。"
         : Context.EnvironmentFailure
         ? "本轮记录包含图形驱动、资源或访问权限相关错误，自动排序已停止。"

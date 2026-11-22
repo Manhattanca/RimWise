@@ -12,7 +12,7 @@ public sealed record StructuredAiResponse(
     public AiStartupDiagnosis? StartupDiagnosis { get; init; }
     public static StructuredAiResponse Parse(string json) => Parse(json, allowQuotedIntegers: false);
 
-    internal static StructuredAiResponse Parse(string json, bool allowQuotedIntegers)
+    internal static StructuredAiResponse Parse(string json, bool allowQuotedIntegers, bool allowIdenticalDisplaySuggestions = false)
     {
         if (json.Length > 1024 * 1024) throw new InvalidDataException("AI 响应过大。");
         using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 16, CommentHandling = JsonCommentHandling.Disallow });
@@ -67,7 +67,7 @@ public sealed record StructuredAiResponse(
         if (root.TryGetProperty("startupDiagnosis", out var startup) && startup.ValueKind != JsonValueKind.Null)
         {
             if (startup.ValueKind != JsonValueKind.Object) throw new InvalidDataException("启动诊断必须是对象。");
-            ValidateFields(startup, ["category", "reason", "suggestions"]);
+            ValidateFields(startup, ["category", "reason", "suggestions"], allowIdenticalDisplaySuggestions);
             if (!startup.TryGetProperty("suggestions", out var suggestions) || suggestions.ValueKind != JsonValueKind.Array
                 || suggestions.GetArrayLength() > 8 || suggestions.EnumerateArray().Any(s => s.ValueKind != JsonValueKind.String))
                 throw new InvalidDataException("启动诊断建议必须为最多 8 项的文字数组。");
@@ -77,12 +77,27 @@ public sealed record StructuredAiResponse(
         return new StructuredAiResponse(schema, summary, actions, warnings) { Conflicts = conflicts, StartupDiagnosis = diagnosis };
     }
 
-    private static void ValidateFields(JsonElement element, string[] allowed)
+    private static void ValidateFields(JsonElement element, string[] allowed, bool allowIdenticalDisplaySuggestions = false)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        JsonElement? firstSuggestions = null;
         foreach (var property in element.EnumerateObject())
-            if (!allowed.Contains(property.Name, StringComparer.Ordinal) || !seen.Add(property.Name))
+        {
+            if (!allowed.Contains(property.Name, StringComparer.Ordinal))
                 throw new InvalidDataException("AI 响应包含未知或重复字段。");
+            if (!seen.Add(property.Name))
+            {
+                // A measured DeepSeek relay defect repeats this display-only array
+                // verbatim. Equal text is idempotent; never coerce control fields,
+                // accept divergent values, or derive an action from suggestions.
+                if (!allowIdenticalDisplaySuggestions || property.Name != "suggestions"
+                    || firstSuggestions is not { } first || property.Value.ValueKind != JsonValueKind.Array
+                    || property.Value.EnumerateArray().Any(v => v.ValueKind != JsonValueKind.String)
+                    || !JsonElement.DeepEquals(first, property.Value))
+                    throw new InvalidDataException("AI 响应包含未知或重复字段。");
+            }
+            else if (property.Name == "suggestions") firstSuggestions = property.Value;
+        }
     }
     private static string ReadString(JsonElement element, string name) => ReadNullableString(element, name) ?? string.Empty;
     private static string? ReadNullableString(JsonElement element, string name)

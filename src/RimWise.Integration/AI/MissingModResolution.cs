@@ -12,7 +12,8 @@ public static class MissingModResolution
         foreach (var id in expandedOrder)
         {
             var match = catalogue.Resolve(id, version);
-            if (match.Candidates.Count == 0) missing.Add(id);
+            if (match.Candidates.Count == 0 && !catalogue.IsUnverifiedOrderIdentifier(id)) missing.Add(id);
+            else if (match.Candidates.Count == 0) continue;
             else if (match.UniqueInstallation is null) throw new InvalidDataException(DuplicateInstallations.Describe(match));
         }
         if (missing.Count == 0) return null;

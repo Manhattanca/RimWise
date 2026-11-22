@@ -1,4 +1,4 @@
-using RimWise.Core;
+﻿using RimWise.Core;
 using RimWise.Integration.AI;
 using RimWise.Integration.Game;
 using System.Net;
@@ -22,6 +22,251 @@ internal static class TrialExclusionChecks
         MaintenanceResult Run(Session game, IAiClient client, string? root = null, string? resume = null, CancellationToken token = default,
             MaintenanceLimits? limits = null, string[]? retained = null) => new LevelOneMaintenance(client, new(root ?? Root()), game, resume)
                 .RunAsync(Request() with { RetainedMods = retained ?? [] }, catalogue, [], limits ?? new(), null, token).GetAwaiter().GetResult();
+
+        ModInstallation Unreadable(string id, string[]? deps = null) => Mod(id, deps) with
+            { Diagnostics = [new("MetadataUnreadable", DiagnosticSeverity.Warning, "synthetic unreadable")] };
+        ModCatalogue ReadCatalogue(params ModInstallation[] mods) => new(mods);
+        IReadOnlyList<TrialExclusion> ReadCandidates(ModCatalogue c, MaintenanceGameReport report,
+            string[]? order = null, string[]? retained = null) => MetadataReadFailureTrials.Candidates(
+                report, c, order ?? Original, retained ?? [], Version, 1);
+        MaintenanceResult ReadRun(ModCatalogue c, Session game, Client client, bool enabled = true,
+            string? root = null, string? resume = null, MaintenanceLimits? limits = null) =>
+            new LevelOneMaintenance(client, new(root ?? Root()), game, resume, testOriginalFirst: true)
+                .RunAsync(Request(), c, [], limits ?? new() { ReadFailureTrialsEnabled = enabled }, null, default)
+                .GetAwaiter().GetResult();
+
+        check("read failure marker defaults preserve old JSON and authorization", () =>
+        {
+            var trial = TrialExclusionPlanning.Select(Error("trial.a"), catalogue, Original, [], Version, 1)!;
+            Assert(!new MaintenanceLimits().ReadFailureTrialsEnabled && !trial.ReadFailureRemoval);
+            Assert(!JsonSerializer.Serialize(trial).Contains("ReadFailureRemoval"));
+            Assert(!JsonSerializer.Deserialize<MaintenanceLimits>("{}")!.ReadFailureTrialsEnabled);
+            Assert(JsonSerializer.Deserialize<TrialExclusion>(JsonSerializer.Serialize(trial)) is { ReadFailureRemoval: false });
+        });
+        check("read failure requires this round attributed red facts and complete capture", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b"), Mod("trial.c"));
+            foreach (var report in new[] { new MaintenanceGameReport(true, []), Error("trial.b"),
+                Error("trial.a") with { Errors = [] }, Error("trial.a") with { DiagnosticFacts = [] },
+                Error("trial.a") with { CanDiagnose = false },
+                Error("trial.a") with { StartupFailure = new(new("ProbeCompleted", false, true, [new("GraphicsDriverUnavailable")]), []) },
+                Error("trial.a") with { StartupFailure = new(new("ProbeCompleted", false, true, [new("TestOrderMismatch")]), []) } })
+                Assert(ReadCandidates(c, report).Count == 0);
+            Assert(ReadCandidates(c, Error("trial.a")).Single() is { ReadFailureRemoval: true, SelectedId: "trial.a" });
+            Assert(ReadCandidates(catalogue, Error("trial.a")).Count == 0);
+        });
+        check("read failure full original precedes single directed unpaid retest", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b"), Mod("trial.c"));
+            var game = new Session(c, Original) { Report = ids => ids.Contains("trial.a") ? Error("trial.a") : new(true, []) };
+            var client = new Client(); var result = ReadRun(c, game, client);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && client.Calls == 0 && result.Attempts == 2
+                && result.TrialExclusions.Single().ReadFailureRemoval && result.OriginalRestored && !game.Accepted);
+            Assert(!result.Message.Contains("需由玩家确认") && result.Message.Contains("按已记录授权结算"));
+            Assert(game.Tested[0].SequenceEqual(Original) && game.Tested[1].SequenceEqual(["trial.b", "trial.c"]));
+            var trial = result.TrialExclusions.Single();
+            Assert(TrialExclusionPlanning.Plan(Original, ["trial.b", "trial.c"], c, [], Version, [], [trial])
+                .Notices.Single().Contains(MetadataReadFailureTrials.ReadFailureRemovalReason));
+            Throws(() => TrialExclusionPlanning.Replay(catalogue, Original, [], Version, [trial]));
+        });
+        check("two read failures follow each round attribution without batching or paid AI", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Unreadable("trial.b"), Mod("trial.c"));
+            var game = new Session(c, Original) { Report = ids => ids.Contains("trial.a") ? Error("trial.a")
+                : ids.Contains("trial.b") ? Error("trial.b") : new(true, []) };
+            var client = new Client(); var result = ReadRun(c, game, client);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && client.Calls == 0 && result.Attempts == 3
+                && result.TrialExclusions.Count == 2 && result.TrialExclusions.All(t => t.ReadFailureRemoval));
+            Assert(game.Tested[0].SequenceEqual(Original) && game.Tested[1].SequenceEqual(["trial.b", "trial.c"])
+                && game.Tested[2].SequenceEqual(["trial.c"]));
+            Assert(result.TrialExclusions[0].RemovedIds.SequenceEqual(["trial.a"])
+                && result.TrialExclusions[1].RemovedIds.SequenceEqual(["trial.b"]));
+            var first = result.TrialExclusions[0];
+            Assert(TrialExclusionPlanning.Plan(Original, ["trial.b", "trial.c"], c, [], Version, [], [first])
+                .Notices.Contains(MetadataReadFailureTrials.UnknownDependenciesNotice));
+            Assert(ReadCandidates(c, Error("trial.a"), retained: ["trial.b"]).Count == 0);
+        });
+        foreach (var readFailureFirst in new[] { false, true })
+            check("mixed retained trials " + (readFailureFirst ? "read failure then ordinary" : "ordinary then read failure")
+                + " restore only ordinary dependents using complete historical authority", () =>
+            {
+                string[] original = ["trial.a", "trial.a.child", "trial.b", "trial.b.child", "trial.c", "trial.d"];
+                var c = ReadCatalogue(Mod("trial.a"), Mod("trial.a.child", ["trial.a"]),
+                    Unreadable("trial.b"), Mod("trial.b.child", ["trial.b"]), Mod("trial.c"), Mod("trial.d"));
+                var current = original.ToArray();
+                var history = new List<TrialExclusion>();
+                for (var index = 0; index < 2; index++)
+                {
+                    var readFailure = (index == 0) == readFailureFirst;
+                    var trial = readFailure
+                        ? MetadataReadFailureTrials.Candidates(Error("trial.b"), c, current, [], Version, index + 1).Single()
+                        : TrialExclusionPlanning.Candidates(Error("trial.a"), c, current, [], Version, index + 1).Single();
+                    Assert(trial.ReadFailureRemoval == readFailure && trial.TestedOrder.SequenceEqual(current));
+                    Assert(trial.RemovedIds.SequenceEqual(readFailure
+                        ? new[] { "trial.b", "trial.b.child" } : ["trial.a", "trial.a.child"]));
+                    history.Add(trial);
+                    current = current.Except(trial.RemovedIds, StringComparer.OrdinalIgnoreCase).ToArray();
+                }
+                Assert(TrialExclusionPlanning.Replay(c, original, [], Version, history).SequenceEqual(["trial.c", "trial.d"]));
+                // Keep a valid survivor reorder too. Dropping a historical trial before Replay
+                // breaks the second TestedOrder; reinserting permanent rows exhausts the queue.
+                string[] tested = ["trial.d", "trial.c"];
+                Assert(AiOrderPlanner.ConfirmedTrialOrder(original, tested, c, [], Version, [], [], history, true).CanApply);
+                var result = AiOrderPlanner.RetainedTrialOrder(original, tested, c, [], Version, [], [], history);
+                Assert(result.CanApply && result.Rejected.Count == 0 && result.Before.SequenceEqual(original),
+                    string.Join("; ", result.Rejected));
+                Assert(result.After.SequenceEqual(["trial.a", "trial.a.child", "trial.d", "trial.c"]));
+                Assert(!result.After.Contains("trial.b") && !result.After.Contains("trial.b.child")
+                    && result.After.Distinct(StringComparer.OrdinalIgnoreCase).Count() == result.After.Count);
+                Assert(result.Notices.Single().Contains(MetadataReadFailureTrials.ReadFailureRemovalReason));
+                Assert(history.Count == 2 && history[0].TestedOrder.SequenceEqual(original)
+                    && history[1].TestedOrder.SequenceEqual(original.Except(history[0].RemovedIds, StringComparer.OrdinalIgnoreCase)));
+            });
+        foreach (var readFailureFirst in new[] { false, true })
+            check("mixed trial settlement wording " + (readFailureFirst ? "read failure first" : "ordinary first"), () =>
+            {
+                var c = ReadCatalogue(Mod("trial.a"), Unreadable("trial.b"), Mod("trial.c"));
+                var game = new Session(c, Original) { Report = ids =>
+                {
+                    var first = readFailureFirst ? "trial.b" : "trial.a";
+                    var second = readFailureFirst ? "trial.a" : "trial.b";
+                    return ids.Contains(first) ? Error(first) : ids.Contains(second) ? Error(second) : new(true, []);
+                } };
+                var client = new Client();
+                var result = new LevelOneMaintenance(client, new(Root()), game, testOriginalFirst: false)
+                    .RunAsync(Request(), c, [], new() { ReadFailureTrialsEnabled = true }, null, default)
+                    .GetAwaiter().GetResult();
+                Assert(result.Outcome == MaintenanceOutcome.Passed && result.TrialExclusions.Count == 2
+                    && result.TrialExclusions[0].ReadFailureRemoval == readFailureFirst
+                    && result.TrialExclusions[1].ReadFailureRemoval != readFailureFirst && client.Calls == 1, result.Message);
+                Assert(result.Message.Contains("需由玩家确认普通试排除项是否移出")
+                    && result.Message.Contains("读取失败移出项按已记录授权结算"), result.Message);
+            });
+        check("read failure stopped settlement does not ask for ordinary trial confirmation", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b"), Mod("trial.c"));
+            var game = new Session(c, Original) { Report = ids => ids.Contains("trial.a") ? Error("trial.a") : Error("trial.c") };
+            var result = ReadRun(c, game, new Client(), limits: new(MaximumAttempts: 2) { ReadFailureTrialsEnabled = true });
+            Assert(result.Outcome == MaintenanceOutcome.Stopped && result.TrialExclusions.Single().ReadFailureRemoval
+                && result.Message.Contains("剩余组合尚未通过验证") && result.Message.Contains("按已记录授权结算")
+                && !result.Message.Contains("需由玩家确认"), result.Message);
+        });
+        check("read failure no red errors stops before AI or removal", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b"), Mod("trial.c"));
+            var game = new Session(c, Original); var client = new Client();
+            var result = ReadRun(c, game, client);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && client.Calls == 0
+                && game.Tested.Single().SequenceEqual(Original) && result.TrialExclusions.Count == 0);
+        });
+        check("read failure invalid unchanged remainder falls through to AI without local sorting", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b", ["trial.c"]), Mod("trial.c"));
+            var game = new Session(c, Original) { Report = _ => Error("trial.a") }; var client = new Client();
+            var result = ReadRun(c, game, client);
+            Assert(client.Calls == 1 && result.TrialExclusions.Count == 0 && game.Tested.Count == 1
+                && game.Tested[0].SequenceEqual(Original) && result.OriginalRestored, result.Message);
+        });
+        check("unrelated unreadable item does not block valid AI reorder", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b"), Mod("trial.c"));
+            var game = new Session(c, Original) { Report = ids => ids.SequenceEqual(Original) ? Error("trial.b") : new(true, []) };
+            var client = new Client { Actions = [new("reorder", "trial.c", 2, false, null, null)] };
+            var result = ReadRun(c, game, client);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && client.Calls == 1 && result.TrialExclusions.Count == 0
+                && game.Tested.Count == 2 && game.Tested[1].SequenceEqual(["trial.a", "trial.c", "trial.b"]), result.Message);
+        });
+        check("read failure opt in and retest attempt limits are not widened", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b"), Mod("trial.c"));
+            foreach (var limits in new[] { new MaintenanceLimits(), new MaintenanceLimits(MaximumAttempts: 1)
+                { ReadFailureTrialsEnabled = true } })
+            {
+                var game = new Session(c, Original) { Report = _ => Error("trial.a") }; var client = new Client();
+                var result = ReadRun(c, game, client, limits: limits);
+                Assert(result.TrialExclusions.Count == 0 && game.Tested.Count == 1);
+            }
+        });
+        check("read failure known dependents retain original order and all protection", () =>
+        {
+            var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b", ["trial.a"]), Mod("trial.c"));
+            var trial = ReadCandidates(c, Error("trial.a")).Single();
+            Assert(trial.RemovedIds.SequenceEqual(["trial.a", "trial.b"]));
+            Assert(ReadCandidates(c, Error("trial.a"), retained: ["trial.b"]).Count == 0);
+            Assert(ReadCandidates(c, Error("trial.a"), retained: ["trial.a"]).Count == 0);
+            var official = ReadCatalogue(Unreadable("trial.a") with { Source = ModSource.Game }, Mod("trial.b"), Mod("trial.c"));
+            Assert(ReadCandidates(official, Error("trial.a")).Count == 0);
+            var unknown = ReadCatalogue(Unreadable("trial.a"), Unreadable("trial.b") with { Metadata = null }, Mod("trial.c"));
+            Assert(ReadCandidates(unknown, Error("trial.a"), retained: ["trial.b"]).Count == 0);
+            Assert(ReadCandidates(unknown, Error("trial.a")).Single().SelectedId == "trial.a");
+            var protectedThroughDependency = ReadCatalogue(Unreadable("trial.a"),
+                Unreadable("trial.b"), Mod("trial.c", ["trial.b"]));
+            Assert(ReadCandidates(protectedThroughDependency, Error("trial.a"), retained: ["trial.c"]).Count == 0);
+            // Known dependent edges remain included even when the dependent also has a read failure.
+            var affectedChild = ReadCatalogue(Unreadable("trial.a"), Unreadable("trial.b", ["trial.a"]), Mod("trial.c"));
+            Assert(ReadCandidates(affectedChild, Error("trial.a")).Single().RemovedIds.SequenceEqual(["trial.a", "trial.b"]));
+            var game = new Session(c, Original) { Report = ids => ids.Contains("trial.a") ? Error("trial.a") : new(true, []) };
+            var client = new Client(); var result = ReadRun(c, game, client);
+            Assert(result.Outcome == MaintenanceOutcome.Passed && client.Calls == 0
+                && game.Tested[1].SequenceEqual(["trial.c"]));
+        });
+        check("opaque read failure needs the identical token and revalidates on replay", () =>
+        {
+            string[] order = ["opaque_steam", "trial.b", "trial.c"];
+            var c = new ModCatalogue([Mod("trial.b"), Mod("trial.c")], unverifiedOrderIdentifiers: ["opaque_steam"]);
+            Assert(ReadCandidates(c, Error("opaque"), order).Count == 0);
+            var trial = ReadCandidates(c, Error("opaque_steam"), order).Single();
+            Assert(trial.ReadFailureRemoval && trial.RemovedIds.SequenceEqual(["opaque_steam"]));
+            var dependent = new ModCatalogue([Mod("trial.b", ["opaque_steam"]), Mod("trial.c")],
+                unverifiedOrderIdentifiers: ["opaque_steam"]);
+            Assert(ReadCandidates(dependent, Error("opaque_steam"), order).Single().RemovedIds.SequenceEqual(["opaque_steam", "trial.b"]));
+            Assert(ReadCandidates(dependent, Error("opaque_steam"), order, ["trial.b"]).Count == 0);
+            Assert(TrialExclusionPlanning.Replay(c, order, [], Version, [trial]).SequenceEqual(["trial.b", "trial.c"]));
+            Throws(() => TrialExclusionPlanning.Replay(new([Mod("trial.b"), Mod("trial.c")]), order, [], Version, [trial]));
+        });
+        foreach (var duplicate in new[] { false, true })
+            check("stale opaque scope " + (duplicate ? "with duplicate installations" : "with readable installation")
+                + " cannot authorize read failure removal or replay", () =>
+            {
+                var unresolved = new ModCatalogue([Mod("trial.b"), Mod("trial.c")],
+                    unverifiedOrderIdentifiers: ["trial.a"]);
+                var oldTrial = ReadCandidates(unresolved, Error("trial.a")).Single();
+                Assert(oldTrial.ReadFailureRemoval);
+                var readable = Mod("trial.a");
+                ModInstallation[] installations = duplicate
+                    ? [readable, readable with { Directory = Path.Combine(scratch, "duplicate.trial.a"), FolderName = "duplicate.trial.a" },
+                        Mod("trial.b"), Mod("trial.c")]
+                    : [readable, Mod("trial.b"), Mod("trial.c")];
+                var stale = new ModCatalogue(installations, unverifiedOrderIdentifiers: ["trial.a"]);
+                Assert(stale.IsUnverifiedOrderIdentifier("trial.a")
+                    && stale.Resolve("trial.a", Version).Candidates.Count == (duplicate ? 2 : 1));
+                Assert(!MetadataReadFailureTrials.IsAffected(stale, "trial.a", Version));
+                Assert(ReadCandidates(stale, Error("trial.a")).Count == 0);
+                Throws(() => TrialExclusionPlanning.Replay(stale, Original, [], Version, [oldTrial]));
+            });
+        foreach (var applied in new[] { false, true })
+            check("read failure recovery " + (applied ? "after" : "before") + " apply reuses journal without AI", () =>
+            {
+                var c = ReadCatalogue(Unreadable("trial.a"), Mod("trial.b"), Mod("trial.c"));
+                var limits = new MaintenanceLimits { ReadFailureTrialsEnabled = true };
+                var root = Root(); var request = Request() with { OutputTokenLimit = limits.OutputTokensPerRequest };
+                var trial = ReadCandidates(c, Error("trial.a")).Single();
+                string[] current = applied ? ["trial.b", "trial.c"] : Original;
+                var tested = new ModCatalogue(current.Select(id => c.Resolve(id, Version).UniqueInstallation!).ToArray());
+                var feedback = MaintenanceFeedback.Capture(applied ? 2 : 1, current,
+                    applied ? new(true, []) : Error("trial.a"), AiOrderPlanner.Fingerprint(current, tested, [], [], Version));
+                var hash = AiTaskRecoveryStore.ContextHash(request, AiOrderPlanner.Fingerprint(Original, c, [], [], Version));
+                string id;
+                using (var task = new AiTaskRecoveryStore(root).Create(new(AiTaskKind.Maintenance, AiTaskPhase.Applying,
+                    hash, Original, current, DateTimeOffset.UtcNow)
+                    { Limits = limits, TestOriginalFirst = true, DeadlineUtc = DateTimeOffset.MaxValue,
+                        Attempts = applied ? 2 : 1, TrialExclusions = [trial], Feedback = feedback,
+                        SeenOrders = applied ? [Original, current] : [Original] })) id = task.Id;
+                var game = new Session(c, Original); var client = new Client();
+                var result = ReadRun(c, game, client, root: root, resume: id, limits: limits);
+                Assert(result.Outcome == MaintenanceOutcome.Passed && result.TrialExclusions.Count == 1 && client.Calls == 0
+                    && game.Tested.Count == (applied ? 0 : 1), result.Message);
+            });
 
         check("helper IO failure does not veto independently owned mod errors or authorize unrelated exclusions", () =>
         {

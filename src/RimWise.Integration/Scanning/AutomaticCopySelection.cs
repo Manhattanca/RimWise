@@ -33,7 +33,11 @@ public sealed class AutomaticCopySelection(string dataDirectory, GamePaths paths
         {
             token.ThrowIfCancellationRequested();
             var copies = SortingInstallationPolicy.Candidates(catalogue, id, version).ToArray();
-            if (copies.Length == 0) { unavailable.Add(id); continue; }
+            if (copies.Length == 0)
+            {
+                if (!active.Contains(id) || !SortingInstallationPolicy.RetainUnverified(catalogue, id, version)) unavailable.Add(id);
+                continue;
+            }
             var key = copies[0].PackageId;
             if (!visited.Add(key)) continue;
             var journal = journals.SingleOrDefault(j => j.AutomaticPackageId.Equals(key, StringComparison.OrdinalIgnoreCase));
@@ -47,7 +51,7 @@ public sealed class AutomaticCopySelection(string dataDirectory, GamePaths paths
                     // Never overwrite a directory recreated by Steam; Restore performs the same check again.
                     if (copies.Length != 1 || !copies[0].Directory.Equals(journal.Selected, StringComparison.OrdinalIgnoreCase))
                         throw new IOException("副本备份的原位置发生变化，请先在“副本备份”核对恢复记录：" + copies[0].Name);
-                    copies = new[] { copies[0] }.Concat(journal.Moves.Select(move => ReadBackup(copies[0], move))).ToArray();
+                    copies = new[] { copies[0] }.Concat(journal.Moves.Select(move => ReadBackup(copies[0], move, journal))).ToArray();
                 }
                 var group = new CopyGroup(copies, journal);
                 originals.TryAdd(key, (copies, journal));
@@ -71,7 +75,7 @@ public sealed class AutomaticCopySelection(string dataDirectory, GamePaths paths
             token.ThrowIfCancellationRequested();
             var selected = catalogue.Installations.SingleOrDefault(m => m.Directory.Equals(journal.Selected, StringComparison.OrdinalIgnoreCase));
             if (selected is null || !order.Any(id => catalogue.Resolve(id, version).UniqueInstallation?.Directory == selected.Directory)) continue;
-            var copies = new[] { selected }.Concat(journal.Moves.Select(m => ReadBackup(selected, m))).ToArray();
+            var copies = new[] { selected }.Concat(journal.Moves.Select(m => ReadBackup(selected, m, journal))).ToArray();
             groups[selected.PackageId] = new(copies, journal) { Selected = selected };
             originals.TryAdd(selected.PackageId, (copies, journal));
         }
@@ -113,15 +117,32 @@ public sealed class AutomaticCopySelection(string dataDirectory, GamePaths paths
         return Normalize(catalogue, order);
     }
 
-    private ModInstallation ReadBackup(ModInstallation selected, DuplicateCopyMove move)
+    private ModInstallation ReadBackup(ModInstallation selected, DuplicateCopyMove move, DuplicateCopyBackup journal)
     {
-        var metadata = new ModMetadataReader().Read(Path.Combine(move.Backup, "About", "About.xml"), move.Backup, version);
-        if (!metadata.PackageId.Equals(selected.PackageId, StringComparison.OrdinalIgnoreCase))
+        if (!journal.Moves.Contains(move) || !journal.Selected.Equals(selected.Directory, StringComparison.OrdinalIgnoreCase)
+            || !journal.AutomaticPackageId.Equals(selected.PackageId, StringComparison.OrdinalIgnoreCase)
+            || !ModMetadataReader.IsValidRecoveredPackageId(journal.AutomaticPackageId))
+            throw new InvalidDataException("备份副本的身份记录不匹配。");
+        ReadOnlyMetadata.CheckPath(move.Backup, move.Backup);
+        var file = Path.Combine(move.Backup, "About", "About.xml");
+        ModMetadata? metadata = null;
+        RecoveredIdentity? identity = null;
+        var diagnostics = new List<CatalogueDiagnostic>();
+        try { metadata = new ModMetadataReader().Read(file, move.Backup, version); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or System.Xml.XmlException)
+        {
+            diagnostics.Add(new("MetadataUnreadable", DiagnosticSeverity.Warning,
+                "备份副本信息未完整读取，保留待测试：" + ex.Message, move.Original));
+            try { identity = new ModMetadataReader().ReadIdentity(file, move.Backup); }
+            catch (Exception identityError) when (identityError is IOException or InvalidDataException or UnauthorizedAccessException or System.Xml.XmlException) { }
+            identity ??= new("", journal.AutomaticPackageId, "Validated automatic backup journal");
+        }
+        if (!string.Equals(metadata?.PackageId ?? identity?.PackageId, selected.PackageId, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("备份副本的模组标识发生变化。");
         var workshop = paths.WorkshopDirectory.Length > 0
             && Path.GetDirectoryName(move.Original)!.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(paths.WorkshopDirectory)), StringComparison.OrdinalIgnoreCase);
         return new(move.Original, Path.GetFileName(move.Original), workshop ? ModSource.Workshop : ModSource.Local,
-            workshop ? Path.GetFileName(move.Original) : "", metadata, []);
+            workshop ? Path.GetFileName(move.Original) : "", metadata, diagnostics.AsReadOnly()) { RecoveredIdentity = identity };
     }
 
     private DuplicateCopyInspection Inspect(CopyGroup group, ModInstallation mod, IReadOnlySet<string> active, CancellationToken token)
@@ -141,6 +162,8 @@ public sealed class AutomaticCopySelection(string dataDirectory, GamePaths paths
             && !rejected.Contains(c.Installation.Directory, StringComparer.OrdinalIgnoreCase));
         foreach (var copy in inspections.Where(c => c.HasFileErrors))
             Messages.Add("跳过文件结构不可用的副本：" + copy.Installation.Name + " · " + copy.Installation.FolderName + "\n" + copy.Status);
+        foreach (var copy in inspections.Where(c => !c.HasFileErrors && c.Limited))
+            Messages.Add("副本检查不完整，保留待测试：" + copy.Installation.Name + " · " + copy.Installation.FolderName + "\n" + copy.Status);
         if (selected is null)
         {
             group.Selected = null;
@@ -176,7 +199,7 @@ public sealed class AutomaticCopySelection(string dataDirectory, GamePaths paths
             || group.Selected is null || mod.Directory.Equals(group.Selected.Directory, StringComparison.OrdinalIgnoreCase))
             // A newly selected directory was previously outside the scan root.
             .Concat(groups.Values.Select(g => g.Selected).OfType<ModInstallation>())
-            .DistinctBy(mod => mod.Directory, StringComparer.OrdinalIgnoreCase).ToArray());
+            .DistinctBy(mod => mod.Directory, StringComparer.OrdinalIgnoreCase).ToArray(), catalogue.UnverifiedOrderIdentifiers);
         var result = SortingInstallationPolicy.Normalize(catalogue, selected, order, version, unavailable);
         Messages.AddRange(result.Messages);
         return result;

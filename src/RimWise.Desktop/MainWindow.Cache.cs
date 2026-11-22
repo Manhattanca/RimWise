@@ -30,8 +30,15 @@ public partial class MainWindow
         ViewModel.SelectedRow = ViewModel.Rows.FirstOrDefault();
     }
 
-    private Task<bool> SaveStartupSnapshotAsync(GamePaths selectedPaths, ModsConfigDocument configuration, ModScanResult result) =>
-        Task.Run(() => ActiveCache.TrySave(selectedPaths, configuration, result));
+    private readonly SemaphoreSlim startupCacheWrite = new(1, 1);
+    private async Task<bool> SaveStartupSnapshotAsync(GamePaths selectedPaths, ModsConfigDocument configuration,
+        ModScanResult result, CancellationToken cancellation = default)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, cancellation);
+        await startupCacheWrite.WaitAsync(linked.Token);
+        try { return await Task.Run(() => ActiveCache.TrySave(selectedPaths, configuration, result, linked.Token), linked.Token); }
+        finally { startupCacheWrite.Release(); }
+    }
 
 #if DEBUG
     internal async Task CachedStartupForCheckAsync(GamePaths selectedPaths, StartupCacheStore store,

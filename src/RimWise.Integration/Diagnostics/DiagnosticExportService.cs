@@ -32,7 +32,7 @@ public static class DiagnosticExportService
         "diagnostic-sources.json", "diagnostic-context.json", "ModsConfig.xml",
         "intended-ModsConfig.xml", "observed-ModsConfig.xml",
         "workbench-helper-failure.txt", "workbench-progress.xml", "workbench-signal.xml", "workbench-probe.xml",
-        "workbench-messages.log", "workbench-factions.txt", "workbench-startup.xml", "workbench-log-locations.xml"
+        "workbench-messages.log", "workbench-factions.txt", "workbench-startup.xml", "workbench-log-locations.xml", "workbench-loaded-order.xml"
     };
 
     public static DiagnosticExportResult Export(string userDataDirectory, string destination,

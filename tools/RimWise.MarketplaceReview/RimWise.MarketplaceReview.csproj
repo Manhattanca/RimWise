@@ -4,7 +4,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>RimWise.MarketplaceReview</AssemblyName>
-    <Version>0.1.4</Version>
+    <Version>0.1.5</Version>
     <ApplicationIcon>..\..\src\RimWise.Desktop\Resources\Branding\RimWise.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

@@ -43,13 +43,19 @@ internal sealed class StartupWindowPresentation
         if (!cloaked) Record("cloak-unavailable", result);
     }
 
-    private void OnContentRendered(object? sender, EventArgs e)
+    private async void OnContentRendered(object? sender, EventArgs e)
     {
         window.ContentRendered -= OnContentRendered;
+        // WindowChrome can pump Loaded/ContentRendered inside its native frame
+        // change. Never reveal that intermediate scene before chrome has finished.
+        if (window is MainWindow main) await main.ChromeReady;
+        if (finished) return;
+        WindowFrameTheme.Apply(window);
         if (!cloaked) { Complete(); return; }
         // ContentRendered is a dispatcher notification, not a DWM present fence.
         // Allow the following render pass to submit the scene, then synchronize DWM.
         CompositionTarget.Rendering += OnRendering;
+        window.InvalidateVisual();
     }
 
     private void OnRendering(object? sender, EventArgs e)

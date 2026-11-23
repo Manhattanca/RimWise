@@ -130,7 +130,7 @@ internal static class MarkerSmokeCheck
                     "Inactive visual name is stale: expected " + vm.AvailableMods[0].Name + "; actual " + string.Join("|", texts));
                 var markedRow = (DataGridRow)window.OrderGrid.ItemContainerGenerator.ContainerFromIndex(0);
                 var expectedMarker = (SolidColorBrush)new MarkerBackgroundConverter().Convert(
-                    [vm.Rows[0].MarkerColor!, 0, window.OrderGrid.Background], typeof(Brush), "", CultureInfo.InvariantCulture);
+                    [vm.Rows[0].MarkerColor!, 0, window.OrderGrid.RowBackground], typeof(Brush), "", CultureInfo.InvariantCulture);
                 Assert(markedRow.Background is SolidColorBrush visibleMarker && visibleMarker.Color == expectedMarker.Color,
                     "Grid background obscures the marker color: " + markedRow.Background + "; expected " + expectedMarker);
                 foreach (var cell in Descendants<DataGridCell>(markedRow))

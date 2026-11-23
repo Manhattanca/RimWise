@@ -78,7 +78,7 @@ internal static class PrototypeSmokeCheck
                     throw new InvalidOperationException("Compact menu contains missing or duplicate actions.");
                 if (!window.SettingsMenu.Items.OfType<MenuItem>().Select(item => item.Header?.ToString())
                         .SequenceEqual(new[] { "路径", "外观", "AI 设置…", "AI 用量预估…", "导出诊断日志…", "自定义排序规则…", "数据库来源…", "模组标识" })
-                    || window.PathsMenu.Items.Count != 2 || window.AppearanceMenu.Items.Count != 3)
+                    || window.PathsMenu.Items.Count != 2 || window.AppearanceMenu.Items.Count != 0)
                     throw new InvalidOperationException("Settings menu hierarchy missing.");
 
                 var settings = new PathSettingsWindow(new GamePaths

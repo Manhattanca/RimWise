@@ -5,6 +5,11 @@ using RimWise.Integration.Marketplace;
 
 namespace RimWise.MarketplaceReview;
 
+/// <summary>Server-confirmed loss of session or reviewer permission; not a connectivity failure.</summary>
+internal sealed class ReviewAccountException(bool permissionDenied = false) : InvalidOperationException(permissionDenied
+    ? "该账号没有审核权限，请使用排序市场审核员账号登录。"
+    : "审核登录已失效，请重新登录排序市场审核账号。") { }
+
 /// <summary>Authenticated review transport for the RimWise market API. Responses are bounded and never execute submitted data.</summary>
 internal sealed class ReviewApi : IDisposable
 {
@@ -20,6 +25,7 @@ internal sealed class ReviewApi : IDisposable
     internal ReviewApi(HttpMessageHandler? handler = null, Uri? configuredOrigin = null)
     {
         origin = ValidateOrigin(configuredOrigin ?? ReadConfiguredOrigin());
+        session = handler as MarketSessionHandler;
         client = new HttpClient(handler ?? (session = new MarketSessionHandler(origin, "review")))
         { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(45) };
     }
@@ -43,7 +49,7 @@ internal sealed class ReviewApi : IDisposable
         {
             try { await LogoutAsync(token); }
             catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException) { }
-            throw new InvalidOperationException("该账号没有审核权限，请使用排序市场审核员账号登录。");
+            throw new ReviewAccountException(permissionDenied: true);
         }
         return OptionalString(root, "nickname") ?? "审核员";
     }
@@ -123,7 +129,7 @@ internal sealed class ReviewApi : IDisposable
     private async Task<byte[]> GetBytesAsync(string path, int maximumBytes, CancellationToken token)
     {
         using var response = await client.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, token);
-        await EnsureSuccessAsync(response, token);
+        await EnsureSuccessAsync(response, token, reviewRead: path.StartsWith("api/review", StringComparison.Ordinal));
         if (response.Content.Headers.ContentLength is long length && (length < 0 || length > maximumBytes))
             throw new InvalidDataException("服务器返回内容超过大小限制。");
         await using var input = await response.Content.ReadAsStreamAsync(token);
@@ -214,9 +220,17 @@ internal sealed class ReviewApi : IDisposable
     private static string? OptionalString(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken token)
+    private async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken token, bool reviewRead = false)
     {
         if (response.IsSuccessStatusCode) return;
+        // Do not infer authentication from translated response text. A 403 on a
+        // mutation can be CSRF/revision validation, not loss of reviewer permission.
+        if (response.StatusCode == HttpStatusCode.Unauthorized
+            || reviewRead && response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            session?.Clear(); csrf = null;
+            throw new ReviewAccountException(response.StatusCode == HttpStatusCode.Forbidden);
+        }
         string? detail = null;
         try
         {

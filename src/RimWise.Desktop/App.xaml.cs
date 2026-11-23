@@ -49,6 +49,7 @@ public partial class App : Application
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--priority-fixes-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--main-panel-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--sorting-installations-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] is "--appearance-smoke" or "--appearance-direct-smoke";
 #endif
         // Storage migration can include hashing/copying. Keep the dispatcher responsive,
         // but show only the fully sized, themed main window once its profile is ready.
@@ -118,6 +119,10 @@ public partial class App : Application
         };
         MainWindow = window;
 #if DEBUG
+        if (e.Args.Length == 2 && e.Args[0] == "--appearance-direct-smoke")
+            AppearanceSmokeCheck.AttachDirect(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--appearance-smoke")
+            AppearanceSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--priority-fixes-smoke")
             PriorityFixSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--marketplace-smoke")
@@ -212,3 +217,4 @@ public partial class App : Application
         catch (ArgumentException) { } // The previous process already exited.
     }
 }
+

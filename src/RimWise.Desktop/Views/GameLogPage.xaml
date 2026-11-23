@@ -23,7 +23,7 @@
   </motion:NavigationTabStrip>
   <Grid Grid.Row="1">
    <Grid.ColumnDefinitions><ColumnDefinition Width="250"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-   <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="14">
+   <Border x:Name="FileInfoPanel" Background="{DynamicResource ContentSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0" CornerRadius="6" Padding="14">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel>
       <TextBlock Text="文件信息" Style="{StaticResource LogHeading}"/>
@@ -40,9 +40,9 @@
        <Run x:Name="ExceptionCountText" Foreground="{DynamicResource ErrorTextBrush}"/>
       </TextBlock>
       <TextBlock Text="控制" Style="{StaticResource LogHeading}"/>
-      <WrapPanel><Button Content="读取游戏日志" Click="AutoLoad_Click"/><Button Content="选择文件…" Click="ChooseFile_Click"/><Button Content="刷新" Click="Refresh_Click"/><Button x:Name="PauseButton" Content="暂停读取" Click="Pause_Click"/></WrapPanel>
+      <WrapPanel><Button x:Name="AutoLoadButton" Content="读取游戏日志" Click="AutoLoad_Click"/><Button x:Name="ChooseFileButton" Content="选择文件…" Click="ChooseFile_Click"/><Button x:Name="RefreshLogButton" Content="刷新" Click="Refresh_Click"/><Button x:Name="PauseButton" Content="暂停读取" Click="Pause_Click"/></WrapPanel>
       <CheckBox x:Name="FollowTail" Content="跟随最新日志" IsChecked="True" Margin="0,4,0,12"/>
-      <Button Content="打开日志文件夹" Click="OpenFolder_Click" HorizontalAlignment="Left"/>
+      <Button x:Name="OpenLogFolderButton" Content="打开日志文件夹" Click="OpenFolder_Click" HorizontalAlignment="Left"/>
       <TextBlock Text="AI 分析" Style="{StaticResource LogHeading}"/>
       <WrapPanel><Button x:Name="AnalyzeButton" Content="AI 判断报错来源" Click="Analyze_Click"/><Button x:Name="CancelAnalysisButton" Content="取消分析" Click="CancelAnalysis_Click" IsEnabled="False"/></WrapPanel>
       <TextBlock Text="仅在点击后发送脱敏证据摘要，使用 AI 设置中的服务；不调整排序。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" FontSize="12"/>
@@ -62,7 +62,7 @@
      <ComboBox x:Name="LevelFilter" Grid.Column="1" SelectedIndex="0" SelectionChanged="Filter_Changed" Margin="0,0,8,6">
       <ComboBoxItem Content="全部级别"/><ComboBoxItem Content="错误和异常"/><ComboBoxItem Content="警告"/><ComboBoxItem Content="信息"/>
      </ComboBox>
-     <StackPanel Grid.Column="2" Orientation="Horizontal"><Button Content="上一条" Click="Previous_Click"/><Button Content="下一条" Click="Next_Click"/><Button Content="末尾" Click="End_Click"/></StackPanel>
+     <StackPanel Grid.Column="2" Orientation="Horizontal"><Button x:Name="PreviousEntryButton" Content="上一条" Click="Previous_Click"/><Button x:Name="NextEntryButton" Content="下一条" Click="Next_Click"/><Button x:Name="LastEntryButton" Content="末尾" Click="End_Click"/></StackPanel>
     </Grid>
     <TextBlock Grid.Row="1" x:Name="ReadStatus" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6"/>
     <ListBox x:Name="LinesList" Grid.Row="2" SelectionChanged="Line_Selected" ScrollViewer.HorizontalScrollBarVisibility="Auto"
@@ -74,8 +74,8 @@
      </StackPanel></DataTemplate></ListBox.ItemTemplate>
     </ListBox>
     <GridSplitter Grid.Row="3" Height="7" HorizontalAlignment="Stretch" Background="Transparent" ResizeDirection="Rows"/>
-    <TextBox x:Name="DetailText" Grid.Row="4" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
-    <Border Grid.Row="5" x:Name="AnalysisPanel" Visibility="Collapsed" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,8,0,0">
+    <TextBox x:Name="DetailText" Background="{DynamicResource ContentSurfaceBrush}" Grid.Row="4" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+    <Border Grid.Row="5" x:Name="AnalysisPanel" Visibility="Collapsed" Background="{DynamicResource ContentSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0" CornerRadius="6" Padding="12" Margin="0,8,0,0">
      <StackPanel><TextBlock Text="AI 判断结果" FontWeight="SemiBold"/><TextBox x:Name="AnalysisText" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="150" VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent"/></StackPanel>
     </Border>
    </Grid>

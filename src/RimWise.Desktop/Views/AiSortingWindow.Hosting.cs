@@ -17,6 +17,7 @@ public partial class AiSortingWindow
         if (embeddedOwner is not null || IsVisible || closed)
             throw new InvalidOperationException("自动排序界面已被使用。");
         var view = (Border)Content;
+        view.Background = System.Windows.Media.Brushes.Transparent;
         Content = null;
         embeddedOwner = owner;
         returnToEditor = navigateBack;

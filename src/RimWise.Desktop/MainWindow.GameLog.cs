@@ -34,6 +34,8 @@ public partial class MainWindow
         FrameworkElement target = page == 3 ? MarketplaceHost : logs ? GameLogHost : page == 1 ? AiSortingHost : ModEditorBody;
         if (IsLoaded && page != mainPageIndex) InterfaceMotion.SlidePage(target, fromRight: page > mainPageIndex);
         mainPageIndex = page;
+        OpacityPicker?.PageChanged();
+        AppearanceControls?.Refresh();
     }
 
     private (string Startup, string Runtime) LocateGameLogs()

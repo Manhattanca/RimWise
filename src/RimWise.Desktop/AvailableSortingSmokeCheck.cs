@@ -22,6 +22,19 @@ internal static class AvailableSortingSmokeCheck
         var scan = new ModScanResult(new(null, "", ""), GameVersion.Parse("1.7"), new(mods), []);
         vm.ApplyScan(scan);
         var enabled = vm.Rows.Select(row => row.PackageId).ToArray();
+        var reverseVm = new MainViewModel(); reverseVm.Load(vm.CreateExportDocument(), "反向显示离线验证.xml");
+        reverseVm.ToggleAvailableSortDirection();
+        if (reverseVm.Rows.Count > 1)
+        {
+            var last = reverseVm.Rows[^1];
+            Assert(reverseVm.MoveRowsTo([last], 0), "Explicit move in a reversed projection failed.");
+            Assert(reverseVm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId)
+                .SequenceEqual(reverseVm.Rows.Reverse().Select(row => row.PackageId)), "Descending display became stale after an explicit edit.");
+            reverseVm.UndoCommand.Execute(null);
+            Assert(reverseVm.Rows.Select(row => row.PackageId).SequenceEqual(enabled)
+                && reverseVm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId).SequenceEqual(enabled.Reverse()),
+                "Undo did not restore both the real order and its reversed display.");
+        }
         var revision = vm.ContentRevision;
         var dirty = vm.HasChanges;
         var undo = vm.UndoCommand.CanExecute(null);
@@ -38,11 +51,22 @@ internal static class AvailableSortingSmokeCheck
                 .All(pair => comparer.Compare(pair.First, pair.Second) <= 0), "Ascending view is not sorted.");
             vm.ToggleAvailableSortDirection();
             var descending = Visible();
+            Assert(vm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId).SequenceEqual(enabled.Reverse()),
+                "Shared descending display did not reverse the enabled view by actual load index.");
+            if (vm.Rows.Count > 0)
+                Assert(window.OrderDisplayInsertionIndex(vm.Rows[0], false) == 1
+                    && window.OrderDisplayInsertionIndex(vm.Rows[0], true) == 0,
+                    "Descending visual drag position does not map to the real load index.");
+            Assert(vm.CreateExportDocument().Order.PackageIds.SequenceEqual(enabled) && vm.ContentRevision == revision
+                && vm.HasChanges == dirty && vm.UndoCommand.CanExecute(null) == undo,
+                "Shared display direction changed export order, dirty state or history.");
             if (field == AvailableModSortField.Author)
                 Assert(ascending[^1] == "sort.a" && descending[^1] == "sort.a"
                     && ascending[..^1].Reverse().SequenceEqual(descending[..^1]), "Missing author or reverse order failed.");
             else Assert(ascending.Reverse().SequenceEqual(descending), "Reverse order failed.");
             vm.ToggleAvailableSortDirection();
+            Assert(vm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId).SequenceEqual(enabled),
+                "Ascending display did not restore the enabled view.");
         }
         vm.SetAvailableSortField(AvailableModSortField.PackageId);
         Assert(Visible().SequenceEqual(new[] { "sort.a", "sort.b", "sort.c", "sort.d" }), "Package ID order incorrect.");
@@ -143,6 +167,7 @@ internal static class AvailableSortingSmokeCheck
         var enabled = vm.Rows.Select(row => row.PackageId).ToArray();
         var revision = vm.ContentRevision;
         string[] Visible() => vm.VisibleAvailableMods.Cast<InstalledModRow>().Select(row => row.PackageId).ToArray();
+        if (!vm.IsAvailableSortDescending) vm.ToggleAvailableSortDirection();
         window.AvailableSortBox.SelectedIndex = 3;
         Assert(Visible().SequenceEqual(new[] { "recent.b", "recent.c", "recent.a", "recent.d" }),
             $"Recent additions incorrect ({vm.AvailableSortField}, descending={vm.IsAvailableSortDescending}): " +
@@ -150,6 +175,9 @@ internal static class AvailableSortingSmokeCheck
         window.AvailableSortDirectionButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
         Assert(Visible().SequenceEqual(new[] { "recent.c", "recent.b", "recent.a", "recent.d" }), "Ascending additions or unknown fallback failed.");
         window.AvailableSortBox.SelectedIndex = 4;
+        Assert(!vm.IsAvailableSortDescending && vm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId).SequenceEqual(enabled),
+            "Changing only the inactive sort field flipped the shared display direction.");
+        vm.ToggleAvailableSortDirection();
         Assert(Visible().SequenceEqual(new[] { "recent.c", "recent.a", "recent.b", "recent.d" }), "Update order used addition time or folder/name order.");
         window.AvailableSortDirectionButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
         Assert(Visible().SequenceEqual(new[] { "recent.b", "recent.a", "recent.c", "recent.d" }), "Ascending updates failed.");

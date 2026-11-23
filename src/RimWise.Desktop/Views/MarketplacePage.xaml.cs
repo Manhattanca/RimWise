@@ -71,7 +71,18 @@ public partial class MarketplacePage : UserControl
         ];
         PublishFileButton.IsEnabled = PublishButton.IsEnabled = RefreshButton.IsEnabled = false;
         PreviewKeyDown += Page_KeyDown;
-        Unloaded += (_, _) => { Cancel(); imageLoading?.Cancel(); };
+        Unloaded += Page_Unloaded;
+    }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs e)
+    {
+        // WPF reloads the same page during a live light/dark resource switch.
+        // Cancel only a real detach, after its Loaded lifecycle has settled.
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (IsLoaded) return;
+            Cancel(); imageLoading?.Cancel();
+        }));
     }
 
     public MarketplacePage(MarketplacePageActions actions) : this() => Configure(actions);

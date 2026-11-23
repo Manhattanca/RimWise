@@ -53,13 +53,15 @@ internal static class StartupPresentationSmokeCheck
                 // Some Windows/DWM versions expose these attributes for Set only.
                 // An unavailable getter cannot verify caption color; report that limit.
                 if (result != 0) { unavailableNativeColorReads++; continue; }
-                Check(actual == (color.R | color.G << 8 | color.B << 16), stage + ": native " + key);
+                Check(actual == (attribute == 34 ? -2 : color.R | color.G << 8 | color.B << 16), stage + ": native " + key);
             }
         }
 
         window.StartupPresentation.BeforeReveal += () =>
         {
             Check(NativeStartupFrameCapture.IsAppCloaked(window), "native window still concealed at render fence");
+            Check(HwndSource.FromHwnd(new WindowInteropHelper(window).Handle)?.CompositionTarget.BackgroundColor.A == 255,
+                "custom chrome leaves an opaque native clear surface immediately before reveal");
             revealFenceObserved = true;
         };
 
@@ -101,10 +103,24 @@ internal static class StartupPresentationSmokeCheck
                     && window.MainMenu.ActualHeight > 0, "main controls laid out on first frame");
                 CheckSurface("ContentRendered");
                 Check(revealFenceObserved, "native concealment verified immediately before reveal");
+                await StartupNativeSurfaceSmokeChecks.Run(window, output, Check);
                 var expectedSamples = new[] { ((SolidColorBrush)window.FindResource("PageBrush")).Color,
                     ((SolidColorBrush)window.FindResource("PanelBrush")).Color };
-                Check(nativeSamples.SequenceEqual(expectedSamples), "native first frame contains themed page and panel pixels: "
-                    + string.Join(", ", nativeSamples.Select(color => color.ToString())));
+                // Translucent cards also composite over a solid page without a picture.
+                // Compare their displayed pixels against an independent WPF render;
+                // genuinely opaque solid themes retain the exact palette assertion.
+                var composited = !SystemParameters.HighContrast
+                    && (app.Themes.Image is not null || app.Themes.Current.PanelOpacity < 1);
+                if (composited)
+                    expectedSamples = NativeStartupFrameCapture.ExpectedCompositedSamples(window, Path.Combine(output, "expected-native-frame.png"));
+                // Hardware and offscreen alpha blending may differ by one 8-bit
+                // channel step; solid themes still require the original exact match.
+                var matches = composited ? nativeSamples.Zip(expectedSamples).All(pair =>
+                    Math.Abs(pair.First.R - pair.Second.R) <= 1 && Math.Abs(pair.First.G - pair.Second.G) <= 1
+                    && Math.Abs(pair.First.B - pair.Second.B) <= 1) : nativeSamples.SequenceEqual(expectedSamples);
+                Check(matches, "native first frame contains themed page and panel pixels: "
+                    + string.Join(", ", nativeSamples.Select(color => color.ToString()))
+                    + "; expected " + string.Join(", ", expectedSamples.Select(color => color.ToString())));
                 PrototypeSmokeCheck.SavePreview(window, Path.Combine(output, "first-frame.png"));
 
                 window.LoadSample();

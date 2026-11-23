@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private int scanGeneration;
     public MainViewModel ViewModel { get; } = new();
     internal StartupWindowPresentation StartupPresentation { get; }
+    internal Task ChromeReady { get; }
 
     public MainWindow(bool initializePaths = true)
     {
@@ -38,6 +39,9 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => WindowFrameTheme.Apply(this);
         StartupPresentation = new StartupWindowPresentation(this);
         Title = ProductTitle;
+        AppearanceControls = new AppearanceControlRegistry(this, Themes);
+        AppearanceEditorChrome.Attach(OpacityEditingBar, this);
+        ChromeReady = MainWindowChrome.Attach(this);
         DataContext = ViewModel;
         InitializeListDisplay();
         InitializeModInteraction();
@@ -78,6 +82,7 @@ public partial class MainWindow : Window
             OfferEditorRecovery();
             ShowInterruptedFiles(startup: true);
             ContinueInterruptedTasks(interruptedTasks);
+            _ = ShowInstalledReleaseNotesAsync();
         }
     }
 
@@ -126,6 +131,8 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        if (OpacityPicker is { } picker)
+        { e.Cancel = true; picker.Dispose(); base.OnClosing(e); return; }
         if (aiSortingWindow?.PrepareHostClose() == false)
         {
             e.Cancel = true;
@@ -144,6 +151,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        OpacityPicker?.Dispose(); AppearanceControls.Dispose();
         gameLogPage?.Dispose();
         marketplacePage?.Cancel();
         recoveryEnabled = false;
@@ -384,24 +392,12 @@ public partial class MainWindow : Window
 
     private ThemeService Themes => ((App)Application.Current).Themes;
     private void Theme_Changed(object? sender, EventArgs e) => UpdateThemeChecks();
-    private void UpdateThemeChecks()
+    private void UpdateThemeChecks() => AppearanceMenu.ToolTip = "修改主题颜色或导入自定义背景图片";
+    private async void Appearance_Click(object sender, RoutedEventArgs e)
     {
-        SystemThemeItem.IsChecked = Themes.Preference == ThemePreference.System;
-        LightThemeItem.IsChecked = Themes.Preference == ThemePreference.Light;
-        DarkThemeItem.IsChecked = Themes.Preference == ThemePreference.Dark;
+        e.Handled = true;
+        await EditAppearanceAsync();
     }
-    private void SetTheme(ThemePreference preference)
-    {
-        try { Themes.Select(preference); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
-        {
-            UpdateThemeChecks();
-            MessageDialog.Show(this, ex.Message, "无法保存外观设置", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-    }
-    private void SystemTheme_Click(object sender, RoutedEventArgs e) => SetTheme(ThemePreference.System);
-    private void LightTheme_Click(object sender, RoutedEventArgs e) => SetTheme(ThemePreference.Light);
-    private void DarkTheme_Click(object sender, RoutedEventArgs e) => SetTheme(ThemePreference.Dark);
 
     internal void LoadSample()
     {

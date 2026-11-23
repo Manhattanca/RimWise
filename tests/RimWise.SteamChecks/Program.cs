@@ -23,6 +23,7 @@ if (args.Length == 1 && args[0] == "--fast-update-checks")
         catch (Exception ex) { failures.Add(name + ": " + ex); Console.WriteLine("FAIL " + name + ": " + ex); }
     }
     ReleaseUpdateChecks.Run(Record);
+    ReleaseNotesChecks.Run(Record);
     FastUpdateChecks.Run(Record);
     Console.WriteLine(JsonSerializer.Serialize(new { Passed = passed.Count, Failed = failures.Count, Checks = passed, Failures = failures }));
     Environment.ExitCode = failures.Count == 0 ? 0 : 1;

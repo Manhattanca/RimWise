@@ -34,7 +34,7 @@ public partial class MessageDialogWindow : Window
 
     internal MessageDialogWindow(Window owner, string message, string title, MessageBoxButton buttons,
         MessageBoxImage image, MessageBoxResult defaultResult, TimeSpan confirmationDelay = default,
-        string confirmationText = "确定", bool allowDismissAfterDelay = false)
+        string confirmationText = "确定", bool allowDismissAfterDelay = false, string yesText = "是", string noText = "否")
     {
         if (!Enum.IsDefined(buttons)) throw new ArgumentOutOfRangeException(nameof(buttons));
         InitializeComponent();
@@ -63,7 +63,7 @@ public partial class MessageDialogWindow : Window
             var button = new Button
             {
                 Content = choice switch { MessageBoxResult.OK => confirmationText, MessageBoxResult.Cancel => "取消",
-                    MessageBoxResult.Yes => "是", _ => "否" },
+                    MessageBoxResult.Yes => yesText, _ => noText },
                 Tag = choice,
                 IsDefault = choice == selectedDefault,
                 IsCancel = confirmationDelay == default && (choice == MessageBoxResult.Cancel || buttons == MessageBoxButton.OK),

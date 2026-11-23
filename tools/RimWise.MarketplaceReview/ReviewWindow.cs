@@ -97,8 +97,8 @@ internal sealed class ReviewWindow : Form
             try { await api.LogoutAsync(token); }
             finally
             {
-                ReviewCredentials.Delete(api.Origin, settings.Username); settings.Username = ""; SaveSettings(); user = null; snapshot = null;
-                account.Text = "尚未登录审核账号"; list.Items.Clear(); ClearImages(); text.Clear();
+                SetAccount(null);
+                ReviewCredentials.Delete(api.Origin, settings.Username); settings.Username = ""; SaveSettings();
             }
             status.Text = "已退出登录，自动检查暂停。";
         });
@@ -140,14 +140,13 @@ internal sealed class ReviewWindow : Form
             if (this.background) { Hide(); Opacity = 1; this.background = false; }
             await RunAsync(async token =>
             {
-                user = await api.RestoreAsync(token);
+                SetAccount(await api.RestoreAsync(token));
                 if (user is null && settings.ServerOrigin == api.Origin.AbsoluteUri && settings.Username.Length > 0)
                 {
                     var saved = ReviewCredentials.Read(api.Origin, settings.Username);
-                    if (saved is not null) user = await api.LoginAsync(settings.Username, saved, token);
+                    if (saved is not null) SetAccount(await api.LoginAsync(settings.Username, saved, token));
                 }
                 if (user is null) { status.Text = "请登录服务器上的排序市场审核员账号。"; return; }
-                account.Text = "审核账号 · " + user;
                 if (DateTimeOffset.UtcNow >= settings.NextCheckUtc) await CheckAsync(token);
             });
             timer.Start();
@@ -187,6 +186,11 @@ internal sealed class ReviewWindow : Form
         using var source = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); active = source; SetControls();
         confirmedOutcome = null;
         try { await work(source.Token); }
+        catch (ReviewAccountException ex)
+        {
+            SetAccount(null);
+            if (!exiting) status.Text = confirmedOutcome is null ? ex.Message : confirmedOutcome + ex.Message + "无需重复提交。";
+        }
         catch (OperationCanceledException) { if (!exiting) status.Text = confirmedOutcome is null ? "操作已取消；请刷新核对服务器上的审核状态。" : confirmedOutcome + "列表刷新已取消，无需重复提交。"; }
         catch (Exception ex) { if (!exiting) status.Text = confirmedOutcome is not null ? confirmedOutcome + "后续界面刷新未完成，请点击立即检查，无需重复提交。" : ex is InvalidOperationException or InvalidDataException or MarketplaceException
             && ex.Message.Any(c => c is >= '\u3400' and <= '\u9fff') ? ex.Message : "操作未完成，请检查服务器连接或审核账号后重试。"; }
@@ -201,9 +205,11 @@ internal sealed class ReviewWindow : Form
         status.Text = "正在连接排序市场服务器并验证审核权限…";
         var display = await api.LoginAsync(prompt.Username, prompt.Password, token);
         token.ThrowIfCancellationRequested();
+        SetAccount(display);
         settings.Username = prompt.Username; settings.ServerOrigin = api.Origin.AbsoluteUri; SaveSettings();
-        ReviewCredentials.Write(api.Origin, prompt.Username, prompt.Password);
-        user = display; account.Text = "审核账号 · " + display;
+        try { ReviewCredentials.Write(api.Origin, prompt.Username, prompt.Password); }
+        catch (System.ComponentModel.Win32Exception)
+        { status.Text = "本次登录有效，但无法保存本机登录记录；重启后需要重新登录。"; }
         await CheckAsync(token);
     }
 
@@ -211,6 +217,11 @@ internal sealed class ReviewWindow : Form
     {
         if (user is null) throw new InvalidOperationException("请先登录排序市场审核账号。");
         settings.LastCheckUtc = DateTimeOffset.UtcNow; SaveSettings(); status.Text = "正在检查服务器待审核排序…";
+        // The label is only a display cache, never proof of current authority.
+        var display = await api.RestoreAsync(token);
+        token.ThrowIfCancellationRequested();
+        if (display is null) throw new ReviewAccountException();
+        SetAccount(display);
         var items = await api.ListAsync(token); token.ThrowIfCancellationRequested();
         var changed = settings.Notifications.Update(items); SaveSettings();
         string? selected = (list.SelectedItem as MarketReviewItem)?.Id;
@@ -309,6 +320,8 @@ internal sealed class ReviewWindow : Form
             await CheckAsync(token);
             status.Text = confirmedOutcome;
         }
+        catch (ReviewAccountException ex)
+        { SetAccount(null); status.Text = confirmedOutcome + ex.Message + "无需重复提交。"; }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         { status.Text = confirmedOutcome + "后续界面刷新未完成，请点击立即检查，无需重复提交。"; }
     }
@@ -344,8 +357,39 @@ internal sealed class ReviewWindow : Form
     }
 
     private void SaveSettings() { if (!selfTest) settings.Save(); }
+    private void SetAccount(string? display)
+    {
+        bool wasLoggedIn = user is not null;
+        user = display;
+        account.Text = display is null ? "尚未登录审核账号" : "审核账号 · " + display;
+        if (display is not null)
+        {
+            if (!wasLoggedIn) text.Text = "已登录审核账号。请双击左侧待审条目查看投稿内容。";
+            return;
+        }
+        loadingList = true;
+        try { list.Items.Clear(); } finally { loadingList = false; }
+        snapshot = null; ClearImages(); metadata.Clear();
+        contentTitle.Text = ""; text.Text = "请登录排序市场审核员账号后检查投稿。";
+        imageCaption.Text = "上传图片 · 尚未读取投稿";
+        schedule.Text = "排序市场服务器 · 尚未登录 · 已暂停自动检查";
+    }
     internal string StatusForChecks => status.Text;
+    internal string ContentTextForChecks => text.Text;
     internal bool ContentVisibleForChecks => contentTitle.Text.Length > 0 && text.Text.Length > 0 && imageCaption.Text.Contains("上传图片");
+    internal bool LoggedInForChecks => user is not null;
+    internal bool LoginEnabledForChecks => login.Enabled;
+    internal bool ReviewEnabledForChecks => approve.Enabled || reject.Enabled || inspect.Enabled;
+    internal int ItemsForChecks => list.Items.Count;
+    internal string AccountForChecks => account.Text;
+    internal string ScheduleForChecks => schedule.Text;
+    internal Task CheckForChecksAsync() => RunAsync(CheckAsync);
+    internal Task InspectForChecksAsync() => RunAsync(InspectAsync);
+    internal Task LoginForChecksAsync() => RunAsync(async token =>
+    {
+        SetAccount(await api.LoginAsync("reviewer", "synthetic-password", token));
+        await CheckAsync(token);
+    });
     internal async Task DecideForChecksAsync(ReviewSnapshot value, bool approved)
     {
         user = "测试审核员";

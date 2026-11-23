@@ -10,6 +10,7 @@ public sealed record ReleaseDownload(string Version, string FileName, Uri Url, l
 {
     public string? FromVersion { get; init; }
     public ReleaseDownload? Delta { get; init; }
+    public string ReleaseNotes { get; init; } = "";
 }
 public sealed record DownloadProgress(long Received, long Total)
 {
@@ -46,6 +47,9 @@ public sealed class GitHubReleaseUpdater(HttpClient http, HttpClient? mirror = n
 
     private static async Task<ReleaseDownload?> CheckSourceAsync(HttpClient client, Uri uri,
         string installedVersion, CancellationToken cancellationToken)
+        => ParseRelease(await ReadReleaseJsonAsync(client, uri, cancellationToken).ConfigureAwait(false), installedVersion);
+
+    private static async Task<byte[]> ReadReleaseJsonAsync(HttpClient client, Uri uri, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -67,7 +71,34 @@ public sealed class GitHubReleaseUpdater(HttpClient http, HttpClient? mirror = n
             if (body.Length + count > 2 * 1024 * 1024) throw new UpdateDownloadException("版本信息过大，未采用此响应。");
             body.Write(buffer, 0, count);
         }
-        return ParseRelease(body.ToArray(), installedVersion);
+        return body.ToArray();
+    }
+
+    public async Task<InstalledReleaseNotes?> ReadReleaseNotesAsync(string version, CancellationToken cancellationToken)
+    {
+        if (!InstalledReleaseNotes.IsStableVersion(version)) return null;
+        // A tag lookup, never /latest: skipped versions must not show another release's notes.
+        return await FastUpdateSource.RunAsync(async (token, _) => ParseReleaseNotes(
+                await ReadReleaseJsonAsync(http, new Uri($"https://api.github.com/repos/{Repository}/releases/tags/v{version}"), token).ConfigureAwait(false), version),
+            mirror is null ? null : async token => ParseReleaseNotes(
+                await ReadReleaseJsonAsync(mirror, new Uri(MirrorRoot, "latest"), token).ConfigureAwait(false), version),
+            null, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static InstalledReleaseNotes? ParseReleaseNotes(byte[] json, string version)
+    {
+        if (!InstalledReleaseNotes.IsStableVersion(version)) return null;
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("draft", out var draft) || draft.ValueKind != JsonValueKind.False
+            || !root.TryGetProperty("prerelease", out var prerelease) || prerelease.ValueKind != JsonValueKind.False
+            || !root.TryGetProperty("tag_name", out var tag) || tag.ValueKind != JsonValueKind.String
+            || tag.GetString() != "v" + version) return null;
+        var text = root.TryGetProperty("body", out var body) && body.ValueKind == JsonValueKind.String ? body.GetString() : null;
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var notes = new InstalledReleaseNotes(version, text);
+        notes.Validate(); return notes;
     }
 
     public static ReleaseDownload? ParseRelease(byte[] json, string installedVersion)
@@ -116,7 +147,13 @@ public sealed class GitHubReleaseUpdater(HttpClient http, HttpClient? mirror = n
                 throw new UpdateDownloadException("发布附件信息不完整，未下载。");
             if (digest is null || !Regex.IsMatch(digest, @"^sha256:[a-fA-F0-9]{64}$", RegexOptions.CultureInvariant))
                 throw new UpdateDownloadException("发布附件缺少 SHA256 校验信息，请等待维护者补全。");
-            return new ReleaseDownload(version, name, new Uri(url), size, digest[7..].ToLowerInvariant(), name.EndsWith(".exe"));
+            return new ReleaseDownload(version, name, new Uri(url), size, digest[7..].ToLowerInvariant(), name.EndsWith(".exe"))
+                { ReleaseNotes = OptionalNotes() };
+        }
+        string OptionalNotes()
+        {
+            try { return ParseReleaseNotes(json, version)?.Body ?? ""; }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException or InvalidOperationException) { return ""; }
         }
     }
 

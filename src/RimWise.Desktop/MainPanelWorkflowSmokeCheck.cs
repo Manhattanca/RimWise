@@ -241,7 +241,7 @@ internal static class MainPanelWorkflowSmokeCheck
                     fixture.UpdateLayout();
                     var chrome = (Border)tabs[i].Template.FindName("Tab", tabs[i]);
                     check(tabs[i].IsKeyboardFocused && tabs[i].FocusVisualStyle is null
-                        && Equals(chrome.Background, tabs[i].FindResource("SelectionBrush")),
+                        && Equals(chrome.Background, tabs[i].FindResource("ButtonSelectionBrush")),
                         $"{theme}/{tabs[i].Content}：无虚线，键盘焦点使用主题背景");
                     tabs[i].RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(fixture),
                         Environment.TickCount, Key.Space) { RoutedEvent = Keyboard.KeyDownEvent });

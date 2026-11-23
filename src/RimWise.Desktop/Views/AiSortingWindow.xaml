@@ -1,10 +1,10 @@
-<Window x:Class="RimWise.Desktop.Views.AiSortingWindow"
+﻿<Window x:Class="RimWise.Desktop.Views.AiSortingWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Style="{StaticResource {x:Type Window}}"
         Title="自动排序" Width="820" Height="820" MinWidth="620" MinHeight="700"
         WindowStartupLocation="CenterOwner">
-    <Border Background="{DynamicResource PageBrush}" Padding="24">
+    <Border Background="Transparent" Padding="24">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="SettingsRow" Height="*" MinHeight="60" MaxHeight="210" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
@@ -33,7 +33,7 @@
                     <Button x:Name="SettingsButton" Content="AI 设置…" Click="Settings_Click" Margin="0,0,10,6" />
                     <Button x:Name="EstimateButton" Content="预估用量" Click="Estimate_Click" Margin="0,0,0,6" />
                     <Button x:Name="RecoveryButton" Content="恢复任务…" Click="Recovery_Click" Margin="10,0,0,6" />
-                    <Button Content="用量与余额…" Click="Usage_Click" Margin="10,0,0,6" />
+                    <Button x:Name="UsageButton" Content="用量与余额…" Click="Usage_Click" Margin="10,0,0,6" />
                 </WrapPanel>
                 <WrapPanel x:Name="LimitPanel" Grid.Row="4" VerticalAlignment="Center" Margin="0,4,0,0">
                     <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
@@ -56,8 +56,8 @@
                 </WrapPanel>
                 <TextBlock x:Name="LogStatusText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" MaxHeight="44" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="保存目录可在设置 → 路径设置中修改。关闭自动保存后，成功、失败或取消均可手动导出本次排障日志。" />
             </StackPanel>
-            <Border Grid.Row="2" Margin="0,8,0,12" Padding="12,8" Background="{DynamicResource HeaderBrush}"
-                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6">
+            <Border x:Name="SortingStatusPanel" Grid.Row="2" Margin="0,8,0,12" Padding="12,8" Background="{DynamicResource ContentHeaderBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0" CornerRadius="6">
             <StackPanel>
                 <ScrollViewer MaxHeight="64" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <DockPanel>
@@ -71,7 +71,7 @@
                 <StackPanel>
                     <StackPanel x:Name="MetadataReadWarning" Visibility="Collapsed" Margin="0,8,0,0">
                         <TextBlock x:Name="MetadataReadWarningText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
-                        <Button Content="查看读取异常模组…" Click="ReadIssues_Click" HorizontalAlignment="Left" Margin="0,6,0,0" />
+                        <Button x:Name="ReadIssuesButton" Content="查看读取异常模组…" Click="ReadIssues_Click" HorizontalAlignment="Left" Margin="0,6,0,0" />
                     </StackPanel>
                     <StackPanel x:Name="DependencyDetails" Visibility="Collapsed" Margin="0,8,0,0">
                         <TextBlock Text="前置与下载原因" FontWeight="SemiBold" Margin="0,0,0,6" />
@@ -94,7 +94,7 @@
                 <Grid Margin="0,0,0,10">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                     <TextBlock x:Name="ResponseHeading" Text="AI 回报与每轮处理结果" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBox x:Name="ResponseText" Grid.Row="1" IsReadOnly="True" IsUndoEnabled="False" TextWrapping="Wrap" AcceptsReturn="True"
+                    <TextBox x:Name="ResponseText" Background="{DynamicResource ContentSurfaceBrush}" Grid.Row="1" IsReadOnly="True" IsUndoEnabled="False" TextWrapping="Wrap" AcceptsReturn="True"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" />
                     <TextBlock x:Name="ResponseEmptyText" Grid.Row="1" Text="开始后，这里会显示处理进度与回报。"
                                Margin="14" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" IsHitTestVisible="False">
@@ -138,11 +138,11 @@
             </Grid>
             <WrapPanel Grid.Row="4" Margin="0,12,0,0">
                 <Button x:Name="AutomaticButton" Content="自动排序并测试" Click="Automatic_Click" Margin="0,6,10,0"
-                        Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}" />
+                        Background="{DynamicResource ButtonAccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}" />
                 <Button x:Name="CancelButton" Content="取消" Click="Cancel_Click" Margin="0,6,10,0" IsEnabled="False" />
                 <Button x:Name="ClearLogsButton" Content="清理历史日志" Click="ClearLogs_Click" Margin="0,6,10,0"
                         ToolTip="清除历史测试日志和缓存，保留上次排序日志、待恢复任务与 token 记录" />
-                <Button Content="副本备份" Click="CopyBackups_Click" Margin="0,6,10,0" ToolTip="查看和恢复已移出的重复副本；游戏及任务运行期间不能恢复"/>
+                <Button x:Name="CopyBackupsButton" Content="副本备份" Click="CopyBackups_Click" Margin="0,6,10,0" ToolTip="查看和恢复已移出的重复副本；游戏及任务运行期间不能恢复"/>
                 <Button x:Name="ApplyButton" Content="预览排序变化…" Click="Apply_Click" Margin="0,6,10,0" IsEnabled="False" Visibility="Collapsed" />
                 <Button x:Name="CloseButton" Content="关闭" Click="Close_Click" Margin="0,6,0,0" />
             </WrapPanel>

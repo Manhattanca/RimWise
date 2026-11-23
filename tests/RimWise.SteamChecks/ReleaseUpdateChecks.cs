@@ -21,6 +21,14 @@ internal static class ReleaseUpdateChecks
 
     internal static void Run(Action<string, Action> check)
     {
+        check("Release metadata carries exact notes without letting malformed optional text block updates", () =>
+        {
+            var json = System.Text.Json.Nodes.JsonNode.Parse(Release())!;
+            json["body"] = "第一段。\n\n第二段。";
+            Assert(GitHubReleaseUpdater.ParseRelease(Encoding.UTF8.GetBytes(json.ToJsonString()), "0.4.9")?.ReleaseNotes == "第一段。\n\n第二段。");
+            json["body"] = new string('x', 65537);
+            Assert(GitHubReleaseUpdater.ParseRelease(Encoding.UTF8.GetBytes(json.ToJsonString()), "0.4.9") is { ReleaseNotes.Length: 0 });
+        });
         check("One-click update uses structured Unicode arguments and never a shell", () => WithDirectory(directory =>
         {
             var release = Candidate() with { Version = "0.5.2", FileName = "RimWise-v0.5.2-Setup.exe", IsInstaller = true };

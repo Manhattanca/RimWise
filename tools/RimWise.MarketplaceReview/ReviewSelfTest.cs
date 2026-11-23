@@ -62,6 +62,58 @@ internal static class ReviewSelfTest
                 window.Hide();
             }
 
+            foreach (var mode in new[] { "anonymous", "list401", "list403", "role", "offline", "image401", "mutation401", "csrf403", "committed401" })
+            {
+                var authServer = new Server(withImage: mode == "image401");
+                using var authApi = new ReviewApi(authServer, new Uri("https://market.example/"));
+                using var authWindow = new ReviewWindow(false, selfTest: true, testApi: authApi);
+                authWindow.Show();
+                await authWindow.LoginForChecksAsync();
+                Check(authWindow.LoggedInForChecks && !authWindow.LoginEnabledForChecks && authWindow.ItemsForChecks == 1,
+                    mode + ": initial verified login and pending list agree");
+                var viewed = await authApi.InspectAsync((await authApi.ListAsync(default)).Single(), default);
+                authWindow.PreviewForChecks(viewed);
+                authServer.AnonymousMe = mode == "anonymous";
+                authServer.ReviewStatus = mode == "list401" ? HttpStatusCode.Unauthorized : mode == "list403" ? HttpStatusCode.Forbidden : null;
+                authServer.RoleRemoved = mode == "role";
+                authServer.Offline = mode == "offline";
+                authServer.ImageUnauthorized = mode == "image401";
+                authServer.MutationStatus = mode == "mutation401" ? HttpStatusCode.Unauthorized : mode == "csrf403" ? HttpStatusCode.Forbidden : null;
+                authServer.ExpireAfterDecision = mode == "committed401";
+                if (mode is "mutation401" or "csrf403" or "committed401") await authWindow.DecideForChecksAsync(viewed, true);
+                else if (mode == "image401") await authWindow.InspectForChecksAsync();
+                else await authWindow.CheckForChecksAsync();
+                if (mode == "committed401")
+                    Check(authWindow.StatusForChecks.Contains("服务器已确认") && authWindow.StatusForChecks.Contains("无需重复提交"),
+                        "Committed approval remains confirmed when authentication expires during its refresh");
+                if (mode is "offline" or "csrf403")
+                {
+                    Check(authWindow.LoggedInForChecks && !authWindow.LoginEnabledForChecks && authWindow.ItemsForChecks == 1,
+                        mode + ": transient network or CSRF failure does not revoke login");
+                }
+                else
+                {
+                    Check(!authWindow.LoggedInForChecks && authWindow.LoginEnabledForChecks && !authWindow.ReviewEnabledForChecks
+                        && authWindow.ItemsForChecks == 0 && authWindow.AccountForChecks == "尚未登录审核账号"
+                        && authWindow.ScheduleForChecks.Contains("已暂停") && authWindow.StatusForChecks.Contains(mode is "role" or "list403" ? "没有审核权限" : "登录已失效"),
+                        mode + ": expired session synchronizes label, login button, preview, list and polling state");
+                    var calls = authServer.Requests.Count;
+                    await authWindow.CheckForChecksAsync();
+                    Check(authServer.Requests.Count == calls, mode + ": logged-out checks send no requests");
+                }
+                Check(authServer.Decisions == (mode == "committed401" ? 1 : 0), mode + ": no automatic replay of approval");
+                authServer.AnonymousMe = authServer.RoleRemoved = authServer.Offline = authServer.ImageUnauthorized = authServer.ExpireAfterDecision = false;
+                authServer.ReviewStatus = authServer.MutationStatus = null;
+                if (mode != "committed401")
+                {
+                    await authWindow.LoginForChecksAsync();
+                    Check(authWindow.LoggedInForChecks && authWindow.ItemsForChecks == 1 && authWindow.AccountForChecks.Contains("审核员")
+                        && !authWindow.ContentTextForChecks.Contains("请登录"),
+                        mode + ": manual login recovers checks without restarting");
+                }
+                authWindow.Hide();
+            }
+
             SynchronizationContext.SetSynchronizationContext(null);
             var checkedAt = new DateTimeOffset(2026, 11, 17, 0, 0, 0, TimeSpan.Zero);
             var settings = new ReviewSettings { LastCheckUtc = checkedAt };
@@ -142,6 +194,8 @@ internal static class ReviewSelfTest
         internal readonly List<Uri> Requests = [];
         internal int Decisions;
         internal Decision? LastDecision;
+        internal bool AnonymousMe, RoleRemoved, Offline, ImageUnauthorized, ExpireAfterDecision;
+        internal HttpStatusCode? ReviewStatus, MutationStatus;
         private bool approved;
         private int reviewReads;
 
@@ -150,6 +204,7 @@ internal static class ReviewSelfTest
             cancellationToken.ThrowIfCancellationRequested();
             var uri = request.RequestUri!;
             Requests.Add(uri);
+            if (Offline) throw new HttpRequestException("Synthetic offline");
             object? body = null;
             if (request.Content is not null)
             {
@@ -166,17 +221,21 @@ internal static class ReviewSelfTest
                 return NoContent();
             }
             if (uri.AbsolutePath == "/api/me" && request.Method == HttpMethod.Get)
-                return Json(new { username = "reviewer", nickname = "审核员", admin });
+                return ExpireAfterDecision && Decisions > 0 ? Error(HttpStatusCode.Unauthorized, "请先登录 RimWise 账号。")
+                    : AnonymousMe ? Json(null!) : Json(new { username = "reviewer", nickname = "审核员", admin = admin && !RoleRemoved });
             if (uri.AbsolutePath == "/api/review" && request.Method == HttpMethod.Get)
             {
                 if (failAfterDecision && Decisions > 0) throw new HttpRequestException("Synthetic refresh failure");
+                if (ReviewStatus is { } status) return Error(status, "请先登录 RimWise 账号。");
                 return Json(approved ? Array.Empty<object>() : new[] { Item(stale && ++reviewReads >= 3 ? new string('b', 64) : Digest) });
             }
             if (uri.AbsolutePath == "/api/images/" + ImageId)
-                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(tamperedImage ? new byte[] { 1, 2, 3 } : image) };
+                return ImageUnauthorized ? Error(HttpStatusCode.Unauthorized, "请先登录 RimWise 账号。")
+                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(tamperedImage ? new byte[] { 1, 2, 3 } : image) };
             if (uri.AbsolutePath == "/api/review/" + SubmissionId && request.Method == HttpMethod.Post)
             {
                 CheckCsrf(request);
+                if (MutationStatus is { } status) return Error(status, "页面验证已失效，请刷新后重试。");
                 if (stale) return Error(HttpStatusCode.Conflict, "投稿状态或内容已变化，请刷新并重新查看后再审核。");
                 var payload = (JsonElement)body!;
                 var decision = new Decision(payload.GetProperty("approve").GetBoolean(), payload.GetProperty("reason").GetString() ?? "");

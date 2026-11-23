@@ -222,10 +222,13 @@ public partial class MainWindow
     private (int Index, DataGridRow? Row, bool After) DropPosition(DataGrid grid, DragEventArgs e)
     {
         var row = HitRow(grid, e.OriginalSource);
-        if (row?.Item is not LoadOrderRow item) return (ViewModel.Rows.Count, null, true);
+        if (row?.Item is not LoadOrderRow item) return (ViewModel.IsAvailableSortDescending ? 0 : ViewModel.Rows.Count, null, true);
         var after = e.GetPosition(row).Y >= row.ActualHeight / 2;
-        return (ViewModel.Rows.IndexOf(item) + (after ? 1 : 0), row, after);
+        return (OrderDisplayInsertionIndex(item, after), row, after);
     }
+
+    internal int OrderDisplayInsertionIndex(LoadOrderRow item, bool after) =>
+        ViewModel.Rows.IndexOf(item) + ((ViewModel.IsAvailableSortDescending ? !after : after) ? 1 : 0);
 
     private void ModGrid_DragOver(object sender, DragEventArgs e)
     {

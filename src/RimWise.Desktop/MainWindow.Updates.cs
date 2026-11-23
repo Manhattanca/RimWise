@@ -74,6 +74,7 @@ public partial class MainWindow
                 return;
             }
             downloading = true;
+            CacheReleaseNotes(release);
             reportProgress = true;
             ShowUpdateNotification($"发现新版本 {release.Version}", "正在后台下载；可以继续使用软件。", false);
             var progress = new Progress<DownloadProgress>(value =>

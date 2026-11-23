@@ -1,0 +1,35 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <LinearGradientBrush x:Key="AppearanceHueTrack" StartPoint="0,0.5" EndPoint="1,0.5">
+        <GradientStop Color="Red" Offset="0"/><GradientStop Color="Yellow" Offset="0.166667"/>
+        <GradientStop Color="Lime" Offset="0.333333"/><GradientStop Color="Cyan" Offset="0.5"/>
+        <GradientStop Color="Blue" Offset="0.666667"/><GradientStop Color="Magenta" Offset="0.833333"/>
+        <GradientStop Color="Red" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- No page commands: only the thumb moves with the mouse; keyboard commands remain native. -->
+    <Style x:Key="AppearanceSlider" TargetType="Slider">
+        <Setter Property="MinHeight" Value="28"/>
+        <Setter Property="IsMoveToPointEnabled" Value="False"/>
+        <Setter Property="Background" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
+            <Grid Background="Transparent">
+                <Border Height="6" CornerRadius="3" Margin="9,0" VerticalAlignment="Center" Background="{TemplateBinding Background}"/>
+                <Track x:Name="PART_Track" Orientation="Horizontal">
+                    <Track.DecreaseRepeatButton><RepeatButton IsHitTestVisible="False" Focusable="False" Opacity="0"/></Track.DecreaseRepeatButton>
+                    <Track.Thumb><Thumb x:Name="AppearanceThumb" Width="20" Height="24" Focusable="False" Cursor="Hand">
+                        <Thumb.Template><ControlTemplate TargetType="Thumb">
+                            <Border Width="14" Height="20" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource AccentBrush}" BorderThickness="2" CornerRadius="4"/>
+                        </ControlTemplate></Thumb.Template>
+                    </Thumb></Track.Thumb>
+                    <Track.IncreaseRepeatButton><RepeatButton IsHitTestVisible="False" Focusable="False" Opacity="0"/></Track.IncreaseRepeatButton>
+                </Track>
+                <Border x:Name="Focus" BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1" CornerRadius="4" Visibility="Collapsed" IsHitTestVisible="False"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="Visibility" Value="Visible"/></Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+</ResourceDictionary>

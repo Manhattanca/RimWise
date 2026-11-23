@@ -1,4 +1,4 @@
-#if DEBUG
+﻿#if DEBUG
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -127,7 +127,7 @@ internal static class AiUiSmokeCheck
                 ((App)Application.Current).Themes.Select(theme, save: false);
                 await Layout(settings);
                 AssertBrush(settings.ProviderBox.Foreground, "TextBrush");
-                AssertBrush(settings.ApiKeyBox.Background, "InputBrush");
+                AssertBrush(settings.ApiKeyBox.Background, "InputSurfaceBrush");
                 foreach (var combo in new[] { settings.ProviderBox, window.AvailableSortBox, window.SourceFilterBox, window.OrderSourceFilterBox })
                 {
                     combo.BringIntoView();
@@ -140,7 +140,7 @@ internal static class AiUiSmokeCheck
                     Assert(popup.IsOpen && popup.Child is FrameworkElement child && child.ActualWidth >= combo.ActualWidth - 1,
                         "Dropdown popup failed to lay out.");
                     var border = (FrameworkElement)popup.Child;
-                    AssertBrush(((Border)border).Background, "PanelBrush");
+                    AssertBrush(((Border)border).Background, "SelectorSurfaceBrush");
                     foreach (var item in combo.Items.OfType<ComboBoxItem>())
                     {
                         Assert(item.ActualHeight > 15, "Dropdown item is not visible.");
@@ -169,16 +169,21 @@ internal static class AiUiSmokeCheck
                     "Sort label and picker were separated when wrapping.");
                 var directionBounds = window.AvailableSortDirectionButton.TransformToAncestor(window)
                     .TransformBounds(new Rect(window.AvailableSortDirectionButton.RenderSize));
-                Assert(filterBounds.Right <= directionBounds.Left && directionBounds.Right <= headerBounds.Right + 1,
-                    "Sort controls exceed the inactive pane.");
+                var toolsBounds = window.ListDisplayControls.TransformToAncestor(window).TransformBounds(new Rect(window.ListDisplayControls.RenderSize));
+                Assert(directionBounds.Top < headerBounds.Top && directionBounds.Right <= toolsBounds.Right + 1,
+                    "Shared display direction must sit above both independent list headers.");
                 var countBounds = window.AvailableCountText.TransformToAncestor(window).TransformBounds(new Rect(window.AvailableCountText.RenderSize));
-                Assert(!countBounds.IntersectsWith(directionBounds), "Inactive count overlaps sort controls.");
+                Assert(!countBounds.IntersectsWith(filterBounds), "Inactive count overlaps its own filter controls.");
+                var availableY = window.AvailableGrid.TranslatePoint(new Point(), window).Y;
+                var orderY = window.OrderGrid.TranslatePoint(new Point(), window).Y;
+                Assert(Math.Abs(availableY - orderY) < 1 && Math.Abs(window.AvailableGrid.ActualHeight - window.OrderGrid.ActualHeight) < 1,
+                    "Both mod lists must align their headers and viewport bottoms at minimum width.");
                 PrototypeSmokeCheck.SavePreview(window, Path.Combine(output, $"{theme}-主窗口最小尺寸.png"));
                 window.AvailableCountText.SetCurrentValue(TextBlock.TextProperty, "20000 / 20000");
                 await Layout(window);
                 countBounds = window.AvailableCountText.TransformToAncestor(window).TransformBounds(new Rect(window.AvailableCountText.RenderSize));
-                Assert(countBounds.Right <= headerBounds.Right + 1 && countBounds.Top >= directionBounds.Bottom,
-                    "Large inactive count failed to wrap within the narrow pane.");
+                Assert(countBounds.Right <= headerBounds.Right + 1 && countBounds.Bottom <= filterBounds.Top + 1,
+                    "Large inactive count must fit its own header row without overlapping filters.");
                 window.AvailableCountText.GetBindingExpression(TextBlock.TextProperty)!.UpdateTarget();
             }
             // Keep a dropdown open during a live palette change, not only between openings.

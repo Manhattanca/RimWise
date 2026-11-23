@@ -95,8 +95,8 @@
         <Style.Resources>
             <Style TargetType="ScrollBar" BasedOn="{StaticResource ModScrollBar}" />
         </Style.Resources>
-        <Setter Property="RowBackground" Value="{DynamicResource PanelBrush}" />
-        <Setter Property="AlternatingRowBackground" Value="{DynamicResource AlternateBrush}" />
+        <Setter Property="RowBackground" Value="{DynamicResource ListSurfaceBrush}" />
+        <Setter Property="AlternatingRowBackground" Value="{DynamicResource ListAlternateBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
         <Setter Property="RowHeight" Value="{DynamicResource ModRowHeight}" />
         <Setter Property="MinRowHeight" Value="{DynamicResource ModRowHeight}" />

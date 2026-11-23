@@ -7,7 +7,7 @@
         <Setter Property="BorderBrush" Value="Transparent" />
         <Setter Property="Background"><Setter.Value><MultiBinding Converter="{StaticResource MarkerBackground}">
             <Binding Path="MarkerColor" /><Binding Path="(ItemsControl.AlternationIndex)" RelativeSource="{RelativeSource Self}" />
-            <Binding Path="Background" RelativeSource="{RelativeSource AncestorType=DataGrid}" />
+            <Binding Path="RowBackground" RelativeSource="{RelativeSource AncestorType=DataGrid}" />
         </MultiBinding></Setter.Value></Setter>
         <Style.Triggers>
             <Trigger Property="IsSelected" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" /></Trigger>

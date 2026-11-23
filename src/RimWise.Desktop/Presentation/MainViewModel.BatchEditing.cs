@@ -43,6 +43,8 @@ public sealed partial class MainViewModel
     private void RenumberRows()
     {
         for (var i = 0; i < Rows.Count; i++) Rows[i].Index = i + 1;
+        // The descending projection was built before renumbering after a collection reset.
+        if (VisibleRows.SortDescriptions.Count > 0) VisibleRows.Refresh();
     }
 
     // The insertion index belongs to the complete list before the selected rows are removed.

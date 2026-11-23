@@ -39,7 +39,7 @@ public sealed class MarkerBackgroundConverter : IMultiValueConverter
         brushes[key] = brush;
         return brush;
     }
-    private static Color Blend(Color a, Color b, double amount) => Color.FromRgb(
+    private static Color Blend(Color a, Color b, double amount) => Color.FromArgb(a.A,
         (byte)(a.R + (b.R - a.R) * amount), (byte)(a.G + (b.G - a.G) * amount), (byte)(a.B + (b.B - a.B) * amount));
     private static SolidColorBrush Brush(Color value) { var brush = new SolidColorBrush(value); brush.Freeze(); return brush; }
     public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => throw new NotSupportedException();

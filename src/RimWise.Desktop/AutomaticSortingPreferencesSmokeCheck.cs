@@ -162,7 +162,7 @@ internal static class AutomaticSortingPreferencesSmokeCheck
                     {
                         var row = grid.ItemContainerGenerator.ContainerFromIndex(index) as DataGridRow;
                         Assert(row is not null, "Picker row was not realized");
-                        var expected = (SolidColorBrush)picker.FindResource(index % 2 == 0 ? "PanelBrush" : "AlternateBrush");
+                        var expected = (SolidColorBrush)picker.FindResource(index % 2 == 0 ? "ListSurfaceBrush" : "ListAlternateBrush");
                         Assert(row!.Background is SolidColorBrush actual && actual.Color == expected.Color,
                             $"{theme} picker row {index} has a system background instead of its theme");
                     }

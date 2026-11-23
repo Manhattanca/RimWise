@@ -86,13 +86,19 @@ internal static class MarketplaceSmokeCheck
         TaskCompletionSource<MarketplaceResult<MarketplaceCatalogue>>? held = null;
         TaskCompletionSource<MarketplaceResult<MarketplaceManifest>>? heldManifest = null;
         var applySuccess = true;
+        var cancellationAwareCatalogue = false;
+        CancellationToken heldCatalogueToken = default;
         TaskCompletionSource? heldSteam = null;
         MarketplacePageActions Actions() => new()
         {
             LoadCatalogueAsync = token =>
             {
                 loads++;
-                if (held is not null) return held.Task;
+                if (held is not null)
+                {
+                    heldCatalogueToken = token;
+                    return cancellationAwareCatalogue ? held.Task.WaitAsync(token) : held.Task;
+                }
                 return fail ? Task.FromException<MarketplaceResult<MarketplaceCatalogue>>(new IOException("模拟连接失败"))
                     : Task.FromResult(new MarketplaceResult<MarketplaceCatalogue>(catalogue, cache, cache ? "网络不可用，使用已验证缓存。" : null));
             },
@@ -263,18 +269,40 @@ internal static class MarketplaceSmokeCheck
             && !window.MarketplaceNoticeProgress.IsIndeterminate && window.MarketplaceNoticeProgress.Value == 25
             && window.UpdateNotice.IsVisible && window.UpdateInstallButton.IsVisible,
             "Actual byte progress appears in its notification without replacing the independent update notice");
+        var lifecycle = new List<string>();
+        page.Unloaded += (_, _) => lifecycle.Add("Unloaded: " + page.StatusText.Text);
+        page.Loaded += (_, _) => lifecycle.Add("Loaded: " + page.StatusText.Text);
         foreach (var theme in new[] { ThemePreference.Light, ThemePreference.Dark })
         {
-            ((App)Application.Current).Themes.Select(theme, save: false);
-            await Idle(window);
-            await Task.Delay(220);
-            await Idle(window);
-            var chrome = (Border)page.ResultsList.Template.FindName("Chrome", page.ResultsList);
-            File.WriteAllText(Path.Combine(output, $"market-list-template-{theme}.xaml"), System.Windows.Markup.XamlWriter.Save(page.ResultsList.Template));
-            Check(chrome.Background is SolidColorBrush chromeBrush && page.ResultsList.Background is SolidColorBrush listBrush
-                && chromeBrush.Color == listBrush.Color && chromeBrush.Color.A == 255
-                && chromeBrush.Color == ((SolidColorBrush)window.FindResource("PageBrush")).Color,
-                $"Disabled market results retain the themed background in {theme}: chrome={chrome.Background}, list={page.ResultsList.Background}, opacity={chrome.Opacity}");
+            var themes = ((App)Application.Current).Themes;
+            themes.Select(theme, save: false);
+            foreach (var opacity in new[] { 0d, .31, 1d })
+            {
+                themes.Preview(themes.Current with { OtherUiOpacity = opacity }, themes.Image);
+                await Idle(window);
+                await Task.Delay(220);
+                await Idle(window);
+                var chrome = (Border)page.ResultsList.Template.FindName("Chrome", page.ResultsList);
+                File.WriteAllText(Path.Combine(output, $"market-list-template-{theme}-{opacity:0.00}.xaml"), System.Windows.Markup.XamlWriter.Save(page.ResultsList.Template));
+                File.WriteAllText(Path.Combine(output, $"market-list-state-{theme}-{opacity:0.00}.json"), JsonSerializer.Serialize(new
+                { page.IsBusy, page.IsLoaded, page.ResultsList.IsEnabled, Background = chrome.Background.ToString(), ListBackground = page.ResultsList.Background.ToString(), chrome.Opacity, Status = page.StatusText.Text, Lifecycle = lifecycle.ToArray() }));
+                Check(page.IsLoaded && page.IsBusy && !page.PendingOperation.IsCompleted && !page.ResultsList.IsEnabled,
+                    $"Live theme and opacity changes preserve the pending market operation in {theme} at {opacity:P0}");
+                Check(chrome.Background is SolidColorBrush chromeBrush && page.ResultsList.Background is SolidColorBrush listBrush
+                    && chromeBrush.Color == listBrush.Color && chromeBrush.Color.A == 0 && chrome.Opacity == .7,
+                    $"Disabled market scaffold stays transparent without double-layer alpha in {theme} at {opacity:P0}: chrome={chrome.Background}, list={page.ResultsList.Background}, alpha={chrome.Opacity}, busy={page.IsBusy}, status={page.StatusText.Text}");
+                var cards = page.ResultsList.Items.Cast<object>().Select(item => page.ResultsList.ItemContainerGenerator.ContainerFromItem(item))
+                    .OfType<ListBoxItem>().ToArray();
+                Check(cards.Length > 0 && cards.All(card =>
+                {
+                    card.ApplyTemplate();
+                    var cardChrome = (Border)card.Template.FindName("Chrome", card);
+                    var basis = card.IsSelected ? "SelectionBrush" : card.IsMouseOver ? "HoverBrush" : "PanelBrush";
+                    var expected = ((SolidColorBrush)window.FindResource(basis)).Color;
+                    expected.A = (byte)Math.Round(opacity * 255);
+                    return cardChrome.Background is SolidColorBrush brush && brush.Color == expected;
+                }), $"Disabled market cards preserve exact theme color and configured alpha in {theme} at {opacity:P0}");
+            }
             PrototypeSmokeCheck.SavePreview(window, Path.Combine(output, $"market-downloading-{theme}.png"));
         }
         page.Cancel();
@@ -360,6 +388,19 @@ internal static class MarketplaceSmokeCheck
         await page.RefreshAsync();
         Check(page.ResultsList.Items.Count == 0 && page.EmptyPanel.IsVisible && !page.UseButton.IsEnabled,
             "Empty official market shows honest empty state with no fictitious results");
+        held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        cancellationAwareCatalogue = true;
+        var detachPending = page.RefreshAsync();
+        window.MarketplaceHost.Content = null;
+        await Idle(window);
+        File.WriteAllText(Path.Combine(output, "real-detach-state.json"), JsonSerializer.Serialize(new
+        { page.IsLoaded, page.IsBusy, heldCatalogueToken.IsCancellationRequested, Lifecycle = lifecycle.ToArray() }));
+        await detachPending.WaitAsync(TimeSpan.FromSeconds(8));
+        Check(!page.IsLoaded && !page.IsBusy && heldCatalogueToken.IsCancellationRequested && page.StatusText.Text.Contains("已取消"),
+            "Real page detachment still cancels pending requests after the loaded lifecycle settles");
+        window.MarketplaceHost.Content = page;
+        held = null;
+        await Idle(window);
         var draftWindow = new MarketplacePublishWindow(first) { Owner = window };
         draftWindow.Show();
         await Idle(draftWindow);

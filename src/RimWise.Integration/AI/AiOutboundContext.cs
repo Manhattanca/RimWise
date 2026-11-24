@@ -50,7 +50,7 @@ internal sealed record AiOutboundContext(string GameVersion, IReadOnlyList<strin
         "DependencyNotInstalled", "OrderModMissing", "OrderModAmbiguous", "DependencyNotResolvedInOrder",
         "DuplicateOrderEntry", "DuplicateActiveInstallation", "DependencyLoadsAfter", "LoadBeforeViolated",
         "LoadAfterViolated", "DeclaredConflict", "OrderingCycle", "OrderingCycleDeferred", "CustomRuleViolated", "GameStartupFailed", "GameLogError",
-        "GameContentLoadsAfter", "GameMissingXmlParent", "GameTypeLoadFailure", "GamePatchFailure",
+        "GameContentLoadsAfter", "GameMissingXmlParent", "GameTypeLoadFailure", "GameModContentFailure", "GamePatchFailure",
         "GameInitializationFailure", "GameHarmonyFailure", "GameTestBlockingFailure"
     };
 

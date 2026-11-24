@@ -14,6 +14,20 @@ if (args.Length == 2 && args[0] == "--fast-update-live-probe")
     return;
 }
 
+if (args.Length >= 1 && args[0] == "--suspected-mod-failure-checks")
+{
+    var passed = new List<string>(); var failures = new List<string>();
+    SuspectedModFailureChecks.Run((name, test) =>
+    {
+        try { test(); passed.Add(name); Console.WriteLine("PASS " + name); }
+        catch (Exception ex) { failures.Add(name + ": " + ex); Console.WriteLine("FAIL " + name + ": " + ex); }
+    });
+    if (args.Length == 3) SuspectedModFailureChecks.Replay(args[1], args[2]);
+    Console.WriteLine(JsonSerializer.Serialize(new { Passed = passed.Count, Failed = failures.Count, Checks = passed, Failures = failures }));
+    Environment.ExitCode = failures.Count == 0 ? 0 : 1;
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--fast-update-checks")
 {
     var passed = new List<string>(); var failures = new List<string>();
@@ -275,6 +289,7 @@ MaintenanceDiagnosisChecks.Run(Check);
 DiagnosticAttributionChecks.Run(Check);
 CascadingTypeLoadChecks.Run(Check);
 MaintenanceProgressChecks.Run(Check);
+SuspectedModFailureChecks.Run(Check);
 MaintenanceEfficiencyChecks.Run(Check);
 LargeLogChecks.Run(Check);
 AiResponseFormatChecks.Run(Check);

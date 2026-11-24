@@ -8,10 +8,15 @@ public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, stri
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool ReadFailureRemoval { get; init; } = false;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool SuspectedFailureVerification { get; init; }
     public string? FailureFingerprint { get; init; }
     public string[] ErrorSignatures { get; init; } = [];
     internal void Validate()
     {
+        if (SuspectedFailureVerification && (ReadFailureRemoval || DiagnosticCodes is null
+            || !DiagnosticCodes.Any(SuspectedModFailureTrials.IsFailureCode)))
+            throw new InvalidDataException("疑似故障验证记录缺少对应的加载失败证据。");
         if (!MaintenanceErrorMemory.Valid(ErrorSignatures) || ErrorSignatures.Length > 100)
             throw new InvalidDataException("试排除错误明细指纹无效。");
         if (FailureFingerprint is not null && !MaintenanceFailureSignature.Valid(FailureFingerprint))
@@ -22,7 +27,7 @@ public sealed record TrialExclusion(string SelectedId, string[] RemovedIds, stri
         if (string.IsNullOrWhiteSpace(SelectedId) || Invalid(RemovedIds) || Invalid(TestedOrder)
             || !RemovedIds.Contains(SelectedId, StringComparer.OrdinalIgnoreCase)
             || RemovedIds.Any(id => !TestedOrder.Contains(id, StringComparer.OrdinalIgnoreCase))
-            || DiagnosticCodes is null || DiagnosticCodes.Length is < 1 or > 7
+            || DiagnosticCodes is null || DiagnosticCodes.Length is < 1 or > 8
             || DiagnosticCodes.Any(code => !RuntimeConflictEvidence.IsDiagnosticCode(code)) || Attempt < 1)
             throw new InvalidDataException("临时试排除记录无效。");
     }
@@ -154,7 +159,8 @@ internal static class TrialExclusionPlanning
     internal static AiOrderPlan Plan(IReadOnlyList<string> before, IReadOnlyList<string> target,
         ModCatalogue catalogue, IReadOnlyList<string> retained, GameVersion version,
         IReadOnlyList<CustomOrderRule> rules, IReadOnlyList<TrialExclusion> trials,
-        IReadOnlyList<ConflictRemovalApproval>? approvals = null, ModCatalogue? validationCatalogue = null)
+        IReadOnlyList<ConflictRemovalApproval>? approvals = null, ModCatalogue? validationCatalogue = null,
+        bool privateDiagnostic = false)
     {
         var constraints = validationCatalogue ?? catalogue;
         var expanded = AiOrderPlanner.ExpandRequiredOrder(before, constraints, version, allowMissing: true);
@@ -168,11 +174,32 @@ internal static class TrialExclusionPlanning
         if (rejected.Count == 0)
         {
             var verified = new LoadOrderSorter().Validate(constraints, target, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
-            if (!verified.Complete || verified.Changed) rejected.Add(verified.FailureReason ?? "试排除候选违反排序规则。");
+            // A private differential test may preserve existing order violations, never add new
+            // edits. This exception is NOT available to final publication (default is strict).
+            var unchangedSurvivors = privateDiagnostic && trials.LastOrDefault() is { SuspectedFailureVerification: true } last
+                && last.TestedOrder.Except(last.RemovedIds, StringComparer.OrdinalIgnoreCase)
+                    .SequenceEqual(target, StringComparer.Ordinal);
+            var orderOnly = verified.Diagnostics.Any(d => d.Code == "OrderConstraintViolated")
+                && !verified.Diagnostics.Any(d => d.Code is "OrderModMissing" or "OrderModAmbiguous" or "DuplicateOrderEntry"
+                    or "DuplicateActiveInstallation" or "DependencyNotInstalled" or "DependencyNotResolvedInOrder"
+                    or "DeclaredConflict" or "MetadataUnreadable" or "TargetVersionUnknown" or "OrderingCycle");
+            var preservedViolations = false;
+            if (unchangedSurvivors && orderOnly)
+            {
+                var baseline = new LoadOrderSorter().Validate(constraints, trials[^1].TestedOrder, version, version,
+                    rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
+                var existing = baseline.Diagnostics.Where(d => d.Code == "OrderConstraintViolated")
+                    .Select(d => (d.Identifier, d.Message)).ToHashSet();
+                preservedViolations = verified.Diagnostics.Where(d => d.Code == "OrderConstraintViolated")
+                    .All(d => existing.Contains((d.Identifier, d.Message)));
+            }
+            if ((!verified.Complete || verified.Changed) && !preservedViolations)
+                rejected.Add(verified.FailureReason ?? "试排除候选违反排序规则。");
         }
         return new(before.ToArray(), rejected.Count == 0 ? target.ToArray() : before.ToArray(),
             AiOrderPlanner.Fingerprint(before, catalogue, retained, rules, version), rejected.ToArray(),
-            trials.Select(t => (t.ReadFailureRemoval ? MetadataReadFailureTrials.ReadFailureRemovalReason + "：" : "临时试排除（未证明根因）：") + t.SelectedId)
+            trials.Select(t => (t.ReadFailureRemoval ? MetadataReadFailureTrials.ReadFailureRemovalReason + "："
+                : t.SuspectedFailureVerification ? "疑似故障模组验证（临时停用，未证明根因）：" : "临时试排除（未证明根因）：") + t.SelectedId)
                 .Concat(trials.Any(t => t.ReadFailureRemoval) && MetadataReadFailureTrials.HasUnknownDependencies(constraints, target, version)
                     ? [MetadataReadFailureTrials.UnknownDependenciesNotice] : Array.Empty<string>()).ToArray());
     }

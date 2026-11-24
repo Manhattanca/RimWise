@@ -97,8 +97,13 @@ public static class GameTestDiagnostics
         if (Has("Could not find parent node") || Has("Could not find parent named") || Has("No parent node found"))
             yield return "GameMissingXmlParent";
         if (Has("Could not find type named") || Has("TypeLoadException") || Has("ReflectionTypeLoadException")
-            || Has("MissingMethodException") || Has("Could not load type") || Has("Could not resolve type"))
+            || Has("MissingMethodException") || Has("Could not load type") || Has("Could not resolve type")
+            || Has("BadImageFormatException") || Has("FileLoadException") || Has("Could not load file or assembly"))
             yield return "GameTypeLoadFailure";
+        if (Has("XmlException") || Has("XML error:") && Has("doesn't correspond to any field")
+            || Has("contents are not the format its extension names")
+            || Has("is not a Def type or could not be found"))
+            yield return "GameModContentFailure";
         if (Has("Patch operation") || Has("PatchOperation") || Has("patch failed")) yield return "GamePatchFailure";
         if (Has("Exception from asynchronous event") || Has("Root_Play.SetupForQuickTestPlay") || Has("Verse.Game..ctor"))
             yield return "GameInitializationFailure";

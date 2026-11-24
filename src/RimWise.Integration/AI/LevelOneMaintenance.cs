@@ -292,7 +292,7 @@ public sealed class LevelOneMaintenance
                 // A crash may happen after journalling the trial but before applying it. Rebuild its
                 // reduced set without replaying the paid reply or restoring excluded mods between rounds.
                 target = current.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(remaining) ? current
-                    : trials.Any(t => t.ReadFailureRemoval) ? remaining
+                    : trials.Any(t => t.ReadFailureRemoval || t.SuspectedFailureVerification) ? remaining
                     : new LoadOrderSorter().Sort(catalogue, remaining, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true).Order.ToArray();
             }
             if (!request.CurrentOrder.SequenceEqual(target, StringComparer.Ordinal))
@@ -301,7 +301,7 @@ public sealed class LevelOneMaintenance
                     ? AiOrderPlanner.PreparedOrder(request.CurrentOrder, target, catalogue, request.RetainedMods,
                         GameVersion.Parse(request.GameVersion) ?? throw new InvalidDataException("游戏版本未知。"), rules, approvals)
                     : TrialExclusionPlanning.Plan(request.CurrentOrder, target, catalogue, request.RetainedMods,
-                        GameVersion.Parse(request.GameVersion)!, rules, trials, approvals);
+                        GameVersion.Parse(request.GameVersion)!, rules, trials, approvals, privateDiagnostic: true);
                 if (!seed.CanApply || !seed.After.SequenceEqual(target, StringComparer.Ordinal))
                     throw new InvalidOperationException("候选排序未通过当前安装校验：" +
                         (seed.Rejected.Count == 0 ? "候选结果与目标不一致。" : string.Join("；", seed.Rejected.Take(3))));
@@ -457,6 +457,21 @@ public sealed class LevelOneMaintenance
                     }
                 }
                 var failureFingerprint = MaintenanceFailureSignature.Create(report);
+                if (testOriginalFirst && recoveryTask.Current.Feedback is not { ReplyReceived: true }
+                    && trials.LastOrDefault() is { SuspectedFailureVerification: true } previousVerification
+                    && (failureFingerprint is not null && recoveryTask.Current.DiagnosedFailures.Contains(failureFingerprint, StringComparer.Ordinal)
+                        || MaintenanceErrorMemory.Covered(report, recoveryTask.Current.DiagnosedErrors)))
+                {
+                    // Only a strict reduction in fully captured errors permits another test on
+                    // already diagnosed survivors. Identical errors do not authorize serial removal.
+                    var improved = previousVerification.ErrorSignatures.Length > report.ErrorSignatures.Length
+                        && report.ErrorSignatures.Length > 0 && report.ErrorSignatures.All(s =>
+                            previousVerification.ErrorSignatures.Contains(s, StringComparer.Ordinal));
+                    if (improved && await TryTrialAsync(report, suspectedFailure: true)) continue;
+                    Stop(improved ? "疑似故障验证后部分错误消失，但没有进一步满足保护条件的验证对象；剩余错误尚未解决。"
+                        : "疑似故障验证后相同错误仍然存在，未证明该模组是根因；已停止重复请求及无依据的连续停用，原排序将恢复。");
+                    break;
+                }
                 if (!testOriginalFirst && recoveryTask.Current.Feedback is not { ReplyReceived: true }
                     && MaintenanceErrorMemory.Covered(report, recoveryTask.Current.DiagnosedErrors))
                 {
@@ -489,6 +504,7 @@ public sealed class LevelOneMaintenance
                         Stop("服务未遵守输出上限，已停止；恢复不会绕过用量限制。");
                     else if (testOriginalFirst && !SafeToAct(report)) Stop(UnsafeEvidenceReason(report));
                     else if (TryCopyFallback(report)) { }
+                    else if (await TryTrialAsync(report, suspectedFailure: true)) continue;
                     else if (await TryTrialAsync(report)) continue;
                     else Stop("上轮 AI 回复已保存，但没有通过校验的待执行调整；已停止，避免重复付费请求。");
                     break;
@@ -576,7 +592,7 @@ public sealed class LevelOneMaintenance
                 {
                     if (!AllowsStartupActions(report, reply.Response))
                     {
-                        if (await TryTrialAsync(report)) continue;
+                        if (await TryTrialAsync(report, suspectedFailure: true) || await TryTrialAsync(report)) continue;
                         Stop(startupFailure.Context.EnvironmentFailure || startupFailure.Diagnosis?.Category == "environment"
                             ? "本轮失败涉及电脑或系统环境，已停止自动调整；请查看原因、建议及本轮日志路径。"
                             : "暂未找到可安全自动处理的失败原因，已停止；请携带日志寻求进一步帮助。");
@@ -587,6 +603,8 @@ public sealed class LevelOneMaintenance
                 if (AttemptLimitReached(attempt))
                 { Stop("本轮报错已完成分析，但测试次数已用尽；未应用无法复测的调整。"); break; }
                 if (plan is null) throw new InvalidOperationException("AI 排序方案未完成校验。");
+                if ((!plan.CanApply || seen.Any(o => o.SequenceEqual(plan.After, StringComparer.OrdinalIgnoreCase)))
+                    && await TryTrialAsync(report, suspectedFailure: true)) continue;
                 if (testOriginalFirst && !plan.CanApply && reply.Response.Actions.Count == 0
                     && failureFingerprint is not null && failureFingerprint == lastSwapFailure && lastSwappedOwners.Length > 0)
                 {
@@ -824,13 +842,17 @@ public sealed class LevelOneMaintenance
             + (recoveryTask?.Current.LastUsage?.Output > (recoveryTask?.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest)
                 ? " 服务未遵守输出上限。" : "")
             + " 已停止自动排序，不再进行本地换位、试排除、游戏复测或后续 AI 请求。原排序及本轮日志已保留；请检查 AI 设置及错误原因后重新开始。已回报用量按实记录，未回报用量仍记为未知，不自动重复请求。";
-        async Task<bool> TryTrialAsync(MaintenanceGameReport report, IReadOnlyList<string>? cycleMembers = null, bool readFailure = false)
+        async Task<bool> TryTrialAsync(MaintenanceGameReport report, IReadOnlyList<string>? cycleMembers = null,
+            bool readFailure = false, bool suspectedFailure = false)
         {
             deadline.Token.ThrowIfCancellationRequested();
             if (!readFailure && TryCopyFallback(report)) throw new MaintenancePauseException("本轮关联项将先自动换用其他副本进行对照；未试排除模组。");
             trialStopReason = null;
             if (readFailure && !limits.ReadFailureTrialsEnabled) return false;
-            if (!readFailure && testOriginalFirst && cycleMembers is null) return false;
+            if (!readFailure && !suspectedFailure && testOriginalFirst && cycleMembers is null) return false;
+            if (suspectedFailure && (!testOriginalFirst || !SafeToAct(report)
+                || report.StartupFailure is not null
+                    && recoveryTask?.Current.Feedback?.StartupFailure?.Diagnosis?.Category != "mod")) return false;
             if (session is not IMaintenanceTrialSession trialSession || AttemptLimitReached(attempts)
                 || recoveryTask is null || requestInFlight || GameVersion.Parse(request.GameVersion) is not { } version)
             {
@@ -840,17 +862,19 @@ public sealed class LevelOneMaintenance
             }
             var candidates = readFailure
                 ? MetadataReadFailureTrials.Candidates(report, catalogue, current, request.RetainedMods, version, attempts)
+                : suspectedFailure ? SuspectedModFailureTrials.Candidates(report, catalogue, current, request.RetainedMods, version, attempts)
                 : TrialExclusionPlanning.Candidates(report, catalogue, current, request.RetainedMods, version, attempts, cycleMembers);
             TrialExclusion? trial = null;
             AiOrderPlan? plan = null;
             foreach (var candidate in candidates)
             {
-                if (!readFailure && testOriginalFirst && (candidate.RemovedIds.Length != 1 || !cycleMembers!.Contains(candidate.SelectedId, StringComparer.OrdinalIgnoreCase))) continue;
+                if (!readFailure && !suspectedFailure && testOriginalFirst && (candidate.RemovedIds.Length != 1 || !cycleMembers!.Contains(candidate.SelectedId, StringComparer.OrdinalIgnoreCase))) continue;
                 var remaining = current.Except(candidate.RemovedIds, StringComparer.OrdinalIgnoreCase).ToArray();
                 var sorted = readFailure || testOriginalFirst ? new LoadOrderSorter().Validate(catalogue, remaining, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true)
                     : new LoadOrderSorter().Sort(catalogue, remaining, version, version, rules, deferAdvisoryCycles: true, allowUnreadableMetadata: true);
-                if (!sorted.Complete) continue;
-                var proposed = TrialExclusionPlanning.Plan(current, readFailure || testOriginalFirst ? remaining : sorted.Order, catalogue, request.RetainedMods, version, rules, [candidate]);
+                if (!sorted.Complete && !suspectedFailure) continue;
+                var proposed = TrialExclusionPlanning.Plan(current, readFailure || testOriginalFirst ? remaining : sorted.Order,
+                    catalogue, request.RetainedMods, version, rules, [candidate], privateDiagnostic: suspectedFailure);
                 if (!proposed.CanApply || seen.Any(o => o.SequenceEqual(proposed.After, StringComparer.OrdinalIgnoreCase))) continue;
                 trial = candidate; plan = proposed; break;
             }
@@ -862,7 +886,7 @@ public sealed class LevelOneMaintenance
                     : "已检查全部关联候选，均违反排序约束或已测试过，未重复执行。";
                 return false;
             }
-            var batch = !readFailure && cycleMembers is null
+            var batch = !readFailure && !suspectedFailure && cycleMembers is null
                 ? TrialExclusionPlanning.Batch(report, catalogue, current, request.RetainedMods, version, trial) : [trial];
             if (batch.Length > 1)
             {
@@ -878,14 +902,16 @@ public sealed class LevelOneMaintenance
             // Persist authority before the test adapter can apply it. This is deliberately separate
             // from user approvals and cannot authorize publication to the personal game configuration.
             recoveryTask.Save(recoveryTask.Current with { TrialExclusions = trials, PendingConflict = null,
-                MayApply = false, Actions = [], Message = readFailure ? MetadataReadFailureTrials.ReadFailureRemovalReason : "已记录临时试排除，等待复测；尚未确认根因。" });
+                MayApply = false, Actions = [], Message = readFailure ? MetadataReadFailureTrials.ReadFailureRemovalReason
+                    : suspectedFailure ? "已记录疑似故障模组验证，临时停用关联项等待复测；尚未确认根因。" : "已记录临时试排除，等待复测；尚未确认根因。" });
             trialSession.AuthorizeTrialExclusions(trials);
             Save(AiTaskPhase.Applying);
             await session.ApplyAsync(plan, deadline.Token);
             current = plan.After.ToArray();
             seen.Add(current);
             Save(AiTaskPhase.Paused, clearFeedback: true);
-            Report((readFailure ? MetadataReadFailureTrials.ReadFailureRemovalReason + "：" : batch.Length > 1 ? $"合并试排除 {batch.Length} 组独立错误关联项，一次复测：" : "临时试排除：")
+            Report((readFailure ? MetadataReadFailureTrials.ReadFailureRemovalReason + "："
+                : suspectedFailure ? "疑似故障模组验证：临时停用 " : batch.Length > 1 ? $"合并试排除 {batch.Length} 组独立错误关联项，一次复测：" : "临时试排除：")
                 + string.Join("、", batch.SelectMany(t => t.RemovedIds).Select(id => ModDisplayName.Resolve(catalogue, version, id)))
                 + (readFailure ? "；正在复测，结束后由桌面会话结算此移出范围。" : "；尚未证明各项根因。结束后恢复原排序，移除仍按用户设置确认。")
                 + (readFailure && MetadataReadFailureTrials.HasUnknownDependencies(catalogue, current, version)

@@ -155,8 +155,9 @@ public partial class MainWindow
         UpdateNoticeText.Text = text;
         UpdateRetryButton.Visibility = retry ? Visibility.Visible : Visibility.Collapsed;
         UpdateInstallButton.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
+        var reveal = UpdateNotice.Visibility != Visibility.Visible;
         UpdateNotice.Visibility = Visibility.Visible;
-        Services.InterfaceMotion.Reveal(UpdateNotice);
+        if (reveal) Services.InterfaceMotion.RevealNotification(UpdateNotice);
         // Do not call Activate/Focus/ShowDialog: keyboard focus and sorting stay where they are.
     }
 

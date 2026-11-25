@@ -15,6 +15,12 @@ public sealed record MaintenanceLimits(int MaximumAttempts = 5, int TokenBudget 
     public bool ConfirmModRemoval { get; init; } = true;
     // Opt-in for new tasks; old recovery records keep their original request cap.
     public bool ExpandOutputBudget { get; init; }
+    // New user-selected unbudgeted tasks omit the wire output limit. Missing fields
+    // preserve older paid checkpoints; an explicit total budget still requires a cap.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UseProviderOutputLimit { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int? RequestOutputLimit => UseProviderOutputLimit && !TokenLimitEnabled ? null : OutputTokensPerRequest;
     // Scalar JSON preserves record equality when checkpoints are deserialized.
     public string? InsertionBaselineJson { get; init; }
     public bool AttemptLimitReached(int completed) => AttemptLimitEnabled && completed >= MaximumAttempts;
@@ -141,7 +147,7 @@ public sealed class LevelOneMaintenance
     {
         limits.Validate();
         request = request with { CurrentOrder = request.CurrentOrder.ToArray(), InstalledMods = request.InstalledMods.ToArray(),
-            RetainedMods = request.RetainedMods.ToArray(), Diagnostics = request.Diagnostics.ToArray(), OutputTokenLimit = limits.OutputTokensPerRequest };
+            RetainedMods = request.RetainedMods.ToArray(), Diagnostics = request.Diagnostics.ToArray(), OutputTokenLimit = limits.RequestOutputLimit };
         var baseDiagnostics = request.Diagnostics;
         var baseFacts = request.DiagnosticFacts.ToArray();
         var current = request.CurrentOrder.ToArray();
@@ -243,8 +249,8 @@ public sealed class LevelOneMaintenance
             if (recoveryTask.Current.Feedback is { } rejectedFeedback
                 && (rejectedFeedback.ReplyFailure != AiReplyFailure.None || rejectedFeedback.ServiceError is not null))
             {
-                replyFailure = rejectedFeedback.ReplyFailure == AiReplyFailure.None
-                    ? AiReplyFailure.ServiceFailure : rejectedFeedback.ReplyFailure;
+                replyFailure = AiReplyFailureText.ServiceFailureKind(rejectedFeedback.ServiceError,
+                    rejectedFeedback.ReplyFailure == AiReplyFailure.None ? AiReplyFailure.ServiceFailure : rejectedFeedback.ReplyFailure);
                 logPaths = rejectedFeedback.LogPaths;
                 restored = true;
                 Stop(AiErrorStop());
@@ -500,7 +506,7 @@ public sealed class LevelOneMaintenance
                 }
                 if (recoveryTask.Current.Feedback is { ReplyReceived: true })
                 {
-                    if (recoveryTask.Current.LastUsage?.Output > (recoveryTask.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest))
+                    if (recoveryTask.Current.LastRequestOutputLimit is { } previousCap && recoveryTask.Current.LastUsage?.Output > previousCap)
                         Stop("服务未遵守输出上限，已停止；恢复不会绕过用量限制。");
                     else if (testOriginalFirst && !SafeToAct(report)) Stop(UnsafeEvidenceReason(report));
                     else if (TryCopyFallback(report)) { }
@@ -527,18 +533,23 @@ public sealed class LevelOneMaintenance
                         : report.Errors.Count > 0 ? [new AiDiagnosticFact("GameLogError", "")] : [])
                         .Concat(testOriginalFirst ? cycleGroups.SelectMany(g => g).Select(id => new AiDiagnosticFact("OrderingCycleDeferred", id)) : []).Distinct().ToArray()
                 };
-                var outputLimit = AiOutputBudget.Next(limits, recoveryTask.Current.LastRequestOutputLimit,
-                    recoveryTask.Current.OutputBudgetExhausted);
-                if (outputLimit is null)
+                var providerOutputLimit = limits.RequestOutputLimit is null;
+                var outputLimit = providerOutputLimit ? null : AiOutputBudget.Next(limits, recoveryTask.Current.LastRequestOutputLimit,
+                    recoveryTask.Current.OutputBudgetExhausted, request.Settings);
+                if (outputLimit is null && !providerOutputLimit)
                 {
                     replyFailure = AiReplyFailure.OutputLimit;
                     Stop(AiErrorStop());
                     break;
                 }
                 if (outputLimit > (recoveryTask.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest))
-                    Report($"上次 AI 输出被截断，下一轮输出额度增至 {outputLimit} token；仍遵守总用量预算。");
+                    Report(recoveryTask.Current.LastRequestOutputLimit is null
+                        ? $"DeepSeek Flash 的推理与正文共用输出额度，本次预留 {outputLimit} token 上限；不会因截断自动重复请求，按实际用量记录。"
+                        : $"上次 AI 输出被截断，下一轮输出额度增至 {outputLimit} token；仍遵守总用量预算。");
                 request = request with { OutputTokenLimit = outputLimit };
-                var estimate = estimator.Estimate(request, outputLimit.Value);
+                if (providerOutputLimit)
+                    Report("未设置软件单次输出上限；由模型服务商决定可用输出长度，token 用量仍按服务回报记录。");
+                var estimate = estimator.Estimate(request, outputLimit);
                 if (limits.WouldExceedTokenLimit((long)spent + unknownReserve + estimate.Upper))
                 { Stop("预计下一次请求可能超过 token 预算，已停止。预算为估算控制，实际计数以服务返回为准。"); break; }
                 Report(estimate.Description);
@@ -777,7 +788,8 @@ public sealed class LevelOneMaintenance
             }
             var canApply = validated is { CanApply: true }
                 && (!testOriginalFirst || SafeToAct(report) && !cyclePlanBlocked)
-                && !limits.TokenLimitReached((long)nextSpent + nextReserve) && (usage is null || usage.Output <= request.OutputTokenLimit)
+                && !limits.TokenLimitReached((long)nextSpent + nextReserve)
+                && (usage is null || request.OutputTokenLimit is null || usage.Output <= request.OutputTokenLimit)
                 && AllowsStartupActions(report, reply.Response!)
                 && report.Errors.Count > 0
                 && !AttemptLimitReached(attempts)
@@ -790,17 +802,16 @@ public sealed class LevelOneMaintenance
                 conflict = conflicts.Conflicts.Select(c => RuntimeConflictResolution.FromReport(c, report,
                     catalogue, current, request.RetainedMods, version)?.RuntimeEvidence).FirstOrDefault(c => c is not null);
             var signature = MaintenanceFailureSignature.Create(report);
-            var failureKind = reply.ServiceError is not null ? AiReplyFailure.ServiceFailure
-                : reply.Failure != AiReplyFailure.None ? reply.Failure
+            var failureKind = AiReplyFailureText.ServiceFailureKind(reply.ServiceError, reply.Failure != AiReplyFailure.None ? reply.Failure
                 : actions is null ? AiReplyFailure.Unspecified
-                : validated is { Rejected.Count: > 0 } && !(testOriginalFirst && actions.Count == 0) ? AiReplyFailure.InvalidPlan : AiReplyFailure.None;
+                : validated is { Rejected.Count: > 0 } && !(testOriginalFirst && actions.Count == 0) ? AiReplyFailure.InvalidPlan : AiReplyFailure.None);
             return checkpoint with { Phase = AiTaskPhase.ReplySaved, ReportedTokens = nextSpent,
                 DiagnosedFailures = signature is null ? checkpoint.DiagnosedFailures
                     : checkpoint.DiagnosedFailures.Append(signature).Distinct(StringComparer.Ordinal).ToArray(),
                 DiagnosedErrors = reply.Succeeded && reply.Response is not null
                     ? checkpoint.DiagnosedErrors.Concat(report.ErrorSignatures).Distinct(StringComparer.Ordinal).Take(20000).ToArray()
                     : checkpoint.DiagnosedErrors,
-                OutputBudgetExhausted = reply.Failure == AiReplyFailure.OutputLimit,
+                OutputBudgetExhausted = failureKind == AiReplyFailure.OutputLimit,
                 UnknownUsage = unknown || usage is null, ReservedTokens = nextReserve, LastUsage = usage,
                 Feedback = checkpoint.Feedback! with { ReplyReceived = true,
                     ServiceError = reply.ServiceError?.CopyValidated(),
@@ -830,7 +841,7 @@ public sealed class LevelOneMaintenance
                 CandidatePendingApply = phase == AiTaskPhase.Completed && session is IMaintenancePreparation });
         }
         void Stop(string text) { outcome = MaintenanceOutcome.Stopped; message = text
-            + (trialStopReason is null ? "" : "\n" + trialStopReason); }
+            + (replyFailure != AiReplyFailure.None || trialStopReason is null ? "" : "\n" + trialStopReason); }
         string UnsafeEvidenceReason(MaintenanceGameReport report) =>
             report.StartupFailure?.Context.Evidence.Any(e => e.Code == "TestOrderMismatch") == true
                 ? report.StartupFailure.LocalReason()
@@ -839,7 +850,14 @@ public sealed class LevelOneMaintenance
             : recoveryTask?.Current.Feedback?.ServiceError?.DisplayText)
             ?? AiReplyFailureText.Describe(replyFailure, recoveryTask?.Current.Feedback?.PlanIssue ?? AiPlanIssue.None);
         string AiErrorStop() => ReplyFailureDescription()
-            + (recoveryTask?.Current.LastUsage?.Output > (recoveryTask?.Current.LastRequestOutputLimit ?? limits.OutputTokensPerRequest)
+            + (replyFailure == AiReplyFailure.OutputLimit && recoveryTask?.Current.LastUsage is { } limitedUsage
+                ? $" 本次输入 {limitedUsage.Input}、输出 {limitedUsage.Output} token"
+                    + (limitedUsage.ReasoningOutput is { } reasoning ? $"（其中推理 {reasoning} token）" : "")
+                    + (recoveryTask.Current.LastRequestOutputLimit is { } cap ? $"，请求输出上限 {cap}。"
+                        : "；软件未设置单次输出上限，本次结束由模型服务商的输出或上下文限制触发。")
+                    + "这不是余额不足或模组故障的判定；可检查服务的推理模式或更换模型后手动重试。"
+                : "")
+            + (recoveryTask?.Current.LastRequestOutputLimit is { } recordedCap && recoveryTask.Current.LastUsage?.Output > recordedCap
                 ? " 服务未遵守输出上限。" : "")
             + " 已停止自动排序，不再进行本地换位、试排除、游戏复测或后续 AI 请求。原排序及本轮日志已保留；请检查 AI 设置及错误原因后重新开始。已回报用量按实记录，未回报用量仍记为未知，不自动重复请求。";
         async Task<bool> TryTrialAsync(MaintenanceGameReport report, IReadOnlyList<string>? cycleMembers = null,

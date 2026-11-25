@@ -24,7 +24,7 @@ public partial class MainWindow
         if (marketplaceNoticeDismissed) return;
         var reveal = MarketplaceNotice.Visibility != Visibility.Visible;
         MarketplaceNotice.Visibility = Visibility.Visible;
-        if (reveal) Services.InterfaceMotion.Reveal(MarketplaceNotice);
+        if (reveal) Services.InterfaceMotion.RevealNotification(MarketplaceNotice);
     }
 
     private void DismissMarketplaceNotice_Click(object sender, RoutedEventArgs e)

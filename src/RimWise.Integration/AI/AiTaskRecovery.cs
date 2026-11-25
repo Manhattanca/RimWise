@@ -63,7 +63,8 @@ public sealed record AiTaskCheckpoint(AiTaskKind Kind, AiTaskPhase Phase, string
 
     internal void Validate()
     {
-        if (LastRequestOutputLimit is < 1 or > 32768 || OutputBudgetExhausted && LastRequestOutputLimit is null)
+        if (LastRequestOutputLimit is < 1 or > 32768 || OutputBudgetExhausted && LastRequestOutputLimit is null
+            && Limits is not { UseProviderOutputLimit: true, TokenLimitEnabled: false })
             throw new InvalidDataException("AI 输出额度记录无效。");
         InsertionControl?.Validate();
         if (InsertionControlAttempts is < 0 or > 1 || InsertionControlAttempts > 0 && Limits?.InsertionBaselineJson is null)

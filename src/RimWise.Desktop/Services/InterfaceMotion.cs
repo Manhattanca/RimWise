@@ -8,7 +8,16 @@ namespace RimWise.Desktop.Services;
 
 internal static class InterfaceMotion
 {
-    internal static bool Enabled => SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast;
+    internal static bool Enabled => SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast
+#if DEBUG
+        && !ReduceMotionForCheck
+#endif
+        ;
+#if DEBUG
+    internal static bool ReduceMotionForCheck { get; set; }
+#endif
+    private static readonly DependencyProperty StateProperty = DependencyProperty.RegisterAttached(
+        "State", typeof(PresentationState), typeof(InterfaceMotion));
 
     internal static void Install()
     {
@@ -75,26 +84,107 @@ internal static class InterfaceMotion
 
     internal static void Reveal(FrameworkElement element)
     {
-        if (!Enabled) return;
-        // Animate presentation only: no delayed focus, dialog results or button actions.
-        var animation = new DoubleAnimation(0, element.Opacity,
-            TimeSpan.FromMilliseconds(167)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-            FillBehavior = FillBehavior.Stop };
-        animation.Completed += (_, _) => element.BeginAnimation(UIElement.OpacityProperty, null);
-        element.BeginAnimation(UIElement.OpacityProperty, animation);
+        State(element).Reveal();
+    }
+
+    internal static void RevealNotification(FrameworkElement element)
+    {
+        var state = State(element);
+        state.Reveal();
+        state.Slide(horizontal: false, initial: 5);
     }
 
     internal static void SlidePage(FrameworkElement element, bool fromRight)
     {
-        // Translation only: no singular scale, delayed selection or bitmap of a large list.
-        var offset = element.RenderTransform as TranslateTransform ?? new TranslateTransform();
-        element.RenderTransform = offset;
-        offset.BeginAnimation(TranslateTransform.XProperty, null);
-        offset.X = 0;
-        if (!Enabled) return;
-        var animation = new DoubleAnimation(fromRight ? 24 : -24, 0, TimeSpan.FromMilliseconds(160))
-            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop };
-        animation.Completed += (_, _) => offset.BeginAnimation(TranslateTransform.XProperty, null);
-        offset.BeginAnimation(TranslateTransform.XProperty, animation);
+        State(element).Slide(horizontal: true, initial: fromRight ? 12 : -12);
     }
+
+    private static PresentationState State(FrameworkElement element)
+    {
+        if (element.GetValue(StateProperty) is PresentationState state) return state;
+        state = new PresentationState(element);
+        element.SetValue(StateProperty, state);
+        return state;
+    }
+
+    private sealed class PresentationState
+    {
+        private readonly FrameworkElement element;
+        private readonly TranslateTransform offset = new();
+        private Transform? installedTransform;
+        private bool sliding, fading;
+        private int slideRevision, fadeRevision;
+
+        internal PresentationState(FrameworkElement element)
+        {
+            this.element = element;
+            element.Unloaded += (_, _) => Reset();
+            element.IsVisibleChanged += (_, _) => { if (!element.IsVisible) Reset(); };
+        }
+
+        internal void Reveal()
+        {
+            if (!Enabled) { Reset(); return; }
+            var from = fading ? element.Opacity : 0;
+            var to = (double)element.GetAnimationBaseValue(UIElement.OpacityProperty);
+            var revision = ++fadeRevision;
+            fading = true;
+            var animation = Motion(from, to, 150);
+            animation.Completed += (_, _) =>
+            {
+                if (revision != fadeRevision) return;
+                fading = false;
+                element.BeginAnimation(UIElement.OpacityProperty, null);
+            };
+            element.BeginAnimation(UIElement.OpacityProperty, animation, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        internal void Slide(bool horizontal, double initial)
+        {
+            // Preserve caller-owned transforms; only animate our presentation offset.
+            if (!ReferenceEquals(element.RenderTransform, installedTransform))
+            {
+                ResetSlide();
+                var original = element.RenderTransform;
+                installedTransform = ReferenceEquals(original, Transform.Identity) ? offset
+                    : new TransformGroup { Children = new TransformCollection { original, offset } };
+                element.SetCurrentValue(UIElement.RenderTransformProperty, installedTransform);
+            }
+            if (!Enabled) { Reset(); return; }
+            var property = horizontal ? TranslateTransform.XProperty : TranslateTransform.YProperty;
+            var from = sliding ? (double)offset.GetValue(property) : initial;
+            var revision = ++slideRevision;
+            sliding = true;
+            var animation = Motion(from, 0, horizontal ? 160 : 150);
+            animation.Completed += (_, _) =>
+            {
+                if (revision == slideRevision) ResetSlide();
+            };
+            offset.BeginAnimation(property, animation, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private void ResetSlide()
+        {
+            slideRevision++;
+            sliding = false;
+            offset.BeginAnimation(TranslateTransform.XProperty, null);
+            offset.BeginAnimation(TranslateTransform.YProperty, null);
+            offset.X = offset.Y = 0;
+        }
+
+        private void Reset()
+        {
+            ResetSlide();
+            fadeRevision++;
+            if (fading) element.BeginAnimation(UIElement.OpacityProperty, null);
+            fading = false;
+        }
+    }
+
+    internal static DoubleAnimation Motion(double from, double to, double milliseconds) =>
+        new(from, to, TimeSpan.FromMilliseconds(milliseconds))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        };
 }

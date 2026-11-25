@@ -122,6 +122,10 @@ internal static class MarkerSmokeCheck
             {
                 ((App)Application.Current).Themes.Select(theme, save: false);
                 await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
+                // Endpoint assertion: a real hover/selection may now have a 120ms color
+                // presentation clock. Keep the exact marker/alpha checks after it settles.
+                await Task.Delay(180);
+                await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
                 var renderedAvailable = (DataGridRow)window.AvailableGrid.ItemContainerGenerator.ContainerFromIndex(0);
                 Assert(renderedAvailable is not null && ReferenceEquals(renderedAvailable.Item, vm.AvailableMods[0]),
                     "Inactive visual row displays a stale installation.");

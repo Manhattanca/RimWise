@@ -18,6 +18,7 @@ public partial class AppearanceWindow : Window
     private readonly AppearanceSettingsStore store;
     private AppearancePreset selectedPreset;
     private string? selectedThemeName;
+    private string? border;
     private readonly AppearanceSettings original;
     private readonly AppearanceImage? originalImage;
     private AppearanceSettings baseline;
@@ -87,7 +88,7 @@ public partial class AppearanceWindow : Window
     private void Populate(AppearanceSettings value, string? name = null)
     {
         var previous = ready; ready = false;
-        selectedPreset = value.Preset; selectedThemeName = name;
+        selectedPreset = value.Preset; selectedThemeName = name; border = value.Border;
         PresetBox.SelectedIndex = (int)value.Preset;
         if (name is not null)
             foreach (var item in PresetBox.Items.OfType<ComboBoxItem>())
@@ -114,7 +115,7 @@ public partial class AppearanceWindow : Window
         {
             Preset = selectedPreset, Accent = AccentColor.SelectedColor,
             Page = PageColor.SelectedColor, Panel = PanelColor.SelectedColor, Text = TextColor.SelectedColor,
-            Border = original.Border,
+            Border = border,
             Background = image?.Name, Placement = (BackgroundPlacement)PlacementBox.SelectedIndex,
             Shade = ShadeSlider.Value / 100, Blur = BlurSlider.Value, PanelOpacity = OpacitySlider.Value / 100,
             OtherUiOpacity = OtherOpacitySlider.Value / 100, Transparency = transparency, Controls = controls,
@@ -205,6 +206,67 @@ public partial class AppearanceWindow : Window
     { if (importing) return; image = null; UpdateImageControls(); ImageAccentButton.IsEnabled = false; ImageStatus.Text = "尚未导入图片 · PNG / JPG · 不超过 20 MB"; Preview(); }
     private void ImageAccent_Click(object sender, RoutedEventArgs e) { if (image is not null) AccentColor.SelectedColor = image.Accent; }
     private void Reset_Click(object sender, RoutedEventArgs e) { if (importing) return; image = null; Populate(new()); Preview(); }
+    private async void ExportTheme_Click(object sender, RoutedEventArgs e)
+    {
+        if (importing) return;
+        var name = selectedThemeName ?? "自定义主题";
+        var fileName = new string(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray());
+        var dialog = new SaveFileDialog { Filter = "RimWise 主题文件|*.rimwise-theme", DefaultExt = AppearanceThemePackage.Extension,
+            AddExtension = true, FileName = fileName + AppearanceThemePackage.Extension, Title = "导出主题", OverwritePrompt = true };
+        if (dialog.ShowDialog(this) == true) await ExportThemeAsync(dialog.FileName, name);
+    }
+    private async void ImportTheme_Click(object sender, RoutedEventArgs e)
+    {
+        if (importing) return;
+        var dialog = new OpenFileDialog { Filter = "RimWise 主题文件|*.rimwise-theme", Title = "导入主题", Multiselect = false };
+        if (dialog.ShowDialog(this) == true) await ImportThemeAsync(dialog.FileName);
+    }
+    internal async Task<bool> ExportThemeAsync(string path, string? name = null)
+    {
+        if (importing) return false;
+        EndInteraction();
+        var settings = Read(); var picture = image;
+        SetTransferBusy(true, "正在导出主题及背景图片…");
+        try
+        {
+            var themeName = name ?? selectedThemeName ?? "自定义主题";
+            await Task.Run(() => AppearanceThemePackage.Write(path, themeName, settings, picture));
+            Feedback.Text = picture is null ? "主题已导出。" : "主题已导出，已包含背景图片，无需另外复制图片。";
+            return true;
+        }
+        catch (Exception ex) when (IsThemeTransferError(ex))
+        { Feedback.Text = "无法导出主题，原文件和当前设置已保留。"; return false; }
+        finally { SetTransferBusy(false); }
+    }
+    internal async Task<bool> ImportThemeAsync(string path)
+    {
+        if (importing) return false;
+        EndInteraction(); SetTransferBusy(true, "正在读取并校验主题…");
+        try
+        {
+            var imported = await Task.Run(() => AppearanceThemePackage.Read(path));
+            if (closed) return false;
+            image = imported.Image; Populate(imported.Settings, imported.Name);
+            importing = false; Preview();
+            Feedback.Text = "主题已导入预览，点击保存后加入预设；背景图片将保存到用户数据文件夹。";
+            return true;
+        }
+        catch (Exception ex) when (IsThemeTransferError(ex))
+        { Feedback.Text = "无法导入主题，文件可能损坏、格式不受支持或内容超限；当前外观未更改。"; return false; }
+        finally { SetTransferBusy(false); }
+    }
+    private void SetTransferBusy(bool busy, string? message = null)
+    {
+        importing = busy;
+        if (closed) return;
+        // Freeze editable controls as well as file actions while the captured snapshot is processed off-thread.
+        EditorBody.IsEnabled = !busy;
+        FooterActions.IsEnabled = !busy; SaveButton.IsEnabled = !busy;
+        if (message is not null) Feedback.Text = message;
+    }
+    private static bool IsThemeTransferError(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException
+        or ArgumentException or NotSupportedException or FormatException or InvalidOperationException
+        or System.Text.Json.JsonException or System.Runtime.InteropServices.COMException;
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         var name = ThemeNameWindow.Prompt(this, selectedThemeName);

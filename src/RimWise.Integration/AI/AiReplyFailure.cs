@@ -7,6 +7,14 @@ public enum AiPlanIssue { None, Action, Target, Position, Dependency, Constraint
 
 public static class AiReplyFailureText
 {
+    internal static AiReplyFailure ServiceFailureKind(AiServiceError? error, AiReplyFailure fallback) => error?.Kind switch
+    {
+        "output-limit" => AiReplyFailure.OutputLimit,
+        "incomplete" => AiReplyFailure.IncompleteResponse,
+        not null => AiReplyFailure.ServiceFailure,
+        _ => fallback
+    };
+
     public static string Describe(AiReplyFailure failure) => failure switch
     {
         AiReplyFailure.None => "",

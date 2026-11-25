@@ -1,16 +1,21 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:p="clr-namespace:RimWise.Desktop.Presentation">
+                    xmlns:p="clr-namespace:RimWise.Desktop.Presentation"
+                    xmlns:motion="clr-namespace:RimWise.Desktop.Services">
     <p:MarkerBackgroundConverter x:Key="MarkerBackground" />
     <Style x:Key="MarkedRow" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
         <Setter Property="BorderThickness" Value="3,0,0,0" />
-        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="motion:StateBrushMotion.Target" Value="Transparent" />
+        <Setter Property="motion:StateBrushMotion.Key" Value="{Binding IsSelected, RelativeSource={RelativeSource Self}}" />
+        <Setter Property="motion:StateBrushMotion.IsHovered" Value="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" />
+        <Setter Property="BorderBrush" Value="{Binding Path=(motion:StateBrushMotion.Display), RelativeSource={RelativeSource Self}}" />
         <Setter Property="Background"><Setter.Value><MultiBinding Converter="{StaticResource MarkerBackground}">
             <Binding Path="MarkerColor" /><Binding Path="(ItemsControl.AlternationIndex)" RelativeSource="{RelativeSource Self}" />
             <Binding Path="RowBackground" RelativeSource="{RelativeSource AncestorType=DataGrid}" />
         </MultiBinding></Setter.Value></Setter>
         <Style.Triggers>
-            <Trigger Property="IsSelected" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter Property="motion:StateBrushMotion.Target" Value="{DynamicResource ListHoverBrush}" /></Trigger>
+            <Trigger Property="IsSelected" Value="True"><Setter Property="motion:StateBrushMotion.Target" Value="{DynamicResource ListAccentBrush}" /></Trigger>
         </Style.Triggers>
     </Style>
         <BooleanToVisibilityConverter x:Key="BooleanVisibility" />
@@ -87,26 +92,50 @@
             <Setter Property="Padding" Value="12,0" />
         </Style>
         <Style x:Key="MarkedCell" TargetType="DataGridCell" BasedOn="{StaticResource ModListCell}">
+            <Setter Property="motion:StateBrushMotion.Key" Value="{Binding IsSelected, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="motion:StateBrushMotion.IsHovered" Value="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+            <Setter Property="motion:StateBrushMotion.Target" Value="Transparent" />
+            <Setter Property="Background" Value="{Binding Path=(motion:StateBrushMotion.Display), RelativeSource={RelativeSource Self}}" />
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="DataGridCell">
-                <Border Background="{TemplateBinding Background}" BorderThickness="0"
-                        Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
-                    <ContentPresenter VerticalAlignment="Center" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                <Border Background="Transparent" BorderThickness="0" SnapsToDevicePixels="True">
+                  <Grid>
+                    <!-- Only the fill expands vertically. Adjacent cells remain seamless,
+                         and names/icons/hit targets never scale or change layout. -->
+                    <Border x:Name="StateFace" Background="{TemplateBinding Background}" IsHitTestVisible="False"
+                            motion:StateFaceMotion.IsActive="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+                    <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                  </Grid>
                 </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="StateFace" Property="motion:StateFaceMotion.IsActive" Value="True" /></Trigger>
+                </ControlTemplate.Triggers>
             </ControlTemplate></Setter.Value></Setter>
             <Style.Triggers>
+                <!-- Whole-row hover: crossing icon/name cells must not flash separate blocks.
+                     Keep custom marker fills untouched; the row edge still previews selection. -->
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding MarkerColor}" Value="{x:Null}" />
+                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="motion:StateBrushMotion.Target" Value="{DynamicResource ListHoverBrush}" />
+                </MultiDataTrigger>
                 <Trigger Property="IsSelected" Value="True">
                     <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
-                    <Setter Property="Background" Value="{Binding Background, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+                    <!-- Override the inherited cell trigger as well as its setter, so the
+                         selected face uses this local presentation brush, not an instant fill. -->
+                    <Setter Property="Background" Value="{Binding Path=(motion:StateBrushMotion.Display), RelativeSource={RelativeSource Self}}" />
+                    <Setter Property="motion:StateBrushMotion.Target" Value="{Binding Background, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
                 </Trigger>
                 <MultiDataTrigger>
                     <MultiDataTrigger.Conditions>
                         <Condition Binding="{Binding MarkerColor}" Value="{x:Null}" />
                         <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
                     </MultiDataTrigger.Conditions>
-                    <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+                    <Setter Property="motion:StateBrushMotion.Target" Value="{DynamicResource ListSelectionBrush}" />
                 </MultiDataTrigger>
             </Style.Triggers>
         </Style>

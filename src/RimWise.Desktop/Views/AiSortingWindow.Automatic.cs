@@ -36,6 +36,7 @@ public partial class AiSortingWindow
         if (TokenLimitToggle.IsChecked == true && (!int.TryParse(BudgetInput.Text, out budget) || budget < 100))
             throw new ArgumentException("token 用量限制必须是至少 100 的整数。");
         return new(attempts, budget, OutputTokensPerRequest: 16384) { ExpandOutputBudget = true, ReadFailureTrialsEnabled = true,
+            UseProviderOutputLimit = TokenLimitToggle.IsChecked != true,
             AttemptLimitEnabled = AttemptLimitToggle.IsChecked == true,
             TokenLimitEnabled = TokenLimitToggle.IsChecked == true, ConfirmModRemoval = ConfirmRemovalToggle.IsChecked == true };
     }
@@ -202,7 +203,7 @@ public partial class AiSortingWindow
             // An export may be produced by a newer process than the recorded task.
             // Record the executing build and policy at preparation, without credentials.
             DiagnosticEventLog.Current?.Record("automatic-sorting", "prepared",
-                $"version={ApplicationBuildIdentity.ProductVersion(typeof(AiSortingWindow).Assembly)}; module={typeof(AiSortingWindow).Assembly.ManifestModule.ModuleVersionId:D}; resumed={resumeId is not null}; outputLimit={limits.OutputTokensPerRequest}; expandOutput={limits.ExpandOutputBudget}; confirmRemoval={limits.ConfirmModRemoval}");
+                $"version={ApplicationBuildIdentity.ProductVersion(typeof(AiSortingWindow).Assembly)}; module={typeof(AiSortingWindow).Assembly.ManifestModule.ModuleVersionId:D}; resumed={resumeId is not null}; outputLimit={limits.RequestOutputLimit?.ToString() ?? "provider-default"}; expandOutput={limits.ExpandOutputBudget}; confirmRemoval={limits.ConfirmModRemoval}");
             StatusText.Text="正在准备自动排序与游戏测试…";
             var maintenanceProgress=new Progress<MaintenanceProgress>(p=>
             {

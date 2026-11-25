@@ -91,9 +91,13 @@ internal static class AiSortingSmokeCheck
         try
         {
             Assert(client.Calls == 0 && secrets.Reads == 0, "Opening window sent a request or read a key.");
-            Assert(window.ReadMaintenanceLimits() is { OutputTokensPerRequest: 16384, ExpandOutputBudget: true },
-                "New automatic task lost its reasoning-aware output allowance.");
-            checks.Add("new automatic tasks use 16384 output allowance with adaptive expansion");
+            Assert(window.ReadMaintenanceLimits() is { UseProviderOutputLimit: true, RequestOutputLimit: null },
+                "New unbudgeted automatic task must omit the software output cap.");
+            window.TokenLimitToggle.IsChecked = true;
+            Assert(window.ReadMaintenanceLimits() is { UseProviderOutputLimit: false, RequestOutputLimit: 16384 },
+                "An explicit total token budget must retain bounded output requests.");
+            window.TokenLimitToggle.IsChecked = false;
+            checks.Add("new unbudgeted tasks omit output cap while explicit total budgets remain bounded");
             window.PermissionBox.SelectedIndex = 1;
             Assert(store.Load().PermissionLevel == AiPermissionLevel.Level1OrderAndRequiredDependencies
                 && new AutomaticSortingPreferencesStore(root).Load().Mode == "full"

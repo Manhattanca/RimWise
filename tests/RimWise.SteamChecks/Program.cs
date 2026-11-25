@@ -181,6 +181,8 @@ if (args.Length == 1 && args[0] == "--ai-response-checks")
 {
     var results = new List<string>();
     DeepSeekCompatibilityChecks.Run((name, test) => { test(); results.Add(name); });
+    DeepSeekOutputBudgetChecks.Run((name, test) => { test(); results.Add(name); });
+    ProviderOutputLimitChecks.Run((name, test) => { test(); results.Add(name); });
     DeepSeekMaintenanceChecks.Run((name, test) => { test(); results.Add(name); });
     AiResponseFormatChecks.Run((name, test) => { test(); results.Add(name); });
     Console.WriteLine(JsonSerializer.Serialize(new { Passed = results.Count, Checks = results }));
@@ -286,6 +288,8 @@ DuplicateCopyChecks.Run(Check);
 AiContextRetentionChecks.Run(Check);
 AutomaticLogChecks.Run(Check);
 MaintenanceDiagnosisChecks.Run(Check);
+DeepSeekOutputBudgetChecks.Run(Check);
+ProviderOutputLimitChecks.Run(Check);
 DiagnosticAttributionChecks.Run(Check);
 CascadingTypeLoadChecks.Run(Check);
 MaintenanceProgressChecks.Run(Check);

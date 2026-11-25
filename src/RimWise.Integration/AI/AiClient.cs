@@ -119,7 +119,7 @@ public sealed class AiClient : IAiClient, IDisposable
             progress: request.ResponseProgress, idsObserved: request.ProviderIdsObserved).ConfigureAwait(false);
         var usage = result.Usage ?? (result.Body is null ? null : AiTokenUsage.Read(result.Body));
         Diagnostics.DiagnosticEventLog.Current?.Record("ai-response", "completion",
-            $"stream={result.Streamed}; finish={AiChatCompatibility.SafeFinish(result.FinishReason)}; input={usage?.Input}; output={usage?.Output}; reasoning={usage?.ReasoningOutput}; requestedOutput={request.OutputTokenLimit}; failure={result.ServiceError?.Kind ?? "none"}");
+            $"stream={result.Streamed}; finish={AiChatCompatibility.SafeFinish(result.FinishReason)}; input={usage?.Input}; output={usage?.Output}; reasoning={usage?.ReasoningOutput}; requestedOutput={request.OutputTokenLimit?.ToString() ?? "provider-default"}; failure={result.ServiceError?.Kind ?? "none"}");
         if (result.Error is not null) return Refused(result.Error) with
             { Usage = usage, ProviderIds = result.ProviderIds, Failure = result.FinishReason == "length"
                 ? AiReplyFailure.OutputLimit : result.ServiceError?.Kind == "incomplete"

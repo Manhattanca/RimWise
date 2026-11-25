@@ -239,6 +239,9 @@ internal static class MainPanelWorkflowSmokeCheck
                 {
                     Keyboard.Focus(tabs[i]);
                     fixture.UpdateLayout();
+                    // Interaction target/display updates are coalesced in the next render
+                    // turn. Keep the exact focus-resource assertion after that commit.
+                    await fixture.Dispatcher.InvokeAsync(fixture.UpdateLayout, DispatcherPriority.ApplicationIdle);
                     var chrome = (Border)tabs[i].Template.FindName("Tab", tabs[i]);
                     check(tabs[i].IsKeyboardFocused && tabs[i].FocusVisualStyle is null
                         && Equals(chrome.Background, tabs[i].FindResource("ButtonSelectionBrush")),

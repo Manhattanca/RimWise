@@ -55,7 +55,7 @@ internal sealed class AutomaticSortingSession(MainViewModel editor, string direc
         var catalogue=editor.CurrentCatalogue!;
         var rules=InsertionScope.Rules(editor.CustomRules, limits.InsertionBaselineJson).ToArray();
         var request=AiSortingSession.CreateRequest(editor,settings,sorting.Secrets.Read(settings.SecretName))
-            with { ResponseProgress=responseProgress, OutputTokenLimit=limits.OutputTokensPerRequest };
+            with { ResponseProgress=responseProgress, OutputTokenLimit=limits.RequestOutputLimit };
         if (checkedModelScope is not null && checkedModelScope != ModelScope(request.Settings, request.ApiKey))
             throw new InvalidOperationException("AI 设置或密钥在校验后发生变化，已停止。请重新开始排序。");
         request = request with { OrderRules = rules, RetainedMods = request.RetainedMods

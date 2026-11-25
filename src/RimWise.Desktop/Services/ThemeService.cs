@@ -215,7 +215,7 @@ internal sealed class ThemeService : IDisposable
             replacement["LinkBrush"] = Brush(readable);
             replacement["AccentTextBrush"] = Brush(Contrast(Colors.White, color) >= Contrast(Colors.Black, color) ? Colors.White : Colors.Black);
             replacement["SelectionBrush"] = Brush(Mix(basePanel, color, .25));
-            replacement["HoverBrush"] = Brush(Mix(basePanel, color, .16));
+            replacement["HoverBrush"] = Brush(Mix(basePanel, color, .08));
         }
         foreach (var key in new[] { "WarningTextBrush", "ErrorTextBrush" })
         {

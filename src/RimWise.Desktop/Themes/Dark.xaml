@@ -9,7 +9,7 @@
     <SolidColorBrush x:Key="HeaderBrush" Color="#323E43" />
     <SolidColorBrush x:Key="AlternateBrush" Color="#2A3439" />
     <SolidColorBrush x:Key="SelectionBrush" Color="#203C38" />
-    <SolidColorBrush x:Key="HoverBrush" Color="#344844" />
+    <SolidColorBrush x:Key="HoverBrush" Color="#283632" />
     <SolidColorBrush x:Key="AccentBrush" Color="#337F73" />
     <SolidColorBrush x:Key="LinkBrush" Color="#79C7BA" />
     <SolidColorBrush x:Key="AccentTextBrush" Color="#FFFFFF" />

@@ -49,8 +49,8 @@ internal static class AiChatCompatibility
             // Keep both portions within our total allowance without a paid retry.
             if (model.StartsWith("deepseek-v4") || model.StartsWith("deepseek-v3.1") || model.StartsWith("deepseek-v3.2"))
             {
-                var thinking = limit is null ? 4096 : limit >= 256 ? Math.Min(8192, limit.Value / 2) : 0;
-                payload["enable_thinking"] = thinking > 0;
+                var thinking = limit is null ? 0 : limit >= 256 ? Math.Min(8192, limit.Value / 2) : 0;
+                payload["enable_thinking"] = limit is null || thinking > 0;
                 if (thinking > 0) payload["thinking_budget"] = thinking;
                 if (limit is { } total) payload["max_tokens"] = total - thinking;
             }

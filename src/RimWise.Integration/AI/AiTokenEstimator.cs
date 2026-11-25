@@ -11,7 +11,8 @@ public sealed record AiTokenEstimate(string Profile, double InputUnits, int Inpu
     public string Description => $"预计 {Total:N0} token（约 {Lower:N0}—{Upper:N0}）"
         + (Samples == 0 ? "；采用共享基准，尚无本模型样本"
             : Samples < 8 ? $"；已参考 {Samples} 次同模型请求，样本仍少" : $"；已参考 {Samples} 次同模型请求")
-        + (ObservedError80 is { } error ? $"；近 {EvaluatedSamples} 次中 80% 的预估误差 ≤ {error:P0}" : "；尚无足够记录验证误差");
+        + (ObservedError80 is { } error ? $"；近 {EvaluatedSamples} 次中 80% 的预估误差 ≤ {error:P0}" : "；尚无足够记录验证误差")
+        + (OutputLimit is null ? "；未设置单次输出上限，此范围仅为预估，不是实际用量上限" : "");
 }
 
 /// <summary>Local, provider/model-specific calibration; stores counts, never prompts or credentials.</summary>

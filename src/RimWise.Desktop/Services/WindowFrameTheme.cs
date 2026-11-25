@@ -33,6 +33,7 @@ internal static class WindowFrameTheme
         var dark = Application.Current is App app && app.Themes is { IsDark: true } ? 1 : 0;
         Set(handle, 20, dark);
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
+        Set(handle, 33, 2); // DWMWA_WINDOW_CORNER_PREFERENCE: DWMWCP_ROUND, like native secondary windows.
         foreach (var (attribute, key) in new[] { (35, "PanelBrush"), (36, "TextBrush"), (34, "BorderBrush") })
         {
             var color = SystemParameters.HighContrast ? -1 : attribute == 34 ? -2 /* DWMWA_COLOR_NONE: no decorative window outline */ : window.TryFindResource(key) is SolidColorBrush brush

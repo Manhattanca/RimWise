@@ -13,7 +13,7 @@ internal static class MainWindowChrome
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         window.Closed += (_, _) => ready.TrySetResult();
         var chrome = new WindowChrome { CaptionHeight = 30, GlassFrameThickness = new(0),
-            CornerRadius = new(0), ResizeBorderThickness = new(6), UseAeroCaptionButtons = false };
+            CornerRadius = new(8), ResizeBorderThickness = new(6), UseAeroCaptionButtons = false };
         window.CaptionMinimize.Click += (_, _) => SystemCommands.MinimizeWindow(window);
         window.CaptionMaximize.Click += (_, _) => Toggle(window);
         window.CaptionClose.Click += (_, _) => SystemCommands.CloseWindow(window);

@@ -20,7 +20,7 @@
             <TextBlock Text="让 RimWise 更像你" FontSize="23" FontWeight="SemiBold"/>
             <TextBlock Text="修改主题颜色或导入背景图片。即时预览，点击保存才会保存设置；取消会还原。" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
         </StackPanel>
-        <Grid Grid.Row="1">
+        <Grid x:Name="EditorBody" Grid.Row="1">
             <Grid.ColumnDefinitions><ColumnDefinition Width="350"/><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Margin="0,0,12,0">
@@ -96,8 +96,10 @@
             </Border>
         </Grid>
         <TextBlock x:Name="Feedback" Grid.Row="2" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" MinHeight="26" Margin="0,12,0,6"/>
-        <DockPanel Grid.Row="3">
+        <DockPanel x:Name="FooterActions" Grid.Row="3">
             <Button x:Name="ResetButton" Content="恢复默认" Click="Reset_Click" DockPanel.Dock="Left" HorizontalAlignment="Left" Margin="0"/>
+            <Button x:Name="ExportThemeButton" Content="导出主题" Click="ExportTheme_Click" DockPanel.Dock="Left" AutomationProperties.Name="导出主题" ToolTip="导出当前外观及背景图片为一个主题文件"/>
+            <Button x:Name="ImportThemeButton" Content="导入主题" Click="ImportTheme_Click" DockPanel.Dock="Left" AutomationProperties.Name="导入主题" ToolTip="导入主题文件并预览，点击保存后加入预设"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="取消" Click="Cancel_Click"/>
                 <Button x:Name="SaveButton" Content="保存" Click="Save_Click" IsDefault="True" Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource AccentTextBrush}" BorderBrush="{DynamicResource AccentBrush}"/>

@@ -58,7 +58,10 @@ public sealed record MaintenanceFeedback(int Attempt, string[] TestedOrder, bool
         if (ExistingErrorsOnly && (!StartupVerified || !HadErrors || !global::RimWise.Integration.AI.InsertionEvidence.Matches(task.InsertionControl, InsertionEvidence)
             || task.Limits?.InsertionBaselineJson is null)) throw new InvalidDataException("原排序错误判定缺少完整对照测试。");
         ServiceError?.CopyValidated();
-        if (ServiceError is not null && (!ReplyReceived || ReplyFailure != AiReplyFailure.ServiceFailure))
+        // Old records used the generic service classification for every transport
+        // error. Accept those unchanged, plus the matching specific terminal failure.
+        if (ServiceError is not null && (!ReplyReceived || ReplyFailure != AiReplyFailure.ServiceFailure
+            && ReplyFailure != AiReplyFailureText.ServiceFailureKind(ServiceError, AiReplyFailure.ServiceFailure)))
             throw new InvalidDataException("AI service error does not match the saved reply.");
         StartupFailure?.CopyValidated();
         RuntimeContext?.CopyValidated();

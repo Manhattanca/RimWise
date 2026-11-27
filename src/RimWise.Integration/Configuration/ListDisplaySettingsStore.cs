@@ -3,8 +3,8 @@ namespace RimWise.Integration.Configuration;
 public enum ModBadgeDisplay { Icons, Text }
 
 public sealed record ListDisplaySettings(ModBadgeDisplay Badges = ModBadgeDisplay.Icons,
-    double DetailsWidth = 0.95, double AvailableWidth = 1, double OrderWidth = 1.15,
-    int AvailableSource = 0, int OrderSource = 0, double RowHeight = 38);
+    double DetailsWidth = 0.72, double AvailableWidth = 1.14, double OrderWidth = 1.14,
+    int AvailableSource = 0, int OrderSource = 0, double RowHeight = 35);
 
 public sealed class ListDisplaySettingsStore(string applicationDirectory)
 {

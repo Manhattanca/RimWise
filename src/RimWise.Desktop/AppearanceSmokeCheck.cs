@@ -116,12 +116,15 @@ internal static class AppearanceSmokeCheck
             Check(!editor.Value.PageColor.IsEnabled && editor.Value.PageColorNotice.Visibility == Visibility.Visible && editor.Value.FindName("BorderColor") is null,
                 "background image disables window base color with a notice and border editor is removed");
             editor.Value.PresetBox.SelectedIndex = (int)AppearancePreset.Violet; await Idle();
-            Check(editor.Value.AccentColor.SelectedColor is null && editor.Value.PageColor.SelectedColor is null, "preset selection clears explicit color overrides but retains image");
+            Check(editor.Value.AccentColor.SelectedColor is null && editor.Value.PageColor.SelectedColor is null
+                && themes.Image is null && themes.Current.Background is null && themes.Current.PanelOpacity == new AppearanceSettings().PanelOpacity,
+                "preset selection restores its complete colors opacity and absent background rather than retaining prior customizations");
+            await editor.Value.ImportAsync(path); await Idle(); importedBitmap = themes.Image!.Bitmap;
             editor.Value.BlurSlider.Value = 5; editor.Value.ShadeSlider.Value = 28; editor.Value.OpacitySlider.Value = 88;
             editor.Value.PositionXSlider.Value = 72; editor.Value.PositionYSlider.Value = 34; await Idle();
             await themes.WaitForBackgroundAsync();
             Check(themes.Current.Blur == 5 && themes.Current.PositionX == .72 && themes.Current.PositionY == .34, "background blur opacity shade and positioning preview live");
-            Check(ReferenceEquals(importedBitmap, themes.Image!.Bitmap), "slider and theme changes reuse decoded bitmap instead of re-reading the file");
+            Check(ReferenceEquals(importedBitmap, themes.Image!.Bitmap), "slider changes reuse the newly selected decoded bitmap instead of re-reading the file");
             var blurredBitmap = themes.BackgroundBitmap;
             Check(blurredBitmap is { IsFrozen: true } && !ReferenceEquals(blurredBitmap, importedBitmap), "background blur is flattened into a frozen bitmap rather than a live native effect");
             editor.Value.ShadeSlider.Value = 35; editor.Value.PositionXSlider.Value = 75; await Idle();

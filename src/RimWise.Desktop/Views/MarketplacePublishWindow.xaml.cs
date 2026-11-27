@@ -199,7 +199,8 @@ public partial class MarketplacePublishWindow : Window
             submission = result;
             SubmissionPanel.Visibility = Visibility.Visible;
             SubmissionLinkText.Text = result.IsAccountMarket ? "排序已提交审核" : "查看待审核提交 #" + result.PullRequestNumber;
-            StatusText.Text = "提交已创建，等待审核；审核上架后请刷新市场。";
+            if (result.Published) SubmissionLinkText.Text = "排序已上架";
+            StatusText.Text = result.Published ? "文件安全检查已通过，排序已上架，等待人工复审。" : "提交已创建，等待审核；审核上架后请刷新市场。";
             MarkDraftChanged();
         });
     }

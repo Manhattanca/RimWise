@@ -19,7 +19,7 @@
                 <TextBlock Text="用户数据目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
                 <DockPanel Margin="0,0,0,6"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseUserData_Click" /><TextBox x:Name="UserDataPathBox" IsReadOnly="True" /></DockPanel>
                 <TextBlock Text="保存配置、密钥、标记、备份及任务。更换后自动重启并迁移，校验成功后清理原数据。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,16" />
-                <TextBlock Text="自动排序日志保存目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
+                <TextBlock Text="排障日志保存目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />
                 <DockPanel Margin="0,0,0,6"><Button DockPanel.Dock="Right" Content="选择…" Click="BrowseLogs_Click" /><TextBox x:Name="LogDirectoryBox" /></DockPanel>
                 <TextBlock Text="保存自动或手动导出的日志 ZIP。更改路径时自动迁移已有日志，校验成功后清理原文件，同名不同内容的日志分别保留。" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,16" />
                 <TextBlock Text="环世界游戏目录" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,6" />

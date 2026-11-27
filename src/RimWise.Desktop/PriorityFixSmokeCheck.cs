@@ -44,7 +44,7 @@ internal static class PriorityFixSmokeCheck
                         var details = Bounds(window.StatusScroll, window);
                         Assert(status.Height >= 40 && status.Bottom <= details.Top,
                             "Live status is clipped or inside prerequisite scrolling.");
-                        Assert(window.AcceptedList.ActualHeight >= 36, "Minimum-size result list collapsed.");
+                        Assert(window.RejectedList.ActualHeight >= 36, "Minimum-size result list collapsed.");
                         foreach (var control in new FrameworkElement[] { window.StatusText, window.AutomaticButton, window.CancelButton, window.ApplyButton, window.CloseButton })
                         {
                             var bounds = Bounds(control, window);

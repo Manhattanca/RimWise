@@ -174,7 +174,9 @@ public static class DiagnosticExportService
                     + "UI events before this feature was installed cannot be reconstructed. Paths and Mod names can remain; review before public sharing.\n");
                 Write("诊断说明.txt", "本包仅包含 RimWise 保留的白名单诊断，不包含密钥、账号凭据、玩家存档或模组程序文件。\n"
                     + "diagnostic-coverage.json 列出本次导出的证据及未找到的固定证据名称；不同版本、启动方式和中断阶段生成的文件不同，缺失不等于故障，也无法据此区分从未生成与已清理。\n"
-                    + "last-automatic-run.json 标明最后一次任务索引是否可用；automatic-run.json（如有）才是本包的筛选范围。没有测试会话可能是测试前已停止，不能据此认定游戏或 AI 成功。\n"
+                    + (run is null ? "本包汇总本机仍保留的全部白名单诊断，不按单次排序筛选；已清理或从未记录的日志无法补回。\n"
+                        : "本包按指定排序任务筛选。\n")
+                    + "last-automatic-run.json 标明最后一次任务索引是否可用，不限制完整诊断包的范围；automatic-run.json（如有）才是单次导出的筛选范围。没有测试会话可能是测试前已停止，不能据此认定游戏或 AI 成功。\n"
                     + "attempt-lifecycle.jsonl 记录阶段与中断异常结构；completed 只表示流程返回，不代表游戏无错误；没有终态时原因未知。\n"
                     + "catalogue-snapshot.json 是测试会话开始时的清单，application.json.currentState 是导出时的界面状态，两者不可混用。\n"
                     + "导出为逐文件快照，不是任务一致性快照；运行中或取消时可能尚未写出终态。压缩日志会还原并脱敏，恢复用归属记录仅供排查，不授予恢复或删除权限。\n"

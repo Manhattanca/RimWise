@@ -14,9 +14,9 @@ internal static class MessageDialog
 {
     internal static MessageBoxResult Show(Window owner, string message, string title,
         MessageBoxButton buttons = MessageBoxButton.OK, MessageBoxImage image = MessageBoxImage.None,
-        MessageBoxResult defaultResult = MessageBoxResult.None)
+        MessageBoxResult defaultResult = MessageBoxResult.None, string yesText = "是", string noText = "否")
     {
-        var dialog = new MessageDialogWindow(owner, message, title, buttons, image, defaultResult);
+        var dialog = new MessageDialogWindow(owner, message, title, buttons, image, defaultResult, yesText: yesText, noText: noText);
         dialog.ShowDialog();
         return dialog.Result;
     }

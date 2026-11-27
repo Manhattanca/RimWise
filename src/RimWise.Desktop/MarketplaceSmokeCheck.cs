@@ -161,7 +161,7 @@ internal static class MarketplaceSmokeCheck
         Check(identityRefreshes == previousRefreshes + 1, "退出文件发布界面后同步最新登录状态。");
         Check(loads == 1 && page.ResultsList.Items.Count == 2 && page.SelectedManifest is null && manifestLoads == 0,
             "Entering market reads only the catalogue and never downloads a sorting manifest");
-        var rowHeightReference = (FrameworkElement)(window.FindName("RowHeightButton")
+        var rowHeightReference = (FrameworkElement)(window.FindName("AvailableSortDirectionButton")
             ?? throw new InvalidOperationException("主界面行高工具按钮不存在。"));
         Check(Math.Abs(page.SearchBox.ActualHeight - rowHeightReference.ActualHeight) < 0.1,
             $"市场搜索框与图示主界面工具栏控件等高：{page.SearchBox.ActualHeight:F1} / {rowHeightReference.ActualHeight:F1} DIP。");
@@ -228,7 +228,7 @@ internal static class MarketplaceSmokeCheck
         heldSteam.SetResult();
         await page.PendingOperation;
         heldSteam = null;
-        Check(window.MarketplaceNoticeTitle.Text == "已成功使用排序" && window.MarketplaceNoticeProgress.Value == 100,
+        Check(window.MarketplaceNoticeTitle.Text == $"已使用《{second.Title}》排序" && !window.MarketplaceNoticeProgress.IsVisible,
             "Only successful application completes with a saved-order success notification");
         applySuccess = false;
         page.UseButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -436,7 +436,7 @@ internal static class MarketplaceSmokeCheck
         var username = Field<TextBox>("username");
         var toggle = Field<Button>("toggle");
         owner.UpdateLayout();
-        var referenceHeight = ((FrameworkElement)(owner.FindName("RowHeightButton")
+        var referenceHeight = ((FrameworkElement)(owner.FindName("AvailableSortDirectionButton")
             ?? throw new InvalidOperationException("主界面行高工具按钮不存在。"))).ActualHeight;
 
         void CheckInputHeights(string mode, params Control[] inputs)

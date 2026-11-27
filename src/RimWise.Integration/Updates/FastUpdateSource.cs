@@ -6,28 +6,37 @@ namespace RimWise.Integration.Updates;
 internal static class FastUpdateSource
 {
     internal static readonly TimeSpan Window = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(10);
     internal const long MinimumBytesPerSecond = 1_000_000;
 
     internal static async Task<T> RunAsync<T>(Func<CancellationToken, Action<long>, Task<T>> primary,
         Func<CancellationToken, Task<T>>? backup, Action? switching, Action<T>? discard,
-        CancellationToken token)
+        CancellationToken token, long? assetSize = null)
     {
         if (backup is null) return await primary(token, _ => { }).ConfigureAwait(false);
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
         using var watch = CancellationTokenSource.CreateLinkedTokenSource(token);
         long received = 0;
-        var work = primary(attempt.Token, count => Interlocked.Add(ref received, count));
-        var watchdog = WatchAsync(() => Interlocked.Read(ref received), watch.Token);
+        var first = new TaskCompletionSource<(long Bytes, long Time)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool PastHalf() => assetSize is long total && Interlocked.Read(ref received) > total / 2;
+        var watchdog = assetSize.HasValue
+            ? WatchAsync(first.Task, () => Interlocked.Read(ref received), watch.Token)
+            : Task.Delay(StartTimeout, watch.Token); // Release metadata has no bandwidth requirement.
+        var work = primary(attempt.Token, count =>
+        {
+            if (Interlocked.Add(ref received, count) == count)
+                first.TrySetResult((count, System.Diagnostics.Stopwatch.GetTimestamp()));
+        });
         try
         {
-            var winner = await Task.WhenAny(work, watchdog).ConfigureAwait(false);
+            await Task.WhenAny(work, watchdog).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             // A small completed file wins even if the timer fires at the same instant.
-            if (work.IsCompleted) return await work.ConfigureAwait(false);
+            if (work.IsCompleted || PastHalf()) return await work.ConfigureAwait(false);
             await watchdog.ConfigureAwait(false);
             throw new SlowSourceException();
         }
-        catch (Exception ex) when (!token.IsCancellationRequested &&
+        catch (Exception ex) when (!token.IsCancellationRequested && !PastHalf() &&
             ex is IOException or HttpRequestException or OperationCanceledException)
         {
             attempt.Cancel();
@@ -46,10 +55,12 @@ internal static class FastUpdateSource
         }
     }
 
-    private static async Task WatchAsync(Func<long> bytes, CancellationToken token)
+    private static async Task WatchAsync(Task<(long Bytes, long Time)> first, Func<long> bytes, CancellationToken token)
     {
-        long previous = 0;
-        var previousTime = System.Diagnostics.Stopwatch.GetTimestamp();
+        (long Bytes, long Time) start;
+        try { start = await first.WaitAsync(StartTimeout, token).ConfigureAwait(false); }
+        catch (TimeoutException) { return; }
+        var (previous, previousTime) = start;
         while (true)
         {
             await Task.Delay(Window, token).ConfigureAwait(false);

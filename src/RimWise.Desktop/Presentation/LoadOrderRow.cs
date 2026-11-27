@@ -77,6 +77,7 @@ public sealed class LoadOrderRow(string packageId, int index) : ObservableObject
     public string SourceLabel => match?.UniqueInstallation is { } mod ? ModDisplay.Source(mod.Source)
         : match?.Candidates.Count > 1 ? "多个来源" : "—";
     public string SourceIcon => ModDisplay.SourceIcon(match?.UniqueInstallation?.Source);
+    public System.Windows.Media.Geometry SourceGeometry => ModDisplay.SourceGeometry(match?.UniqueInstallation?.Source);
     public string SourceTooltip => ModDisplay.SourceTooltip(match?.UniqueInstallation?.Source);
     public bool IsWorkshopSource => match?.UniqueInstallation?.Source == ModSource.Workshop;
     public ModCodeKind CodeKind => match?.UniqueInstallation?.CodeKind ?? ModCodeKind.Unknown;
@@ -92,7 +93,7 @@ public sealed class LoadOrderRow(string packageId, int index) : ObservableObject
     {
         match = value;
         OnPropertyChanged(nameof(Installation));
-        foreach (var property in new[] { nameof(Name), nameof(SourceLabel), nameof(SourceTooltip), nameof(SourceIcon), nameof(IsWorkshopSource), nameof(CodeKind), nameof(HasCodeKindBadge), nameof(CodeKindLabel), nameof(CodeKindIcon), nameof(CodeKindTooltip), nameof(StateLabel), nameof(Match) }) OnPropertyChanged(property);
+        foreach (var property in new[] { nameof(Name), nameof(SourceLabel), nameof(SourceTooltip), nameof(SourceIcon), nameof(SourceGeometry), nameof(IsWorkshopSource), nameof(CodeKind), nameof(HasCodeKindBadge), nameof(CodeKindLabel), nameof(CodeKindIcon), nameof(CodeKindTooltip), nameof(StateLabel), nameof(Match) }) OnPropertyChanged(property);
     }
     public int Index
     {

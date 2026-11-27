@@ -19,6 +19,8 @@ public partial class MainWindow
     private double? rowHeightMotionTarget;
     private long rowHeightMotionRevision;
 
+    internal double CurrentModRowHeight => listDisplay.RowHeight;
+
     private void InitializeListDisplay()
     {
         try { listDisplay = listDisplayStore.Load(); }
@@ -43,7 +45,7 @@ public partial class MainWindow
 
     private void BadgeIcons_Click(object sender, RoutedEventArgs e) => SetBadgeDisplay(ModBadgeDisplay.Icons);
     private void RowHeight_Click(object sender, RoutedEventArgs e) => RowHeightPopup.IsOpen = true;
-    private void RowHeightReset_Click(object sender, RoutedEventArgs e) => AnimateRowHeight(38);
+    private void RowHeightReset_Click(object sender, RoutedEventArgs e) => AnimateRowHeight(35);
     private void RowHeightPopup_Closed(object? sender, EventArgs e)
     {
         if (!listDisplayInitialized) return;

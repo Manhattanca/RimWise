@@ -17,6 +17,7 @@ public sealed class ModThumbnail : Border
     }
     private readonly Image image = new() { Stretch = System.Windows.Media.Stretch.Uniform, IsHitTestVisible = false };
     private CancellationTokenSource? loading;
+    private string? displayedKey;
     internal Task ImageLoading { get; private set; } = Task.CompletedTask;
 
     static ModThumbnail()
@@ -36,14 +37,27 @@ public sealed class ModThumbnail : Border
         ToolTipService.SetIsEnabled(this, false);
         ToolTipOpening += (_, e) => e.Handled = true;
         Loaded += (_, _) => BeginLoad();
-        Unloaded += (_, _) => { loading?.Cancel(); image.Source = null; };
+        // Recycled cells can keep their frozen source. It is replaced (never shown
+        // for another MOD) on rebinding; detaching a cell is not cache invalidation.
+        Unloaded += (_, _) => loading?.Cancel();
     }
     private static void Changed(DependencyObject sender, DependencyPropertyChangedEventArgs args) => ((ModThumbnail)sender).BeginLoad();
     private void BeginLoad()
     {
         loading?.Cancel();
-        image.Source = null;
-        if (!IsLoaded || Installation is not { } mod) return;
+        loading = null;
+        if (Installation is not { } mod)
+        {
+            image.Source = null; displayedKey = null; ImageLoading = Task.CompletedTask;
+            return;
+        }
+        var key = ModThumbnailCache.KeyFor(mod);
+        // No temporary null assignment on a warm rebind. This lookup touches only
+        // decoded memory, never a file or a decoder on the UI thread.
+        if (ModThumbnailCache.Shared.TryGet(mod, out var cached)) image.Source = cached;
+        else if (!string.Equals(key, displayedKey, StringComparison.OrdinalIgnoreCase)) image.Source = null;
+        displayedKey = key;
+        if (!IsLoaded) { ImageLoading = Task.CompletedTask; return; }
         var cancellation = new CancellationTokenSource();
         loading = cancellation;
         ImageLoading = LoadAsync(mod, cancellation);
@@ -52,7 +66,12 @@ public sealed class ModThumbnail : Border
     {
         try
         {
-            var result = await ModThumbnailCache.Shared.LoadAsync(mod, cancellation.Token);
+            var result = await ModThumbnailCache.Shared.LoadAsync(mod, cancellation.Token, cached =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (!cancellation.IsCancellationRequested && ReferenceEquals(loading, cancellation) && IsLoaded)
+                        image.Source = cached;
+                }, System.Windows.Threading.DispatcherPriority.DataBind, cancellation.Token).Task);
             if (!cancellation.IsCancellationRequested && ReferenceEquals(loading, cancellation) && IsLoaded) image.Source = result;
         }
         catch (OperationCanceledException) { }

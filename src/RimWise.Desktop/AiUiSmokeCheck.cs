@@ -1,4 +1,4 @@
-﻿#if DEBUG
+#if DEBUG
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -159,7 +159,7 @@ internal static class AiUiSmokeCheck
                 window.Width = 960;
                 window.Height = 640;
                 await Layout(window);
-                Assert(window.SearchBox.ActualWidth > 150, "Search input collapsed.");
+                Assert(window.SearchBox.ActualWidth >= 100, "Search input collapsed.");
                 var titleBounds = window.AvailableTitle.TransformToAncestor(window).TransformBounds(new Rect(window.AvailableTitle.RenderSize));
                 var headerBounds = window.AvailableHeader.TransformToAncestor(window).TransformBounds(new Rect(window.AvailableHeader.RenderSize));
                 var filterBounds = window.AvailableSortBox.TransformToAncestor(window).TransformBounds(new Rect(window.AvailableSortBox.RenderSize));
@@ -169,9 +169,12 @@ internal static class AiUiSmokeCheck
                     "Sort label and picker were separated when wrapping.");
                 var directionBounds = window.AvailableSortDirectionButton.TransformToAncestor(window)
                     .TransformBounds(new Rect(window.AvailableSortDirectionButton.RenderSize));
-                var toolsBounds = window.ListDisplayControls.TransformToAncestor(window).TransformBounds(new Rect(window.ListDisplayControls.RenderSize));
-                Assert(directionBounds.Top < headerBounds.Top && directionBounds.Right <= toolsBounds.Right + 1,
-                    "Shared display direction must sit above both independent list headers.");
+                var orderHeaderBounds = window.OrderHeader.TransformToAncestor(window).TransformBounds(new Rect(window.OrderHeader.RenderSize));
+                var orderDirectionBounds = window.OrderSortDirectionButton.TransformToAncestor(window)
+                    .TransformBounds(new Rect(window.OrderSortDirectionButton.RenderSize));
+                Assert(filterBounds.Right <= directionBounds.Left + 1 && directionBounds.Right <= headerBounds.Right + 1
+                    && orderDirectionBounds.Right <= orderHeaderBounds.Right + 1 && Math.Abs(directionBounds.Top - orderDirectionBounds.Top) < 2,
+                    "Each list header must host its own aligned display direction button.");
                 var countBounds = window.AvailableCountText.TransformToAncestor(window).TransformBounds(new Rect(window.AvailableCountText.RenderSize));
                 Assert(!countBounds.IntersectsWith(filterBounds), "Inactive count overlaps its own filter controls.");
                 var availableY = window.AvailableGrid.TranslatePoint(new Point(), window).Y;

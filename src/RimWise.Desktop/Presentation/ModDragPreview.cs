@@ -18,6 +18,7 @@ internal sealed class ModDragPreview : IDisposable
     private readonly Border card;
     private readonly StackPanel group;
     private readonly RotateTransform rotation;
+    private readonly TranslateTransform position = new();
     private readonly Point grip;
     private Point previous;
     private long lastFrame;
@@ -36,7 +37,8 @@ internal sealed class ModDragPreview : IDisposable
         this.animate = animate ?? InterfaceMotion.Enabled;
         previous = pointer;
         rotation = new RotateTransform(0, grip.X, grip.Y);
-        group = new StackPanel { Width = width, IsHitTestVisible = false, RenderTransform = rotation,
+        group = new StackPanel { Width = width, IsHitTestVisible = false,
+            RenderTransform = new TransformGroup { Children = { rotation, position } }, CacheMode = new BitmapCache(),
             Effect = new DropShadowEffect { BlurRadius = 14, ShadowDepth = 4, Opacity = .22 } };
         for (var i = 0; i < Math.Min(3, rows.Count); i++)
             group.Children.Add(CreateCard(CreateIdentity(rows[i], i == 0 ? rows.Count : 1), width, height, i > 0));
@@ -110,8 +112,10 @@ internal sealed class ModDragPreview : IDisposable
         var target = animate ? Math.Clamp((pointer.X - previous.X) / dt * .003, -4, 4) : 0;
         rotation.Angle += (target - rotation.Angle) * (1 - Math.Exp(-18 * dt));
         // The grip follows immediately; only rotation eases, so the card never trails the cursor.
-        Canvas.SetLeft(group, pointer.X - grip.X);
-        Canvas.SetTop(group, pointer.Y - grip.Y);
+        // Translation stays in the compositor. Canvas.Left/Top would arrange the overlay
+        // (and its live row templates and shadow) on every pointer frame.
+        position.X = pointer.X - grip.X;
+        position.Y = pointer.Y - grip.Y;
         group.Visibility = pointer.X >= 0 && pointer.Y >= 0 && pointer.X <= overlay.ActualWidth
             && pointer.Y <= overlay.ActualHeight ? Visibility.Visible : Visibility.Hidden;
         previous = pointer;

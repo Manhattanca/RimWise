@@ -150,6 +150,7 @@ internal static class ImportAndThumbnailSmokeCheck
         Assert(((Image)recycled.Child).Source is null, "Recycled cell retained stale image");
         using (var exclusive = new FileStream(Path.Combine(a.Directory, "About", "Preview.png"), FileMode.Open, FileAccess.Read, FileShare.None)) { }
         checks.Add("Day/night both lists have bounded lazy covers before badges with no tooltip, invalid and recycled images safe");
+        await ThumbnailCacheSmokeCheck.RunAsync(output, checks);
 
         // Superseding the imported document must cancel its wait and must never restore its old order.
         entered = new(); finish = new(); scans = 0;

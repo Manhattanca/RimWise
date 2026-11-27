@@ -27,7 +27,7 @@ public partial class AppearanceWindow : Window
     internal bool AdvancedRequested { get; private set; }
     private AppearanceImage? baselineImage;
     private AppearanceImage? image;
-    private bool ready, importing, closed, prompting;
+    private bool ready, importing, closed, prompting, importedTheme;
     private readonly System.Windows.Threading.DispatcherTimer previewTimer = new() { Interval = TimeSpan.FromMilliseconds(16) };
     private readonly System.Windows.Threading.DispatcherTimer syncTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private bool interacting;
@@ -53,7 +53,10 @@ public partial class AppearanceWindow : Window
             color.ColorChanged += (_, _) => Changed(color, new RoutedEventArgs());
             color.Expanded += (_, _) => { foreach (var other in ColorEditors) if (other != color) other.IsExpanded = false; };
         }
-        Populate(original, activeTheme); ready = true;
+        Populate(original, activeTheme);
+        InitializeRowHeightControls();
+        Loaded += (_, _) => InitializeRowHeightControls();
+        ready = true;
         Feedback.Text = loadNotice ?? "外观调整仅在本机保存，不上传背景图片。";
         previewTimer.Tick += (_, _) => { previewTimer.Stop(); Preview(sync: false); };
         syncTimer.Tick += (_, _) => { syncTimer.Stop(); if (!interacting) Synchronize(); };
@@ -125,9 +128,10 @@ public partial class AppearanceWindow : Window
     private void Changed(object sender, RoutedEventArgs e)
     {
         if (!ready || importing) return;
-        // Selecting a new preset resets explicit color overrides, but retains the user's background.
+        // A preset is a complete appearance, not a palette layered on the prior theme.
         if (ReferenceEquals(sender, PresetBox))
         {
+            importedTheme = false;
             if (PresetBox.SelectedItem is ComboBoxItem { Tag: NamedAppearanceTheme theme })
             {
                 try
@@ -140,8 +144,8 @@ public partial class AppearanceWindow : Window
             }
             else
             {
-                selectedPreset = (AppearancePreset)PresetBox.SelectedIndex; selectedThemeName = null;
-                ready = false; foreach (var color in ColorEditors) color.SetColor(null, false); ready = true;
+                var preset = (AppearancePreset)PresetBox.SelectedIndex;
+                image = null; Populate(new AppearanceSettings { Preset = preset });
             }
         }
         if (!previewTimer.IsEnabled) previewTimer.Start();
@@ -152,7 +156,11 @@ public partial class AppearanceWindow : Window
         previewTimer.Stop();
         try
         {
-            LocalPreview.Preview(Read(), image); SaveButton.IsEnabled = !importing;
+            var value = Read();
+            // Pure selection uses the stored definition, including exact fractional
+            // values; the color editor/percent sliders may only change formatting.
+            LocalPreview.Preview(SameSettings(value, SelectedDefinition) ? SelectedDefinition : value, image);
+            SaveButton.IsEnabled = !importing;
             if (sync && !interacting) Synchronize();
             foreach (var color in ColorEditors) color.RefreshColor();
             Feedback.Text = "拖动时仅更新右侧预览，松手后同步其他窗口；点击保存才会保存，取消可还原。";
@@ -205,7 +213,7 @@ public partial class AppearanceWindow : Window
     private void Remove_Click(object sender, RoutedEventArgs e)
     { if (importing) return; image = null; UpdateImageControls(); ImageAccentButton.IsEnabled = false; ImageStatus.Text = "尚未导入图片 · PNG / JPG · 不超过 20 MB"; Preview(); }
     private void ImageAccent_Click(object sender, RoutedEventArgs e) { if (image is not null) AccentColor.SelectedColor = image.Accent; }
-    private void Reset_Click(object sender, RoutedEventArgs e) { if (importing) return; image = null; Populate(new()); Preview(); }
+    private void Reset_Click(object sender, RoutedEventArgs e) { if (importing) return; importedTheme = false; image = null; Populate(new()); Preview(); }
     private async void ExportTheme_Click(object sender, RoutedEventArgs e)
     {
         if (importing) return;
@@ -246,7 +254,7 @@ public partial class AppearanceWindow : Window
         {
             var imported = await Task.Run(() => AppearanceThemePackage.Read(path));
             if (closed) return false;
-            image = imported.Image; Populate(imported.Settings, imported.Name);
+            image = imported.Image; Populate(imported.Settings, imported.Name); importedTheme = true;
             importing = false; Preview();
             Feedback.Text = "主题已导入预览，点击保存后加入预设；背景图片将保存到用户数据文件夹。";
             return true;
@@ -269,6 +277,7 @@ public partial class AppearanceWindow : Window
         or System.Text.Json.JsonException or System.Runtime.InteropServices.COMException;
     private void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (CanActivateSelectedTheme) { ActivateSelectedTheme(close: true); return; }
         var name = ThemeNameWindow.Prompt(this, selectedThemeName);
         if (name is not null) SaveAppearance(close: true, name);
     }
@@ -283,7 +292,43 @@ public partial class AppearanceWindow : Window
     { controls = controls.With(key, rule); Preview(); }
     internal void SetSurfaceOpacity(AppearanceSurface surface, SurfaceOpacitySetting rule)
     { transparency = transparency.With(surface, rule); Preview(); }
-    internal bool HasUnsavedChanges => Read() != baseline;
+    private AppearanceSettings SelectedDefinition => PresetBox.SelectedItem is ComboBoxItem { Tag: NamedAppearanceTheme theme }
+        ? theme.Settings : new() { Preset = selectedPreset };
+    internal bool CanActivateSelectedTheme => !importedTheme && SameSettings(Read(), SelectedDefinition);
+    internal bool HasUnsavedChanges => importedTheme || !CanActivateSelectedTheme && !SameSettings(Read(), baseline);
+    private static bool SameSettings(AppearanceSettings left, AppearanceSettings right)
+    {
+        // Sliders display percentages; multiplying/dividing must not turn a pure
+        // selection into an edit because of an invisible floating-point roundoff.
+        double Snap(double value, double expected) => Math.Abs(value - expected) < 1e-9 ? expected : value;
+        string? Color(string? value, string? expected) => string.Equals(value, expected, StringComparison.OrdinalIgnoreCase) ? expected : value;
+        return left with
+        {
+            Accent = Color(left.Accent, right.Accent), Page = Color(left.Page, right.Page),
+            Panel = Color(left.Panel, right.Panel), Text = Color(left.Text, right.Text),
+            PositionX = Snap(left.PositionX, right.PositionX), PositionY = Snap(left.PositionY, right.PositionY),
+            Shade = Snap(left.Shade, right.Shade), Blur = Snap(left.Blur, right.Blur),
+            PanelOpacity = Snap(left.PanelOpacity, right.PanelOpacity), OtherUiOpacity = Snap(left.OtherUiOpacity, right.OtherUiOpacity)
+        } == right;
+    }
+
+    private bool ActivateSelectedTheme(bool close)
+    {
+        if (importing || !CanActivateSelectedTheme || !Preview()) return false;
+        try
+        {
+            var definition = SelectedDefinition;
+            var name = PresetBox.SelectedItem is ComboBoxItem { Tag: NamedAppearanceTheme theme } ? theme.Name : null;
+            themes.ActivateTheme(definition, image, name);
+            baseline = definition; baselineImage = image;
+            Populate(definition, name);
+            if (close) DialogResult = true;
+            else Feedback.Text = "已使用所选主题，未修改主题内容。";
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException)
+        { Feedback.Text = "无法保存外观设置：" + ex.Message; return false; }
+    }
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
@@ -312,7 +357,7 @@ public partial class AppearanceWindow : Window
         if (importing || !Preview()) return false;
         try
         {
-            themes.Save(Read(), image, name); baseline = Read(); baselineImage = image;
+            themes.Save(Read(), image, name); baseline = Read(); baselineImage = image; importedTheme = false;
             ready = false; ReloadThemes(); Populate(Read(), name); ready = true;
             if (close) DialogResult = true;
             else Feedback.Text = "外观已保存。";
@@ -341,4 +386,90 @@ public partial class AppearanceWindow : Window
         ready = true; if (!previewTimer.IsEnabled) previewTimer.Start();
     }
     private void Preview_Up(object sender, MouseButtonEventArgs e) { drag = null; PreviewArea.ReleaseMouseCapture(); }
+    private bool synchronizingRowHeight;
+
+    private void InitializeRowHeightControls()
+    {
+        var current = Owner is MainWindow main
+            ? main.CurrentModRowHeight
+            : Application.Current.Resources["ModRowHeight"] is double d ? d : 35;
+        SyncRowHeightControls(current);
+    }
+
+    private void SyncRowHeightControls(double height)
+    {
+        height = Math.Clamp(Math.Round(height), 28, 64);
+        var previous = synchronizingRowHeight;
+        synchronizingRowHeight = true;
+        try
+        {
+            RowHeightSlider.Value = height;
+            var text = height.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+            if (RowHeightInput.Text != text) RowHeightInput.Text = text;
+        }
+        finally { synchronizingRowHeight = previous; }
+    }
+
+    private void ApplyEditorRowHeight(double height, bool save = true)
+    {
+        if (!double.IsFinite(height)) return;
+        height = Math.Clamp(Math.Round(height), 28, 64);
+        SyncRowHeightControls(height);
+        if (Owner is MainWindow main)
+        {
+            main.SetModRowHeight(height, save);
+            return;
+        }
+        Application.Current.Resources["ModRowHeight"] = height;
+        Application.Current.Resources["ModThumbnailSize"] = Math.Min(30, height - 4);
+        if (save)
+        {
+            try
+            {
+                var listStore = new ListDisplaySettingsStore(UserStorage.DirectoryPath);
+                listStore.Save(listStore.Load() with { RowHeight = height });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException) { }
+        }
+    }
+
+    private void RowHeight_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!ready || synchronizingRowHeight) return;
+        ApplyEditorRowHeight(e.NewValue, save: true);
+    }
+
+    private void RowHeightInput_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (!ready || synchronizingRowHeight) return;
+        if (int.TryParse(RowHeightInput.Text, out var height) && height is >= 28 and <= 64)
+            ApplyEditorRowHeight(height, save: true);
+    }
+
+    private void CommitEditorRowHeightInput()
+    {
+        var current = int.TryParse(RowHeightInput.Text, out var value) ? value : RowHeightSlider.Value;
+        ApplyEditorRowHeight(current, save: true);
+    }
+
+    private void RowHeightInput_LostFocus(object sender, KeyboardFocusChangedEventArgs e) => CommitEditorRowHeightInput();
+
+    private void RowHeightInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Escape)
+        {
+            if (e.Key == Key.Enter) CommitEditorRowHeightInput();
+            else SyncRowHeightControls(RowHeightSlider.Value);
+            RowHeightSlider.Focus();
+            e.Handled = true;
+        }
+        else if (e.Key is Key.Up or Key.Down)
+        {
+            var current = int.TryParse(RowHeightInput.Text, out var value) ? value : RowHeightSlider.Value;
+            ApplyEditorRowHeight(current + (e.Key == Key.Up ? 1 : -1), save: true);
+            e.Handled = true;
+        }
+    }
+
+    private void RowHeightReset_Click(object sender, RoutedEventArgs e) => ApplyEditorRowHeight(35, save: true);
 }

@@ -29,7 +29,7 @@ internal static class Program
             }
             var request = JsonSerializer.Deserialize<Request>(input.ToString(), Json) ?? throw new InvalidDataException("Steam 请求为空。");
             if (request.Operation is not ("ready" or "inventory" or "search" or "query" or "subscribe" or "enqueue" or "wait-download" or "unsubscribe"
-                    or "states" or "enqueue-many" or "collection")
+                    or "states" or "watch-downloads" or "enqueue-many" or "collection")
                 || request.Ids is null || request.Ids.Length > 1000
                 || request.Ids.Distinct(StringComparer.Ordinal).Count() != request.Ids.Length
                 || request.Ids.Any(id => id.Length == 0 || !id.All(char.IsAsciiDigit) || !ulong.TryParse(id, out var n) || n == 0 || n.ToString() != id)
@@ -58,6 +58,7 @@ internal static class Program
                 Write(new { Kind = "result", Success = true, Operation = request.Operation,
                     Items = ids.Take((int)actual).Select(State).ToArray() });
             }
+            else if (request.Operation == "watch-downloads") WatchDownloads(request.Ids.Select(text => new PublishedFileId_t(ulong.Parse(text))).ToArray());
             else if (request.Operation is "states" or "enqueue-many" or "collection")
             {
                 var requested = request.Ids.Select(text => new PublishedFileId_t(ulong.Parse(text))).ToArray();
@@ -269,6 +270,39 @@ internal static class Program
             throw new IOException("Steam 未确认订阅成功：" + reply.m_eResult);
         PumpUntil(() => State(id).Subscribed, TimeSpan.FromSeconds(15));
         Progress(id, "Steam 已确认订阅，等待下载");
+    }
+
+    private static void WatchDownloads(PublishedFileId_t[] ids)
+    {
+        var watched = ids.ToHashSet();
+        var failed = new HashSet<PublishedFileId_t>();
+        bool changed = true;
+        using var callback = Callback<DownloadItemResult_t>.Create(result =>
+        {
+            if (result.m_unAppID.m_AppId != RimWorld || !watched.Contains(result.m_nPublishedFileId)) return;
+            if (result.m_eResult != EResult.k_EResultOK) failed.Add(result.m_nPublishedFileId);
+            changed = true;
+        });
+        var refresh = Stopwatch.StartNew();
+        while (true)
+        {
+            SteamAPI.RunCallbacks();
+            if (!SteamAPI.IsSteamRunning() || !SteamUser.BLoggedOn())
+                throw new IOException("Steam 已关闭或断开登录，未完成的下载已跳过。");
+            if (changed || refresh.ElapsedMilliseconds >= 1000)
+            {
+                changed = false; refresh.Restart();
+                var items = ids.Select(State).ToArray();
+                var waiting = items.Where((s, i) => !s.Installed && !failed.Contains(ids[i]) && (s.Subscribed || s.DownloadPending || s.Downloading)).ToArray();
+                if (waiting.Length == 0)
+                {
+                    Write(new { Kind = "result", Success = true, Operation = "watch-downloads", Items = items });
+                    return;
+                }
+                Progress(ids[0], $"请等待创意工坊下载完成（本批已安装 {items.Count(s => s.Installed)}/{ids.Length}，排队 {waiting.Count(s => s.DownloadPending && !s.Downloading)}，下载中 {waiting.Count(s => s.Downloading)}）…");
+            }
+            Thread.Sleep(100);
+        }
     }
 
     private static void WaitForDownload(PublishedFileId_t id)

@@ -6,6 +6,7 @@
     <Window.Resources>
         <Style x:Key="FieldLabel" TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/><Setter Property="Margin" Value="0,0,0,6"/></Style>
     </Window.Resources>
+    <Border Background="{DynamicResource PageBrush}">
     <Grid Margin="24">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid Margin="0,0,0,18">
@@ -100,4 +101,5 @@
             <Button x:Name="CancelButton" Content="取消操作" HorizontalAlignment="Left" Visibility="Collapsed" Margin="0" Click="Cancel_Click"/>
         </DockPanel>
     </Grid>
+    </Border>
 </Window>

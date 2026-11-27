@@ -44,14 +44,19 @@ public partial class App : Application
         // The first-frame check uses the normal window creation path with an isolated profile.
 #if DEBUG
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--startup-presentation-smoke";
-        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--marketplace-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] is "--marketplace-smoke" or "--notice-close-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--order-import-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--priority-fixes-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--main-panel-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--top-menu-splitter-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--sorting-installations-smoke";
-        isSmokeTest |= e.Args.Length == 2 && e.Args[0] is "--appearance-smoke" or "--appearance-direct-smoke" or "--theme-transfer-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] is "--appearance-smoke" or "--appearance-direct-smoke" or "--theme-transfer-smoke" or "--appearance-preset-smoke";
         isSmokeTest |= e.Args.Length == 2 && e.Args[0] is "--motion-polish-smoke" or "--performance-smoke-reduced";
-        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--selection-motion-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] is "--selection-motion-smoke" or "--list-performance-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--sorting-guide-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--thumbnail-revisit-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] == "--mod-wheel-motion-smoke";
+        isSmokeTest |= e.Args.Length == 2 && e.Args[0] is "--mod-thumb-motion-smoke" or "--mod-thumb-real-smoke";
         InterfaceMotion.ReduceMotionForCheck = e.Args.Length == 2 && e.Args[0] == "--performance-smoke-reduced";
 #endif
         // Storage migration can include hashing/copying. Keep the dispatcher responsive,
@@ -124,6 +129,8 @@ public partial class App : Application
 #if DEBUG
         if (e.Args.Length == 2 && e.Args[0] == "--appearance-direct-smoke")
             AppearanceSmokeCheck.AttachDirect(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--appearance-preset-smoke")
+            AppearancePresetSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--theme-transfer-smoke")
             AppearanceTransferSmokeChecks.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--appearance-smoke")
@@ -132,14 +139,24 @@ public partial class App : Application
             PriorityFixSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--marketplace-smoke")
             MarketplaceSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--notice-close-smoke")
+            window.ContentRendered += (_, _) => window.Dispatcher.InvokeAsync(() => window.CheckCloseWhileNoticePending(e.Args[1]));
         if (e.Args.Length == 2 && e.Args[0] == "--order-import-smoke")
             OrderImportSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--thumbnail-revisit-smoke")
+            ThumbnailRevisitSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--mod-wheel-motion-smoke")
+            ModWheelMotionSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] is "--mod-thumb-motion-smoke" or "--mod-thumb-real-smoke")
+            ModThumbMotionSmokeCheck.Attach(window, e.Args[1], real: e.Args[0] == "--mod-thumb-real-smoke");
         if (e.Args.Length == 2 && e.Args[0] == "--startup-presentation-smoke")
             StartupPresentationSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--interaction-smoke")
             InteractionMotionSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--selection-motion-smoke")
             SelectionMotionSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--sorting-guide-smoke")
+            SortingGuideSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--steam-ui-smoke")
             SteamUiSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--diagnostic-export-smoke")
@@ -154,12 +171,16 @@ public partial class App : Application
             AiUiSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--main-panel-smoke")
             MainPanelWorkflowSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--top-menu-splitter-smoke")
+            TopMenuAndSplitterSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--sorting-installations-smoke")
             SortingInstallationSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--performance-smoke")
             StartupPerformanceSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--performance-smoke-reduced")
             StartupPerformanceSmokeCheck.Attach(window, e.Args[1]);
+        if (e.Args.Length == 2 && e.Args[0] == "--list-performance-smoke")
+            StartupPerformanceSmokeCheck.Attach(window, e.Args[1], focused: true);
         if (e.Args.Length == 2 && e.Args[0] == "--motion-polish-smoke")
             MotionPolishSmokeCheck.Attach(window, e.Args[1]);
         if (e.Args.Length == 2 && e.Args[0] == "--runtime-ui-smoke")

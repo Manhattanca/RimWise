@@ -16,11 +16,11 @@ internal static class ModListLayoutSmokeCheck
     {
         var order = main.ViewModel.Rows.Select(row => row.PackageId).ToArray();
         var selected = main.OrderGrid.SelectedItems.Cast<object>().ToArray();
-        Check(System.Text.Json.JsonSerializer.Deserialize<ListDisplaySettings>("{\"AvailableSource\":1}") is { RowHeight: 38, AvailableSource: 1 }, "Old settings lost their row height default.");
+        Check(System.Text.Json.JsonSerializer.Deserialize<ListDisplaySettings>("{\"AvailableSource\":1}") is { RowHeight: 35, AvailableSource: 1 }, "Old settings lost their row height default.");
         main.RowHeightPopup.IsOpen = true;
         await Layout(main);
-        Check(Math.Abs(main.SearchBox.ActualHeight - main.RowHeightButton.ActualHeight) < 0.1,
-            $"Mod search height differs from the screenshot control height: {main.SearchBox.ActualHeight:F1} / {main.RowHeightButton.ActualHeight:F1} DIP.");
+        Check(Math.Abs(main.SearchBox.ActualHeight - main.AvailableSortDirectionButton.ActualHeight) < 0.1,
+            $"Mod search height differs from the screenshot control height: {main.SearchBox.ActualHeight:F1} / {main.AvailableSortDirectionButton.ActualHeight:F1} DIP.");
         Check(main.RowHeightSlider.FocusVisualStyle is null, "Slider still uses the white Windows focus rectangle.");
         Check(!main.RowHeightSlider.IsSnapToTickEnabled, "Row height slider still snaps in two-pixel jumps.");
         main.RowHeightInput.Text = "35";
@@ -189,7 +189,7 @@ internal static class ModListLayoutSmokeCheck
             await Layout(preview);
             Check(track.Thumb.IsVisible && track.Thumb.ActualHeight < track.ActualHeight, "Thumb inaccessible in short viewport.");
         }
-        finally { preview.Close(); main.SetModRowHeight(38); }
+        finally { preview.Close(); main.SetModRowHeight(35); }
         main.RowHeightPopup.IsOpen = true;
         await Layout(main);
         Check(main.RowHeightSlider.IsVisible, "Row height popup did not open.");

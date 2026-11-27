@@ -18,6 +18,7 @@ public sealed class MarketSessionHandler : DelegatingHandler
     private readonly SemaphoreSlim requests = new(1, 1);
     private long generation;
     public string? StorageWarning { get; private set; }
+    public long? ActiveGeneration { get { lock (gate) return cookies.GetCookies(origin)[CookieName] is { Expired: false } ? generation : null; } }
     private sealed record Saved(string Origin, string Token, DateTimeOffset Expires);
 
     public MarketSessionHandler(Uri origin, string scope, ISecretStore? store = null,
@@ -83,6 +84,7 @@ public sealed class MarketSessionHandler : DelegatingHandler
                 if (response.Headers.TryGetValues("Set-Cookie", out var headers)
                     && headers.Any(value => value.StartsWith(CookieName + "=", StringComparison.Ordinal)))
                 {
+                    generation++;
                     var cookie = cookies.GetCookies(origin)[CookieName];
                     try
                     {

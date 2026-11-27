@@ -41,16 +41,31 @@ internal static class ListDisplaySmokeCheck
                 foreach (var grid in new[] { window.AvailableGrid, window.OrderGrid })
                 {
                     Assert(!grid.Columns.Any(column => Equals(column.Header, "来源")), "Right-side source column still exists.");
-                    var first = Descendants(grid).OfType<DockPanel>().FirstOrDefault(panel => panel.Children.OfType<ContentControl>()
+                    var first = Descendants(grid).OfType<DockPanel>().FirstOrDefault(panel => panel.Children.OfType<ContentPresenter>()
                         .Any(child => child.ContentTemplate == window.FindResource("ModBadges")));
                     Assert(first is not null, "No row badges rendered.");
-                    var badges = first!.Children.OfType<ContentControl>().First();
+                    var badges = first!.Children.OfType<ContentPresenter>().First();
                     var name = first.Children.OfType<TextBlock>().Single();
                     Assert(DockPanel.GetDock(badges) == Dock.Left && badges.TranslatePoint(new(), first).X < name.TranslatePoint(new(), first).X,
                         "Badges are not left of name.");
                     grid.SelectedItems.Clear();
                     await Layout();
                     var firstRow = Descendants(grid).OfType<DataGridRow>().First();
+                    Assert(Descendants(firstRow).OfType<DataGridCellsPresenter>().Count() == 1
+                        && !Descendants(firstRow).Any(node => node is DataGridRowHeader or DataGridDetailsPresenter),
+                        "Compact row must keep native cells without unused row-header/details presenters.");
+                    var glyph = Descendants(first).OfType<System.Windows.Shapes.Path>().Single(path => path.Name == "SourceGlyph");
+                    var geometry = first.DataContext switch
+                    {
+                        Presentation.InstalledModRow installed => installed.SourceGeometry,
+                        Presentation.LoadOrderRow ordered => ordered.SourceGeometry,
+                        _ => throw new InvalidOperationException("Missing row context for source glyph.")
+                    };
+                    Assert(geometry.IsFrozen && ReferenceEquals(glyph.Data, geometry),
+                        "Recycled source glyph must use the shared immutable geometry.");
+                    var peer = UIElementAutomationPeer.CreatePeerForElement(grid);
+                    Assert(peer?.GetPattern(PatternInterface.Selection) is ISelectionProvider,
+                        "Native list selection automation was lost.");
                     var before = Descendants(firstRow).OfType<DataGridCell>().Select(cell => cell.TranslatePoint(new(), grid)).ToArray();
                     foreach (var item in grid.Items.Cast<object>().Take(2)) grid.SelectedItems.Add(item);
                     var cell = Descendants(grid).OfType<DataGridCell>().First(c => c.IsSelected);
@@ -68,6 +83,8 @@ internal static class ListDisplaySmokeCheck
             }
         }
         var ambiguous = new Presentation.LoadOrderRow("duplicate", 1);
+        Assert(ReferenceEquals(ambiguous.SourceGeometry, new Presentation.LoadOrderRow("other", 2).SourceGeometry),
+            "Unknown source geometry is not shared.");
         var sample = vm.AvailableMods[0].Installation with { CodeKind = ModCodeKind.CSharp };
         ambiguous.SetMatch(new("duplicate", [sample, sample with { Source = ModSource.Workshop }]));
         Assert(ambiguous.CodeKind == ModCodeKind.Unknown && ambiguous.SourceLabel == "多个来源", "Ambiguous source guessed a mod type.");

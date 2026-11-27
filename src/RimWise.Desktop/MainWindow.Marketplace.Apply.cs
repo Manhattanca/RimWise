@@ -15,15 +15,20 @@ public partial class MainWindow
 {
     private CancellationTokenSource? marketplaceApplyCancellation;
     private long marketplaceApplyGeneration;
+    private CancellationTokenSource? steamWait;
+    private void SkipMarketplaceWait_Click(object sender, RoutedEventArgs e) => steamWait?.Cancel();
 
     // Subscription/waiting is advisory; missing installations never block the authored import.
     internal async Task<bool> ApplyMarketplaceManifestAsync(MarketplaceManifest manifest,
         IProgress<string>? progress, CancellationToken token,
         Func<OrderComparison, string, CancellationToken, Task<bool>>? approvePreview = null,
-        Func<MarketplaceManifest, IProgress<string>?, CancellationToken, Task<IReadOnlyList<WorkshopItemState>>>? download = null)
+        Func<MarketplaceManifest, IProgress<string>?, CancellationToken, Task<IReadOnlyList<WorkshopItemState>>>? download = null,
+        Action<MarketplaceDownloadResult>? onSaved = null)
     {
         Dispatcher.VerifyAccess();
         var generation = ++marketplaceApplyGeneration;
+        using var skip = new CancellationTokenSource();
+        steamWait = skip;
         marketplaceApplyCancellation?.Cancel();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.Token);
         marketplaceApplyCancellation = cancellation;
@@ -63,7 +68,6 @@ public partial class MainWindow
                 throw new InvalidOperationException("当前排序已变化，请重新预览市场排序。");
             var originalPaths = paths;
             var originalStorage = UserStorage.DirectoryPath;
-            var originalOrder = ViewModel.CreateExportDocument();
             EnsureGameClosed();
             var store = CreateGameOrderStore();
             // Capture exact target bytes before preview. WithOrder below keeps these bytes
@@ -74,7 +78,6 @@ public partial class MainWindow
             using (var input = File.OpenRead(store.TargetPath)) targetTemplate = new ModsConfigXmlFormat().Read(input);
             var runtimeVersion = ResolveTargetGameVersion(targetTemplate);
             var baseline = store.Prepare(targetTemplate.WithOrder(authored.Configuration.Order), runtimeVersion);
-            var order = authored.Configuration.Order.PackageIds;
             void Guard()
             {
                 operationToken.ThrowIfCancellationRequested();
@@ -103,7 +106,8 @@ public partial class MainWindow
             try
             {
                 completed = await (download?.Invoke(manifest, progress, operationToken)
-                    ?? MarketplaceWorkshopDownloads.DownloadAsync(manifest, AppContext.BaseDirectory, progress, operationToken, ConfirmMissing));
+                    ?? MarketplaceWorkshopDownloads.DownloadAsync(manifest, AppContext.BaseDirectory, progress, operationToken, ConfirmMissing, skip.Token,
+                        waiting => { if (Current()) MarketplaceSkipWait.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed; }));
             }
             catch (OperationCanceledException) when (operationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
@@ -114,6 +118,7 @@ public partial class MainWindow
                 Report("Steam 下载未能完成，已跳过不可用下载并继续导入；缺失模组会在完成后提示。");
             }
             Guard();
+            MarketplaceSkipWait.Visibility = Visibility.Collapsed;
             var expectedIds = manifest.Mods.Where(mod => mod.WorkshopId is not null).Select(mod => mod.WorkshopId!).ToHashSet(StringComparer.Ordinal);
             var collectionBound = !string.IsNullOrWhiteSpace(manifest.WorkshopCollectionId);
             if (!collectionBound && completed.Any(item => !expectedIds.Remove(item.Id)))
@@ -145,32 +150,12 @@ public partial class MainWindow
             var incomplete = manifest.Mods
                 .Where(mod => !GameContentPolicy.KeepWhenClearing(mod.PackageId, runtimeVersion) && !installedIds.Contains(mod.PackageId))
                 .Select(mod => mod.PackageId).ToArray();
-            var downloadNotice = incomplete.Length == 0 ? "排序中的模组已在本机找到。"
-                : $"有 {incomplete.Length} 个模组未能下载或本机缺失，已跳过并继续导入排序：" + string.Join("、", incomplete.Take(8))
-                    + (incomplete.Length > 8 ? "等。" : "。");
-            Report(downloadNotice + "正在导入排序…");
+            Report("正在保存排序…");
             var importNotice = MarketplaceOrderCompatibility.VersionNotice(manifest, runtimeVersion);
-            var newIds = order.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var removedRetained = originalOrder.Order.PackageIds.Where(id => ViewModel.IsRetained(id) && !newIds.Contains(id)).ToArray();
-            var notice = $"市场排序：{manifest.Title}\n游戏配置：{store.TargetPath}\n{downloadNotice}\n将按作者原顺序导入并保存完整清单，原配置自动备份，不自动检测、修复或调整排序。";
-            if (importNotice.Length > 0) notice += "\n" + importNotice;
-            if (ViewModel.HasChanges) notice += "\n当前尚未保存的调整将被替换，可通过撤销恢复。";
-            if (removedRetained.Length > 0)
-                notice += "\n警告：本次将从排序中移出必须保留的模组：" + string.Join("、", removedRetained)
-                    + "。仅本次应用覆盖保留保护；持续颜色和保留规则不变，不删除安装文件。";
-            var comparison = new OrderComparison(originalOrder.Order, authored.Configuration.Order);
-            Guard();
-            bool approved;
-            if (approvePreview is not null) approved = await approvePreview(comparison, notice, operationToken);
-            else
+            if (approvePreview is not null)
             {
-                var preview = new OrderPreviewWindow(comparison, "导入市场排序", notice, "导入并保存排序",
-                    catalogue: ViewModel.CurrentCatalogue, version: ViewModel.CatalogueVersion) { Owner = this };
-                using var closeOnCancel = operationToken.Register(() => Dispatcher.BeginInvoke(() => { if (preview.IsVisible) preview.Close(); }));
-                approved = preview.ShowDialog() == true;
+                if (!await approvePreview(new OrderComparison(ViewModel.CreateExportDocument().Order, authored.Configuration.Order), importNotice, operationToken)) return false;
             }
-            Guard();
-            if (!approved) { Report("已取消应用市场排序，保留当前清单和游戏配置。"); return false; }
             Guard();
             var finalPlan = baseline.WithOrder(authored.Configuration.Order);
             var replacement = authored.WithConfiguration(finalPlan.After);
@@ -179,9 +164,12 @@ public partial class MainWindow
             ViewModel.ApplyMarketplaceOrder(replacement, manifest.Title, () => { Guard(); return finalPlan.Apply(); },
                 EnsureGameClosed);
             ViewModel.IsShowingCache = false;
-            Report($"已导入并保存市场排序 {manifest.Title}，原配置已备份；可撤销本次导入。"
-                + (incomplete.Length > 0 ? " " + downloadNotice : "")
-                + (importNotice.Length > 0 ? " " + importNotice : "") + ImportedMissingModsNotice());
+            var title = $"已使用《{manifest.Title}》排序";
+            var details = string.Join("\n", new[] { importNotice, incomplete.Length == 0 ? "" : $"缺少 {incomplete.Length} 个模组：\n" + string.Join("\n", incomplete) }.Where(s => s.Length > 0));
+            ViewModel.Status = title;
+            try { onSaved?.Invoke(new(true, title, details)); }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            { /* A completed import remains successful if its notification cannot be shown. */ }
             return true;
         }
         catch (OperationCanceledException)
@@ -199,6 +187,8 @@ public partial class MainWindow
         finally
         {
             ViewModel.EditorChanged -= Changed;
+            if (ReferenceEquals(steamWait, skip)) steamWait = null;
+            if (Current()) MarketplaceSkipWait.Visibility = Visibility.Collapsed;
             if (ReferenceEquals(marketplaceApplyCancellation, cancellation)) marketplaceApplyCancellation = null;
         }
     }

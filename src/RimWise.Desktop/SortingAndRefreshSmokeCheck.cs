@@ -71,7 +71,7 @@ internal static class SortingAndRefreshSmokeCheck
                 await Idle(window);
                 var buttons = ((StackPanel)window.RefreshButton.Parent).Children.OfType<Button>().ToArray();
                 var points = buttons.Select(button => button.TranslatePoint(new Point(), window)).ToArray();
-                Assert(buttons.Length == 10 && points[^1].X + buttons[^1].ActualWidth <= window.ActualWidth, "Refresh actions clipped.");
+                Assert(buttons.Length == 7 && points[^1].X + buttons[^1].ActualWidth <= window.ActualWidth, "Refresh actions clipped.");
                 for (var index = 1; index < points.Length; index++)
                     Assert(Math.Abs(points[index].Y - points[0].Y) < 1 && points[index].X >= points[index - 1].X + buttons[index - 1].ActualWidth,
                         "Refresh actions wrap or overlap.");

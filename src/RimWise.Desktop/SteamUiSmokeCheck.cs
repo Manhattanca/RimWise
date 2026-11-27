@@ -48,7 +48,7 @@ internal static class SteamUiSmokeCheck
             return await release.Task;
         }) { Owner = owner };
         search.Show(); await Idle(search);
-        Require(Math.Abs(search.SearchText.ActualHeight - owner.RowHeightButton.ActualHeight) < 0.1,
+        Require(Math.Abs(search.SearchText.ActualHeight - owner.AvailableSortDirectionButton.ActualHeight) < 0.1,
             "Steam workshop search height differs from the screenshot control height.");
         Require(!search.SearchButton.IsEnabled && !search.ChooseButton.IsEnabled && search.StatusText.Text.Contains("正在"), "Search not visibly pending");
         search.Close();

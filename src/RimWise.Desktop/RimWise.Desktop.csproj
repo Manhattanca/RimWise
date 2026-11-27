@@ -3,8 +3,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <Version>0.8.2</Version>
-    <InformationalVersion>0.8.2</InformationalVersion>
+    <Version>0.8.3</Version>
+    <InformationalVersion>0.8.3</InformationalVersion>
     <AssemblyName>RimWise</AssemblyName>
     <RootNamespace>RimWise.Desktop</RootNamespace>
     <Product>RimWise</Product>
@@ -21,6 +21,7 @@
          and hardware acceleration, without machine-wide rendering changes. -->
     <RuntimeHostConfigurationOption Include="Switch.System.Windows.Appearance.DisableFluentThemeWindowBackdrop" Value="true" />
     <AssemblyMetadata Include="GitHubOAuthClientId" Value="$(RimWiseGitHubOAuthClientId)" />
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
     <AssemblyMetadata Include="GitHubOAuthClientSecret" Value="$(RimWiseGitHubOAuthClientSecret)" />
     <ProjectReference Include="..\RimWise.Core\RimWise.Core.csproj" />
     <ProjectReference Include="..\RimWise.Formats\RimWise.Formats.csproj" />
@@ -28,11 +29,20 @@
     <ProjectReference Include="..\RimWise.SteamBridge\RimWise.SteamBridge.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\RimWise.Decompiler\RimWise.Decompiler.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\RimWise.Diagnostics\RimWise.Diagnostics.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <Resource Include="Guide\Assets\import-*.png" />
     <Resource Include="Samples\ModsConfig.xml" />
     <Resource Include="Resources\Branding\RimWise.ico" />
     <EmbeddedResource Include="Resources\Pinyin\characters.tsv" LogicalName="RimWise.Pinyin.Characters" />
     <EmbeddedResource Include="Resources\Pinyin\phrases.tsv" LogicalName="RimWise.Pinyin.Phrases" />
   </ItemGroup>
+  <ItemGroup>
+    <GuideSource Include="MainWindow.xaml;Views\AiSettingsWindow.xaml;Views\AiSortingWindow.xaml;Views\TrialExclusionWindow.xaml" />
+    <Page Include="@(GuideSource->'$(BaseIntermediateOutputPath)$(Configuration)\guide\%(Filename).Guide.xaml')" Link="Guide\%(Filename)%(Extension)" />
+  </ItemGroup>
+  <Target Name="GenerateGuideScenes" BeforeTargets="PrepareForBuild" Inputs="@(GuideSource);Views\GuideScene.xslt" Outputs="@(GuideSource->'$(BaseIntermediateOutputPath)$(Configuration)\guide\%(Filename).Guide.xaml')">
+    <MakeDir Directories="$(BaseIntermediateOutputPath)$(Configuration)\guide" />
+    <XslTransformation XmlInputPaths="@(GuideSource)" XslInputPath="Views\GuideScene.xslt" OutputPaths="@(GuideSource->'$(BaseIntermediateOutputPath)$(Configuration)\guide\%(Filename).Guide.xaml')" />
+  </Target>
   <Target Name="CopySteamBridge" AfterTargets="Build">
     <ItemGroup><BridgeFiles Include="$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.SteamBridge\$(Configuration)\net10.0\*.exe;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.SteamBridge\$(Configuration)\net10.0\*.dll;$(MSBuildProjectDirectory)\..\..\work\bin\RimWise.SteamBridge\$(Configuration)\net10.0\*.json" /></ItemGroup>
     <Copy SourceFiles="@(BridgeFiles)" DestinationFolder="$(TargetDir)SteamBridge" />

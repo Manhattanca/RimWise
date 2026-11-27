@@ -14,3 +14,11 @@ internal static class GameContentNames
         _ => packageId
     };
 }
+
+public sealed record DlcStatus(string Label, string CompactLabel, bool? IsInstalled, bool IsEnabled = false)
+{
+    public bool IsActive => IsEnabled || IsInstalled == true;
+    public string StatusMark => IsActive ? "✓" : "×";
+    public string StatusTooltip => IsEnabled ? Label + "：已启用"
+        : IsInstalled switch { true => Label + "：已安装（当前排序未启用）", false => Label + "：未安装", _ => Label + "：等待扫描" };
+}

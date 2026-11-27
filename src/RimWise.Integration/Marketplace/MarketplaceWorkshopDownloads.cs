@@ -7,11 +7,20 @@ public static class MarketplaceWorkshopDownloads
 {
     public static Task<IReadOnlyList<WorkshopItemState>> DownloadAsync(MarketplaceManifest manifest,
         string applicationDirectory, IProgress<string>? progress, CancellationToken token,
-        Func<int, CancellationToken, Task<bool>>? confirmMissing = null)
+        Func<int, CancellationToken, Task<bool>>? confirmMissing = null, CancellationToken skipWait = default, Action<bool>? waiting = null)
     {
         var client = new SteamWorkshopClient(applicationDirectory);
         return DownloadAsync(manifest, client.StatesAsync, client.CollectionItemsAsync, client.EnqueueMissingAsync,
-            confirmMissing ?? ((_, _) => Task.FromResult(false)), progress, token);
+            confirmMissing ?? ((_, _) => Task.FromResult(false)), progress, token, watch: async ids =>
+            {
+                if (ids.Length == 0) return [];
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, skipWait);
+                waiting?.Invoke(true);
+                try { return await client.WatchAsync(ids, progress, linked.Token); }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested && skipWait.IsCancellationRequested)
+                { return await client.StatesAsync(ids, token); }
+                finally { waiting?.Invoke(false); }
+            });
     }
 
     // Injectable transport and clock keep tests away from the player's Steam account.
@@ -21,7 +30,8 @@ public static class MarketplaceWorkshopDownloads
         Func<string[], IProgress<string>?, CancellationToken, Task<IReadOnlyList<WorkshopItemState>>> enqueue,
         Func<int, CancellationToken, Task<bool>> confirmMissing,
         IProgress<string>? progress, CancellationToken token, TimeProvider? time = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null, Func<bool>? skipWait = null,
+        Func<string[], Task<IReadOnlyList<WorkshopItemState>>>? watch = null)
     {
         MarketplaceJson.ValidateManifest(manifest);
         token.ThrowIfCancellationRequested();
@@ -89,7 +99,7 @@ public static class MarketplaceWorkshopDownloads
             }
         }
         IReadOnlyList<WorkshopItemState> result;
-        try { result = await WorkshopDownloadMonitor.WaitAsync(watched, states, progress, token, time, delay); }
+        try { result = watch is null ? await WorkshopDownloadMonitor.WaitAsync(watched, states, progress, token, time, delay, skipWait) : await watch(watched); }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception ex) when (IsDownloadFailure(ex))
         {

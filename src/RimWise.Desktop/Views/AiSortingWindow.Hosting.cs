@@ -24,18 +24,27 @@ public partial class AiSortingWindow
         view.Padding = new Thickness(0);
         // Wide embedded settings need two rows, not a dialog-sized empty region.
         // Keep a bounded scroll viewport at smaller sizes so actions stay on screen.
-        SettingsRow.MaxHeight = SettingsScroll.MaxHeight = 158;
-        StatusScroll.MaxHeight = 60;
+        ApplyEmbeddedLayout(FindName);
+        return view;
+    }
+
+    internal static void ApplyEmbeddedLayout(Func<string, object> find)
+    {
+        T Part<T>(string name) => (T)find(name);
+        var SettingsLayout = Part<Grid>("SettingsLayout");
+        var AiActionsPanel = Part<WrapPanel>("AiActionsPanel");
+        var LimitPanel = Part<WrapPanel>("LimitPanel");
+        Part<RowDefinition>("SettingsRow").MaxHeight = Part<ScrollViewer>("SettingsScroll").MaxHeight = 158;
+        Part<ScrollViewer>("StatusScroll").MaxHeight = 60;
         SettingsLayout.ColumnDefinitions.Add(new() { Width = new GridLength(3, GridUnitType.Star) });
         SettingsLayout.ColumnDefinitions.Add(new() { Width = new GridLength(2, GridUnitType.Star) });
-        Grid.SetColumnSpan(ConfigurationText, 2);
+        Grid.SetColumnSpan(Part<TextBlock>("ConfigurationText"), 2);
         Grid.SetColumn(AiActionsPanel, 1); Grid.SetRow(AiActionsPanel, 1);
         Grid.SetColumn(LimitPanel, 1); Grid.SetRow(LimitPanel, 2);
         AiActionsPanel.Margin = new Thickness(16, 12, 0, 0);
         LimitPanel.Margin = new Thickness(16, 4, 0, 0);
-        ModePanel.VerticalAlignment = VerticalAlignment.Top;
-        CloseButton.Content = "返回模组排序";
-        return view;
+        Part<DockPanel>("ModePanel").VerticalAlignment = VerticalAlignment.Top;
+        Part<Button>("CloseButton").Content = "返回模组排序";
     }
 
     internal bool PrepareHostClose()

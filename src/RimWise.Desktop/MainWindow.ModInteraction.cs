@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using RimWise.Core;
 using RimWise.Desktop.Presentation;
+using RimWise.Desktop.Services;
 
 namespace RimWise.Desktop;
 
@@ -28,6 +29,9 @@ public partial class MainWindow
     private ModDrag? activeDrag;
     private Border? dropIndicator;
     private ModDragPreview? dragPreview;
+    private DataGrid? dragScrollGrid;
+    private ScrollViewer? dragScrollViewer;
+    private long lastDragScroll;
     private const string ModDragFormat = "RimWise.Internal.ModRows";
     private sealed record ModDrag(MainWindow Owner, long Revision, LoadOrderRow[] Order, InstalledModRow[] Available);
 
@@ -55,6 +59,21 @@ public partial class MainWindow
 
     private void SelectionModelChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.SelectedName))
+        {
+            RowSelectionMotion.PulseTitle(SelectedModNameText);
+            return;
+        }
+        if (e.PropertyName == nameof(MainViewModel.AvailableCountLabel))
+        {
+            RowSelectionMotion.BumpBadge(AvailableCountBadge);
+            return;
+        }
+        if (e.PropertyName == nameof(MainViewModel.OrderCountLabel))
+        {
+            RowSelectionMotion.BumpBadge(OrderCountBadge);
+            return;
+        }
         if (e.PropertyName is not (nameof(MainViewModel.SelectedOrderRows) or nameof(MainViewModel.SelectedAvailableRows))) return;
         if (synchronizingSelection || selectionSyncPending) return;
         selectionSyncPending = true;
@@ -206,12 +225,14 @@ public partial class MainWindow
         e.Handled = true;
     }
 
-    private ModDrag? ReadDrag(IDataObject data)
+    private ModDrag? ReadDrag(IDataObject data, bool validateRows = false)
     {
         if (activeDrag is not { } drag || drag.Owner != this || drag.Revision != ViewModel.ContentRevision
             || !data.GetDataPresent(ModDragFormat, false) || !ReferenceEquals(data.GetData(ModDragFormat, false), drag)) return null;
-        if (drag.Order.Any(row => !ViewModel.Rows.Contains(row))
-            || drag.Available.Any(row => !ViewModel.AvailableMods.Contains(row))) return null;
+        // The revision protects pointer feedback. Validate row membership at the actual
+        // drop, not O(selection * catalogue) for each incoming mouse event.
+        if (validateRows && (drag.Order.Any(row => !ViewModel.Rows.Contains(row))
+            || drag.Available.Any(row => !ViewModel.AvailableMods.Contains(row)))) return null;
         return drag;
     }
 
@@ -222,13 +243,13 @@ public partial class MainWindow
     private (int Index, DataGridRow? Row, bool After) DropPosition(DataGrid grid, DragEventArgs e)
     {
         var row = HitRow(grid, e.OriginalSource);
-        if (row?.Item is not LoadOrderRow item) return (ViewModel.IsAvailableSortDescending ? 0 : ViewModel.Rows.Count, null, true);
+        if (row?.Item is not LoadOrderRow item) return (ViewModel.IsOrderSortDescending ? 0 : ViewModel.Rows.Count, null, true);
         var after = e.GetPosition(row).Y >= row.ActualHeight / 2;
         return (OrderDisplayInsertionIndex(item, after), row, after);
     }
 
     internal int OrderDisplayInsertionIndex(LoadOrderRow item, bool after) =>
-        ViewModel.Rows.IndexOf(item) + ((ViewModel.IsAvailableSortDescending ? !after : after) ? 1 : 0);
+        ViewModel.Rows.IndexOf(item) + ((ViewModel.IsOrderSortDescending ? !after : after) ? 1 : 0);
 
     private void ModGrid_DragOver(object sender, DragEventArgs e)
     {
@@ -238,27 +259,44 @@ public partial class MainWindow
         e.Handled = true;
         if (!allowed) { ClearDropIndicator(); return; }
         var point = e.GetPosition(grid);
-        var scroll = FindVisual<ScrollViewer>(grid);
-        if (point.Y < 40) scroll?.LineUp();
-        else if (point.Y > grid.ActualHeight - 30) scroll?.LineDown();
+        if (!ReferenceEquals(dragScrollGrid, grid))
+        {
+            dragScrollGrid = grid;
+            dragScrollViewer = FindVisual<ScrollViewer>(grid);
+            lastDragScroll = 0;
+        }
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(lastDragScroll).TotalMilliseconds >= 33)
+        {
+            if (point.Y < 40) dragScrollViewer?.LineUp();
+            else if (point.Y > grid.ActualHeight - 30) dragScrollViewer?.LineDown();
+            lastDragScroll = System.Diagnostics.Stopwatch.GetTimestamp();
+        }
         if (grid == OrderGrid)
         {
-            var position = DropPosition(grid, e);
-            var anchor = (FrameworkElement?)position.Row ?? grid;
+            var row = HitRow(grid, e.OriginalSource);
+            var after = row is null || e.GetPosition(row).Y >= row.ActualHeight / 2;
+            var anchor = (FrameworkElement?)row ?? grid;
             var origin = anchor.TranslatePoint(new Point(), ModInteractionOverlay);
             if (dropIndicator is null)
             {
-                dropIndicator = new Border { Height = 3, Background = (Brush)FindResource("AccentBrush"), IsHitTestVisible = false };
+                dropIndicator = new Border { Height = 3, Background = (Brush)FindResource("AccentBrush"), IsHitTestVisible = false,
+                    RenderTransform = new TranslateTransform() };
                 ModInteractionOverlay.Children.Add(dropIndicator);
             }
             dropIndicator.Width = anchor.ActualWidth;
-            Canvas.SetLeft(dropIndicator, origin.X);
-            Canvas.SetTop(dropIndicator, origin.Y + (position.After ? anchor.ActualHeight - 3 : 0));
+            var position = (TranslateTransform)dropIndicator.RenderTransform;
+            position.X = origin.X;
+            position.Y = origin.Y + (after ? anchor.ActualHeight - 3 : 0);
         }
         else ClearDropIndicator();
     }
 
-    private void ModGrid_DragLeave(object sender, DragEventArgs e) => ClearDropIndicator();
+    private void ModGrid_DragLeave(object sender, DragEventArgs e)
+    {
+        ClearDropIndicator();
+        dragScrollGrid = null;
+        dragScrollViewer = null;
+    }
     private void ClearDropIndicator()
     {
         if (dropIndicator is not null) ModInteractionOverlay.Children.Remove(dropIndicator);
@@ -268,7 +306,7 @@ public partial class MainWindow
     private void ModGrid_Drop(object sender, DragEventArgs e)
     {
         var grid = (DataGrid)sender;
-        var drag = ReadDrag(e.Data);
+        var drag = ReadDrag(e.Data, validateRows: true);
         e.Handled = true;
         e.Effects = DragDropEffects.None;
         ClearDropIndicator();
@@ -351,12 +389,12 @@ public partial class MainWindow
     }
 
     internal bool AcceptsDragForCheck(IDataObject data, bool toAvailable) =>
-        CanDrop(toAvailable ? AvailableGrid : OrderGrid, ReadDrag(data));
+        CanDrop(toAvailable ? AvailableGrid : OrderGrid, ReadDrag(data, validateRows: true));
 
     internal void DropForCheck(IDataObject data, bool toAvailable)
     {
         var grid = toAvailable ? AvailableGrid : OrderGrid;
-        if (ReadDrag(data) is { } drag && CanDrop(grid, drag)) ApplyModDrop(grid, drag, ViewModel.Rows.Count);
+        if (ReadDrag(data, validateRows: true) is { } drag && CanDrop(grid, drag)) ApplyModDrop(grid, drag, ViewModel.Rows.Count);
         activeDrag = null;
     }
 #endif

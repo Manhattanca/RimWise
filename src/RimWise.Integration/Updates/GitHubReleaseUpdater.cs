@@ -20,7 +20,6 @@ public sealed record DownloadProgress(long Received, long Total)
 /// <summary>Reads public GitHub releases and downloads verified assets. Never installs or restarts.</summary>
 public sealed class GitHubReleaseUpdater(HttpClient http, HttpClient? mirror = null)
 {
-    private bool preferMirror;
     private static Uri MirrorRoot => new(Marketplace.MarketApiConnection.DefaultOrigin, "api/updates/");
 
     public static HttpClient CreateMirrorHttpClient()
@@ -42,7 +41,7 @@ public sealed class GitHubReleaseUpdater(HttpClient http, HttpClient? mirror = n
         return await FastUpdateSource.RunAsync(
             (token, _) => CheckSourceAsync(http, new Uri("https://api.github.com/repos/" + Repository + "/releases/latest"), installedVersion, token),
             mirror is null ? null : token => CheckSourceAsync(mirror, new Uri(MirrorRoot, "latest"), installedVersion, token),
-            () => preferMirror = true, null, cancellationToken).ConfigureAwait(false);
+            null, null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<ReleaseDownload?> CheckSourceAsync(HttpClient client, Uri uri,
@@ -184,13 +183,11 @@ public sealed class GitHubReleaseUpdater(HttpClient http, HttpClient? mirror = n
         timeout.CancelAfter(TimeSpan.FromMinutes(20));
         try
         {
-            partial = mirror is not null && preferMirror
-                ? await DownloadAttemptAsync(release, directory, progress, true, _ => { }, timeout.Token).ConfigureAwait(false)
-                : await FastUpdateSource.RunAsync(
+            partial = await FastUpdateSource.RunAsync(
                     (token, received) => DownloadAttemptAsync(release, directory, progress, false, received, token),
                     mirror is null ? null : token => DownloadAttemptAsync(release, directory, progress, true, _ => { }, token),
-                    () => { preferMirror = true; progress?.Report(new(0, release.Size) { UsingMirror = true }); },
-                    DeletePartial, timeout.Token).ConfigureAwait(false);
+                    () => progress?.Report(new(0, release.Size) { UsingMirror = true }),
+                    DeletePartial, timeout.Token, release.Size).ConfigureAwait(false);
             timeout.Token.ThrowIfCancellationRequested();
             EnsureNoLink(destination);
             File.Move(partial, destination, overwrite: true);

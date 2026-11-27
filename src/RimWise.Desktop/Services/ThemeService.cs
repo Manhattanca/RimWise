@@ -119,6 +119,18 @@ internal sealed class ThemeService : IDisposable
         Preview(settings, image);
     }
 
+    internal void ActivateTheme(AppearanceSettings settings, AppearanceImage? image, string? name)
+    {
+        if (scopedPreview) throw new InvalidOperationException("局部预览不能保存外观设置。");
+        settings.Validate();
+        if (settings.Background is not null && (image is null || image.Name != settings.Background))
+            throw new InvalidDataException("请重新选择有效的主题背景图片，或另存修改后的主题。");
+        // Existing theme pictures are already archived. Selecting a preset must
+        // neither rewrite its definition nor re-export its background file.
+        store.ActivateTheme(settings, name);
+        Preview(settings, image);
+    }
+
     internal void RefreshSystemTheme()
     {
         if (Preference == ThemePreference.System) Apply();
@@ -262,6 +274,8 @@ internal sealed class ThemeService : IDisposable
         }
         Surface("SurfaceBrush", "PanelBrush", AppearanceSurface.Panels);
         Surface("SurfaceAlternateBrush", "AlternateBrush", AppearanceSurface.Panels);
+        Surface("SurfaceSelectionBrush", "SelectionBrush", AppearanceSurface.Panels);
+        Surface("SurfaceBorderBrush", "BorderBrush", AppearanceSurface.Panels);
         Surface("ChromeSurfaceBrush", "PanelBrush", AppearanceSurface.Bars);
         foreach (var (prefix, surface) in new[] { ("List", AppearanceSurface.Lists), ("Input", AppearanceSurface.Inputs), ("Selector", AppearanceSurface.Selectors),
             ("Button", AppearanceSurface.Buttons), ("Content", AppearanceSurface.Content) })

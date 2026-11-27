@@ -81,10 +81,10 @@ internal static class HistoryAndSaveSmokeCheck
                 window.Width = 960;
                 window.Height = 640;
                 await Idle(window);
-                var panel = (StackPanel)window.SaveOrderButton.Parent;
+                var panel = (Panel)window.SaveOrderButton.Parent;
                 var buttons = panel.Children.OfType<Button>().ToArray();
                 var positions = buttons.Select(button => button.TranslatePoint(new Point(), window)).ToArray();
-                Assert(buttons.Length == 10 && buttons.All(button => button.ActualWidth > 30), "Bottom actions missing.");
+                Assert(buttons.Length == 7 && buttons.All(button => button.ActualWidth > 30), "Bottom actions missing.");
                 for (var i = 1; i < buttons.Length; i++)
                     Assert(Math.Abs(positions[i].Y - positions[0].Y) < 1
                         && positions[i].X >= positions[i - 1].X + buttons[i - 1].ActualWidth, "Bottom actions overlap or wrap.");
@@ -165,7 +165,7 @@ internal static class HistoryAndSaveSmokeCheck
         window.SearchBox.Undo();
         Assert(Order(vm).SequenceEqual(current), "Text undo modified order history.");
         vm.SearchText = "";
-        var bindings = window.InputBindings.OfType<KeyBinding>().ToArray();
+        var bindings = window.ModEditorBody.InputBindings.OfType<KeyBinding>().ToArray();
         Assert(bindings.Any(binding => binding.Key == Key.Z && binding.Modifiers == ModifierKeys.Control && ReferenceEquals(binding.Command, vm.UndoCommand))
             && bindings.Any(binding => binding.Key == Key.Y && binding.Modifiers == ModifierKeys.Control && ReferenceEquals(binding.Command, vm.RedoCommand))
             && bindings.Any(binding => binding.Key == Key.Z && binding.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && ReferenceEquals(binding.Command, vm.RedoCommand)),

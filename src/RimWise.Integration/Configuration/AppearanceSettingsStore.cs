@@ -190,6 +190,22 @@ public sealed class AppearanceSettingsStore(string applicationDirectory)
         if (index < 0) themes.Add(entry); else themes[index] = entry;
         Write(new StoredSettings(2, settings.Preference, settings, name, themes.ToArray()));
     }
+
+    /// <summary>Persist the active selection, never create or overwrite a theme definition.</summary>
+    public void ActivateTheme(AppearanceSettings settings, string? name = null)
+    {
+        settings.Validate();
+        var themes = LoadThemes().ToArray();
+        if (name is not null)
+        {
+            ValidateName(name);
+            var selected = themes.SingleOrDefault(theme => string.Equals(theme.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (selected is null || selected.Settings != settings)
+                throw new InvalidDataException("所选主题已改变，请重新选择后使用。");
+            name = selected.Name;
+        }
+        Write(new StoredSettings(2, settings.Preference, settings, name, themes));
+    }
     private void Write(StoredSettings value) { file.Save(value); stored = value; loaded = true; }
 
     private sealed record StoredSettings(int SchemaVersion, ThemePreference Theme, AppearanceSettings? Options = null,

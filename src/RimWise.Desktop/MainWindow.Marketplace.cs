@@ -93,8 +93,9 @@ public partial class MainWindow
         token.ThrowIfCancellationRequested();
         if (apply)
         {
-            var applied = await ApplyMarketplaceManifestAsync(manifest, progress, token);
-            return new(applied, ViewModel.Status);
+            MarketplaceDownloadResult? saved = null;
+            await ApplyMarketplaceManifestAsync(manifest, progress, token, onSaved: result => saved = result);
+            return saved ?? new(false, ViewModel.Status);
         }
         var dialog = new SaveFileDialog
         {

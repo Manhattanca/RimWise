@@ -38,8 +38,8 @@ internal static class GameLogUiSmokeCheck
         window.LogsPageTab.IsChecked = true;
         await Idle(window);
         var page = (GameLogPage)window.GameLogHost.Content;
-        Assert(Math.Abs(page.SearchText.ActualHeight - window.RowHeightButton.ActualHeight) < 0.1,
-            $"Game log search height differs from the screenshot control height: {page.SearchText.ActualHeight:F1} / {window.RowHeightButton.ActualHeight:F1} DIP.");
+        Assert(Math.Abs(page.SearchText.ActualHeight - window.AvailableSortDirectionButton.ActualHeight) < 0.1,
+            $"Game log search height differs from the screenshot control height: {page.SearchText.ActualHeight:F1} / {window.AvailableSortDirectionButton.ActualHeight:F1} DIP.");
         page.SelectFile(startup);
         await WaitRead(page, 4);
         Assert(window.ModEditorBody.Visibility == Visibility.Collapsed && window.ModEditorFooter.Visibility == Visibility.Collapsed, "Editor must hide");

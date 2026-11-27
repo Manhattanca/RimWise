@@ -1,9 +1,24 @@
-work/
-bin/
-obj/
-.vs/
+# Local work and build output
+/work/
+/archive/
+**/bin/
+**/obj/
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/target/
+
+# Credentials and local settings
+.env
+.env.*
+!.env.example
+*.local
 *.user
-*.key
-*.pem
-*.pfx
+
+# Editor and OS state
+.vs/
+.idea/
+Thumbs.db
+.DS_Store
 src/RimWise.SteamBridge/Vendor/*.dll

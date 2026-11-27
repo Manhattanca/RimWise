@@ -57,6 +57,7 @@ public sealed record MarketplaceSubmission(
     int PullRequestNumber, Uri PullRequestUri, string Branch, string ManifestPath, string Sha256)
 {
     public bool IsAccountMarket { get; init; }
+    public bool Published { get; init; }
 }
 
 /// <summary>Safe, credential-free message for display. No server response bodies are included.</summary>

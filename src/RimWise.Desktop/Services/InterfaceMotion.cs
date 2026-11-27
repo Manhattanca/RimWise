@@ -79,7 +79,14 @@ internal static class InterfaceMotion
         if (sender is not Window window || e.OriginalSource != window) return;
         WindowFrameTheme.Apply(window);
         if (window is not MainWindow && window.GetType().Assembly == typeof(App).Assembly
-            && window.Content is FrameworkElement content) SlidePage(content, fromRight: true);
+            && window.Content is FrameworkElement content)
+        {
+            // Keep a full-client opaque backing stationary. Animating that backing
+            // exposes an unpainted native margin while the inner content slides in.
+            var moving = content is Border { Background: SolidColorBrush { Color.A: 255 }, Child: FrameworkElement inner }
+                ? inner : content;
+            SlidePage(moving, fromRight: true);
+        }
     }
 
     internal static void Reveal(FrameworkElement element)

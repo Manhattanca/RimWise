@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param([string]$PackageCacheRoot = (Join-Path $PSScriptRoot '..\work\nuget'))
+param([string]$PackageCacheRoot = 'E:\RimWise-research\nuget')
 # Reproduce the exact bundled bridge dependencies; never reads a game installation.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Initialize-Environment.ps1') -PackageCacheRoot $PackageCacheRoot

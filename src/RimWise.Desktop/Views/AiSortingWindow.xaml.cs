@@ -167,7 +167,6 @@ public partial class AiSortingWindow : Window
             : "新任务先发一次不包含模组或日志的短请求校验模型，可能产生少量用量。通过后经 Steam 测试地图；启动超过 30 分钟时可继续等待或取消。";
         AiActionsPanel.Visibility = LimitPanel.Visibility = ConfirmRemovalToggle.Visibility = IsOfflineMode ? Visibility.Collapsed : Visibility.Visible;
         ResponseHeading.Text = IsOfflineMode ? "离线排序结果" : "AI 回报与每轮处理结果";
-        OrderHeading.Text = IsOfflineMode ? "排序结果（未经游戏测试）" : "当前／最后测试顺序";
         LimitPanel.IsEnabled = !busy;
         PermissionBox.IsEnabled = !busy;
         ConfirmRemovalToggle.IsEnabled = !busy;
@@ -248,7 +247,6 @@ public partial class AiSortingWindow : Window
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ownerLifetime);
         requestCancellation = cancellation;
         outcome = null;
-        AcceptedList.ItemsSource = null;
         RejectedList.ItemsSource = null;
         SummaryText.Text = "";
         TokenText.Text = "";
@@ -332,7 +330,8 @@ public partial class AiSortingWindow : Window
         if (response.Result.PublicContent is { } content) ResponseText.Text = content;
         if (ResponseText.Text.Length == 0)
             ResponseText.Text = response.Result.Response?.Summary ?? "未收到可显示的 AI 内容。";
-        AcceptedList.ItemsSource = response.Preview.Actions.Select(Describe).ToArray();
+        if (response.Preview.Actions.Count > 0)
+            SummaryText.Text += "\n" + string.Join("\n", response.Preview.Actions.Select(Describe));
         RejectedList.ItemsSource = response.Preview.Rejected.Concat(response.Result.Response?.Warnings ?? []).ToArray();
     }
 

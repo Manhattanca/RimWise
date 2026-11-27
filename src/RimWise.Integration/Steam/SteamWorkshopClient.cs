@@ -36,6 +36,28 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
         }
         return items;
     }
+    public Task<IReadOnlyList<WorkshopItemState>> WatchAsync(string[] ids, IProgress<string>? progress, CancellationToken token)
+        => WatchBatchesAsync(ids, (batch, cancellation) => RunAsync("watch-downloads", batch, progress, cancellation), progress, token);
+
+    internal static async Task<IReadOnlyList<WorkshopItemState>> WatchBatchesAsync(string[] ids,
+        Func<string[], CancellationToken, Task<IReadOnlyList<WorkshopItemState>>> watch,
+        IProgress<string>? progress, CancellationToken token)
+    {
+        using var slots = new SemaphoreSlim(4);
+        var batches = await Task.WhenAll(ids.Chunk(1000).Select(async batch =>
+        {
+            await slots.WaitAsync(token).ConfigureAwait(false);
+            try { return await watch(batch, token).ConfigureAwait(false); }
+            catch (IOException)
+            {
+                token.ThrowIfCancellationRequested();
+                progress?.Report("一批模组的 Steam 下载状态无法读取，已跳过；其他批次继续等待，导入后提示缺失模组。");
+                return (IReadOnlyList<WorkshopItemState>)Array.Empty<WorkshopItemState>();
+            }
+            finally { slots.Release(); }
+        }));
+        return batches.SelectMany(batch => batch).ToArray();
+    }
     public Task<IReadOnlyList<WorkshopItemState>> CollectionItemsAsync(string id, IProgress<string>? progress, CancellationToken token)
         => RunAsync("collection", [id], progress, token);
     public Task<IReadOnlyList<WorkshopItemState>> QueryAsync(string id, CancellationToken token) => RunAsync("query", [id], null, token);
@@ -77,7 +99,7 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
             StandardErrorEncoding = Encoding.UTF8
         };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(operation == "ready" ? TimeSpan.FromSeconds(30)
+        timeout.CancelAfter(operation == "watch-downloads" ? Timeout.InfiniteTimeSpan : operation == "ready" ? TimeSpan.FromSeconds(30)
             : operation is "subscribe" or "wait-download" ? TimeSpan.FromMinutes(17)
             : operation is "enqueue-many" or "collection" ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(150));
         using var process = Process.Start(start) ?? throw new IOException("无法启动 Steam 组件。");
@@ -91,7 +113,7 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
             int total = 0;
             while (await process.StandardOutput.ReadLineAsync(timeout.Token) is { } line)
             {
-                total += line.Length;
+                total = operation == "watch-downloads" ? line.Length : total + line.Length;
                 if (total > 32 * 1024 * 1024 || line.Length > 16 * 1024 * 1024) throw new IOException("Steam 组件响应过大。");
                 // Native SDK startup notices are not protocol messages.
                 if (!line.StartsWith('{')) continue;
@@ -102,14 +124,14 @@ public sealed class SteamWorkshopClient(string applicationDirectory)
                     if (result is not null) throw new IOException("Steam 组件返回了重复结果。");
                     result = line;
                 }
-                else if (kind == "progress" && operation is "subscribe" or "enqueue" or "wait-download" or "enqueue-many" or "collection")
+                else if (kind == "progress" && operation is "subscribe" or "enqueue" or "wait-download" or "enqueue-many" or "collection" or "watch-downloads")
                 {
                     var id = json.RootElement.GetProperty("Id").GetString();
                     if (!ids.Contains(id, StringComparer.Ordinal)) throw new IOException("Steam 组件返回了无关项目。");
                     var message = json.RootElement.GetProperty("Message").GetString() ?? "";
                     if (json.RootElement.TryGetProperty("Total", out var all) && all.GetUInt64() > 0)
                         message += $" {json.RootElement.GetProperty("Bytes").GetUInt64() * 100.0 / all.GetUInt64():0}%";
-                    progress?.Report($"{id}：{message}");
+                    progress?.Report(operation == "watch-downloads" ? message : $"{id}：{message}");
                 }
             }
             await process.WaitForExitAsync(timeout.Token);

@@ -9,7 +9,7 @@ using RimWise.Integration.Marketplace;
 
 namespace RimWise.Desktop.Views;
 
-public sealed record MarketplaceDownloadResult(bool Success, string Message);
+public sealed record MarketplaceDownloadResult(bool Success, string Message, string Details = "");
 public sealed record MarketplaceDownloadNotice(string Title, string Message, bool Busy, double? Percent = null);
 
 public sealed class MarketplacePageActions
@@ -436,9 +436,11 @@ public partial class MarketplacePage : UserControl
             var outcome = await actions.DownloadAsync(snapshot, use, progress, source.Token);
             if (ReferenceEquals(active, source))
             {
-                StatusText.Text = Safe(outcome.Message);
-                Notify(outcome.Success ? use ? "已成功使用排序" : "排序已另存为" : "排序操作未完成",
-                    StatusText.Text, false, outcome.Success ? 100 : null);
+                var message = Safe(outcome.Message);
+                StatusText.Text = message;
+                if (outcome.Success && use)
+                    Notify($"已使用《{snapshot.Title}》排序", outcome.Details, false);
+                else Notify(outcome.Success ? "排序已另存为" : "排序操作未完成", message, false, outcome.Success ? 100 : null);
             }
         }
         catch (OperationCanceledException)

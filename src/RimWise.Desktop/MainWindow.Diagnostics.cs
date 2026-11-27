@@ -23,7 +23,7 @@ public partial class MainWindow
         if (exportingDiagnostics) return;
         var dialog = new SaveFileDialog
         {
-            Title = "导出诊断日志",
+            Title = "导出完整排障日志",
             Filter = "RimWise 诊断包 (*.zip)|*.zip",
             FileName = "RimWise-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip",
             AddExtension = true, OverwritePrompt = true
@@ -36,7 +36,7 @@ public partial class MainWindow
             DiagnosticEventLog.Current?.Record("ui", "diagnostic-export-start");
             var result = await ExportDiagnosticsAsync(dialog.FileName);
             DiagnosticEventLog.Current?.Record("ui", "diagnostic-export-complete", $"files={result.Files};bytes={result.Bytes};omissions={result.OmissionCount};recovered={result.RecoveredRecords}");
-            ViewModel.Status = $"已导出诊断日志：{Path.GetFileName(dialog.FileName)}；已回报 {result.ReportedTokens:N0} token"
+            ViewModel.Status = $"已导出完整排障日志：{Path.GetFileName(dialog.FileName)}；已回报 {result.ReportedTokens:N0} token"
                 + (result.UnknownTasks > 0 ? $"，另有 {result.UnknownTasks} 项用量未回报" : "");
             ViewModel.Status += result.OmissionCount == 0 ? "" : "；" + result.IncompleteNotice;
             ViewModel.Status += result.RecoveredRecords == 0 ? "" : "；" + result.RecoveryNotice;
@@ -50,7 +50,7 @@ public partial class MainWindow
             DiagnosticEventLog.Current?.Record("ui", "diagnostic-export-failed", ex.GetType().Name);
             ViewModel.Status = "诊断日志导出失败，未生成新的诊断包。";
             MessageDialog.Show(this, "导出失败，原日志和已有诊断包均保留。请检查保存位置、用户数据和本地密钥是否可读。\n\n"
-                + new DiagnosticRedactor().Text(ex.Message), "导出诊断日志", MessageBoxButton.OK, MessageBoxImage.Warning);
+                + new DiagnosticRedactor().Text(ex.Message), "导出完整排障日志", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally { exportingDiagnostics = false; if (sender is MenuItem item) item.IsEnabled = true; }
     }
@@ -59,9 +59,8 @@ public partial class MainWindow
     {
         var directory = UserStorage.DirectoryPath;
         var snapshot = ViewModel.CaptureDiagnosticSnapshot(paths.TargetVersionOverride);
-        ViewModel.Status = "正在导出诊断日志…";
-        if (DiagnosticEventLog.Current is { } log) await log.FlushAsync();
-        return await Task.Run(() => DiagnosticExportService.Export(directory, destination, snapshot));
+        ViewModel.Status = "正在导出完整排障日志…";
+        return await Services.CompleteDiagnosticExport.ExportAsync(directory, snapshot, destination);
     }
 
     internal OrderIssuesWindow OpenIssues(DiagnosticSeverity severity)

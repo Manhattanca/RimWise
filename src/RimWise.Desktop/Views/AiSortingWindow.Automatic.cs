@@ -51,6 +51,7 @@ public partial class AiSortingWindow
         if (!await EnsureAiConfiguredAsync()) return;
         RefreshConfiguration();
         if (gamePaths is null || !AutomaticButton.IsEnabled) return;
+        MarkAutomaticSortingUsed();
         if (resumeId is null && settings.PermissionLevel != AiPermissionLevel.Level1OrderAndRequiredDependencies)
         {
             settings = settings with { PermissionLevel = AiPermissionLevel.Level1OrderAndRequiredDependencies };
@@ -73,7 +74,7 @@ public partial class AiSortingWindow
         ResponseText.Text=resumeId is null ? "正在准备模型校验。\n" : "正在读取任务恢复记录。\n"; SummaryText.Text="";
         ShowDependencyReasons(null);
         ShowStartupFailure(null);
-        AcceptedList.ItemsSource=null; RejectedList.ItemsSource=null;
+        RejectedList.ItemsSource=null;
         var receiving=true;
         var runPrepared=false;
         var aiWatch=new System.Diagnostics.Stopwatch();
@@ -265,7 +266,7 @@ public partial class AiSortingWindow
             {
                 StatusText.Text="自动排序未完成："+ex.Message;
                 AppendAutomaticReport("\n" + StatusText.Text + "\n");
-                MessageDialog.Show(DialogOwner, StatusText.Text + "\n\n可在设置中导出诊断日志。测试记录目录：\n"
+                MessageDialog.Show(DialogOwner, StatusText.Text + "\n\n可在设置中导出完整排障日志。测试记录目录：\n"
                     + Path.Combine(dataDirectory, "Data", "GameTests"), "自动排序失败", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
@@ -290,17 +291,22 @@ public partial class AiSortingWindow
     {
         DiagnosticEventLog.Current?.Record("automatic-sorting", "progress",
             $"attempt={progress.Attempt}; reportedTokens={progress.ReportedTokens}; {progress.Message}\n{progress.ReportText}");
-        AppendAutomaticReport($"\n[第 {progress.Attempt} 轮] {progress.Message}\n"
-            + (progress.ReportText is { Length: > 0 } text ? text + "\n" : ""));
+        AppendAutomaticReport(FormatRound(progress));
         if (progress.DependencyReasons is { } reasons) ShowDependencyReasons(reasons);
         if (progress.PreparedOrder is { } order)
         {
-            AcceptedList.ItemsSource = order.Select((id, i) =>
-                $"{i + 1}. {ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id)}").ToArray();
             SummaryText.Text = $"当前临时测试顺序共 {order.Count} 项，尚未保存到个人排序。普通试排除项遵循确认设置；读取失败且有本轮游戏关联报错的项按安全策略排除。";
         }
         TokenText.Text = $"本任务已报告 {progress.ReportedTokens:N0} token · 第 {progress.Attempt} 次测试";
     }
+
+    internal static string FormatRound(MaintenanceProgress progress) => $"\n[第 {progress.Attempt} 轮] {progress.Message}\n"
+        + (progress.ReportText is { Length: > 0 } text ? text + "\n" : "");
+
+    internal static string FormatResult(string message, string? analysis, int requests) => "\n任务结果：" + message + "\n"
+        + (analysis is { Length: > 0 } ? "AI 分析：" + analysis + "\n"
+            : requests > 0 ? "本轮未收到可显示的 AI 最终分析；请查看上方各轮服务状态和本地试排除记录。\n"
+            : "本次未请求 AI 生成排序方案，已按本地规则及测试结果处理。\n");
 
     private void AppendAutomaticReport(string text)
     {
@@ -397,13 +403,8 @@ public partial class AiSortingWindow
         StatusText.Text=result.Maintenance.Message;
         TokenText.Text=$"本任务实际报告 {result.Maintenance.ReportedTokens:N0} token · 测试 {result.Maintenance.Attempts + result.Maintenance.ControlAttempts} 次"
             +(result.Maintenance.HasUnknownUsage?"；部分请求未回报用量，另按预估记账。":"");
-        AppendAutomaticReport("\n任务结果：" + result.Maintenance.Message + "\n"
-            + (result.Maintenance.Analysis is { Length: > 0 } finalAnalysis ? "AI 分析：" + finalAnalysis + "\n"
-                : result.Maintenance.Requests > 0 ? "本轮未收到可显示的 AI 最终分析；请查看上方各轮服务状态和本地试排除记录。\n"
-                : "本次未请求 AI 生成排序方案，已按本地规则及测试结果处理。\n"));
+        AppendAutomaticReport(FormatResult(result.Maintenance.Message, result.Maintenance.Analysis, result.Maintenance.Requests));
         var keptTrialMods = result.Maintenance.TrialDecisionRecorded && !result.Maintenance.TrialRemovalsApproved;
-        AcceptedList.ItemsSource=(result.LastOrderKept || keptTrialMods || result.PreparationApplied ? editor.Rows.Select(r => r.PackageId) : result.Maintenance.LastAttemptedOrder)
-            .Select((id,i)=>$"{i+1}. {ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id)}").ToArray();
         string Name(string id) => ModDisplayName.Resolve(editor.CurrentCatalogue, editor.CatalogueVersion, id);
         RejectedList.ItemsSource=result.Subscriptions.Select(d=>$"已记录缺失模组／前置订阅：{Name(d.PackageId)}")
             .Concat(result.Maintenance.ConflictApprovals.Select(a=>"已记录移出排序："+string.Join("、",a.RemovedIds.Select(Name))+"（安装文件保留）"))
@@ -495,7 +496,7 @@ public partial class AiSortingWindow
             + (string.IsNullOrWhiteSpace(details) ? "" : "\n\n" + details);
         if (maintenance.LogPaths.Count > 0)
             text += "\n\n本轮日志：\n" + string.Join("\n", maintenance.LogPaths.Select(StoredEvidence.Resolve).Distinct());
-        text += ReadFailureResultNotice(result, name) + "\n\n可在设置中导出诊断日志。";
+        text += ReadFailureResultNotice(result, name) + "\n\n可在设置中导出完整排障日志。";
         return (maintenance.ReplyFailure != AiReplyFailure.None ? "AI 错误，自动排序已停止"
             : maintenance.Outcome == MaintenanceOutcome.Failed ? "自动排序失败" : "自动排序未完成", text, MessageBoxImage.Warning);
     }

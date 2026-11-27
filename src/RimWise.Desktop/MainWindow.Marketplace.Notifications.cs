@@ -17,6 +17,8 @@ public partial class MainWindow
         marketplaceNoticeBusy = notice.Busy;
         MarketplaceNoticeTitle.Text = notice.Title;
         MarketplaceNoticeText.Text = notice.Message;
+        MarketplaceNoticeBody.Visibility = notice.Message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (!notice.Busy) MarketplaceNoticeBody.ScrollToTop();
         MarketplaceNoticeProgress.IsIndeterminate = notice.Busy && notice.Percent is null;
         MarketplaceNoticeProgress.Value = notice.Percent is { } value ? Math.Clamp(value, 0, 100) : 0;
         MarketplaceNoticeProgress.Visibility = notice.Busy || notice.Percent is not null ? Visibility.Visible : Visibility.Collapsed;

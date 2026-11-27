@@ -22,12 +22,32 @@ public sealed partial class MainViewModel
     public bool IsShowingCache
     {
         get => isShowingCache;
-        set { isShowingCache = value; OnPropertyChanged(); OnPropertyChanged(nameof(GameVersionLabel)); RefreshCommands(); }
+        set { isShowingCache = value; OnPropertyChanged(); OnPropertyChanged(nameof(GameVersionLabel)); OnPropertyChanged(nameof(GameVersionPrefix)); OnPropertyChanged(nameof(GameVersionValue)); RefreshCommands(); }
     }
     public SnapshotCollection<InstalledModRow> AvailableMods { get; } = [];
     public SnapshotCollection<DiagnosticRow> ScanIssues { get; } = [];
     public ICollectionView VisibleAvailableMods { get; private set; } = null!;
     public bool HasCatalogue => scan is not null;
+    public IReadOnlyList<DlcStatus> InstalledDlcStatuses
+    {
+        get
+        {
+            var known = new[]
+            {
+                ("ludeon.rimworld.royalty", "皇权", "皇"), ("ludeon.rimworld.ideology", "文化", "文"),
+                ("ludeon.rimworld.biotech", "生物技术", "生"), ("ludeon.rimworld.anomaly", "异象", "异"),
+                ("ludeon.rimworld.odyssey", "奥德赛", "奥")
+            };
+            var enabled = Rows.Select(row => row.PackageId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return known.Select(item =>
+            {
+                bool isEnabled = enabled.Contains(item.Item1);
+                bool? isInstalled = scan is null ? (isEnabled ? true : null) : scan.Catalogue.Installations.Any(mod => mod.Source == ModSource.Game
+                    && string.Equals(mod.PackageId, item.Item1, StringComparison.OrdinalIgnoreCase));
+                return new DlcStatus(item.Item2, item.Item3, isInstalled, isEnabled);
+            }).ToArray();
+        }
+    }
     public GameVersion? CatalogueVersion => scan?.TargetVersion;
     public GameVersion? CurrentDetectedVersion => scan?.DetectedVersion.Version;
     public GameVersion? EffectiveGameVersion => CatalogueVersion ?? GameVersion.Parse(document?.GameVersion);
@@ -36,6 +56,8 @@ public sealed partial class MainViewModel
     public string GameVersionLabel => (IsShowingCache ? "缓存 · " : "") + (scan is null ? "游戏版本：未读取" : scan.TargetVersion is null ? "游戏版本：未识别"
         : scan.DetectedVersion.Version == scan.TargetVersion ? $"游戏版本：{scan.DetectedVersion.Version}"
         : $"目标版本：{scan.TargetVersion}（检测：{scan.DetectedVersion.Version?.ToString() ?? "未知"}）");
+    public string GameVersionPrefix => (IsShowingCache ? "缓存·" : "") + (scan is not null && scan.TargetVersion is not null && scan.DetectedVersion.Version != scan.TargetVersion ? "目标版本" : "版本");
+    public string GameVersionValue => scan is null ? "未读取" : scan.TargetVersion is null ? "未识别" : scan.TargetVersion.ToString();
     public bool IsScanning
     {
         get => isScanning;
@@ -106,7 +128,7 @@ public sealed partial class MainViewModel
         ScanIssues.ReplaceWith(result.Diagnostics.Where(issue => issue.Code is "ScanRootUnreadable" or "ScanLimit"
             or "VersionReadFailed" or "NoScanPaths" or "MetadataUnreadable").Select(issue => new DiagnosticRow(issue)));
         RefreshCatalogueMatches();
-        foreach (var property in new[] { nameof(HasCatalogue), nameof(GameVersionLabel), nameof(HasScanIssues), nameof(ScanIssuesLabel) }) OnPropertyChanged(property);
+        foreach (var property in new[] { nameof(HasCatalogue), nameof(GameVersionLabel), nameof(GameVersionPrefix), nameof(GameVersionValue), nameof(InstalledDlcStatuses), nameof(HasScanIssues), nameof(ScanIssuesLabel) }) OnPropertyChanged(property);
         Status = $"已读取 {result.Catalogue.Installations.Count} 个模组" + (HasScanIssues ? $"，{ScanIssues.Count} 条读取记录（请展开检查；单项读取异常不阻断自动测试）" : "");
         RefreshCommands();
     }
@@ -115,12 +137,17 @@ public sealed partial class MainViewModel
     {
         // Content enrichment changes badges/times only. Keep row identity, current selection and editing history.
         scan = result;
+        OnPropertyChanged(nameof(InstalledDlcStatuses));
         activity = records;
         var installations = result.Catalogue.Installations.ToDictionary(mod => mod.Directory, StringComparer.OrdinalIgnoreCase);
         foreach (var row in AvailableMods)
-            if (installations.TryGetValue(row.Installation.Directory, out var mod)) row.UpdateInstallation(mod);
+            if (installations.TryGetValue(row.Installation.Directory, out var mod) && row.Installation != mod) row.UpdateInstallation(mod);
         var version = EffectiveGameVersion;
-        foreach (var row in Rows) row.SetMatch(result.Catalogue.Resolve(row.PackageId, version));
+        foreach (var row in Rows)
+        {
+            var match = result.Catalogue.Resolve(row.PackageId, version);
+            if (row.Match is null || !row.Match.Candidates.SequenceEqual(match.Candidates)) row.SetMatch(match);
+        }
         ApplyMarkerState();
         RefreshSelection();
     }
@@ -133,6 +160,7 @@ public sealed partial class MainViewModel
         var existing = merged.Select(mod => mod.Directory).ToHashSet(StringComparer.OrdinalIgnoreCase);
         merged.AddRange(changed.Where(mod => !existing.Contains(mod.Directory)));
         scan = scan with { Catalogue = new(merged) };
+        OnPropertyChanged(nameof(InstalledDlcStatuses));
         activity = records;
         var version = EffectiveGameVersion;
         foreach (var row in Rows)
@@ -203,3 +231,6 @@ public sealed partial class MainViewModel
         RefreshSelectedPresentation();
     }
 }
+
+
+

@@ -124,7 +124,8 @@ internal static class InteractionMotionSmokeCheck
                             var moved = new Point(origin.X + 100, origin.Y + 30);
                             preview.Move(moved, .016);
                             Check(preview.Angle is > 0 and <= 4, "Right tilt " + theme + count);
-                            Check(Canvas.GetLeft(preview.Group) == moved.X - 90, "Pointer grip " + theme + count);
+                            var grip = preview.Group.RenderTransform.Transform(new Point(90, 22));
+                            Check(Math.Abs(grip.X - moved.X) < .001 && Math.Abs(grip.Y - moved.Y) < .001, "Pointer grip " + theme + count);
                             preview.Move(origin, .016);
                             Check(preview.Angle < 0 && preview.Angle >= -4, "Left tilt " + theme + count);
                             for (var i = 0; i < 120; i++) preview.Move(origin, .016);
@@ -134,6 +135,9 @@ internal static class InteractionMotionSmokeCheck
                             preview.Move(origin, .016);
                             await Task.Delay(200);
                             window.UpdateLayout();
+                            for (var frame = 0; frame < 500; frame++) preview.Move(new Point(origin.X + frame % 200, origin.Y + frame % 30), .016);
+                            Check(preview.Group.IsArrangeValid && window.ModInteractionOverlay.IsArrangeValid,
+                                "Rapid drag leaves row/overlay layout valid " + theme + count);
                             Check(preview.Group.Children.Count == Math.Min(count, 4), "Bounded preview stack " + theme + count);
                             Check(Descendants(preview.Group).OfType<ModThumbnail>().Count() == Math.Min(count, 3),
                                 "At most three mod covers " + theme + count);
@@ -161,17 +165,19 @@ internal static class InteractionMotionSmokeCheck
                         Width = 260, Height = 140, ShowInTaskbar = false,
                         Style = (Style)window.FindResource(typeof(Window)) };
                     var opaqueSlideObserved = false;
+                    var movingContent = (FrameworkElement)dialogContent.Child;
                     dialog.Loaded += (_, _) => opaqueSlideObserved = dialogContent.Opacity == 1
-                        && dialogContent.RenderTransform is TranslateTransform slide
+                        && !dialogContent.HasAnimatedProperties
+                        && movingContent.RenderTransform is TranslateTransform slide
                         && (!InterfaceMotion.Enabled || slide.HasAnimatedProperties);
                     dialog.Show();
                     await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
-                    Check(opaqueSlideObserved, "Dialog opens with fully opaque slide animation " + theme);
+                    Check(opaqueSlideObserved, "Dialog keeps its opaque backing stationary while inner content slides " + theme);
                     Check(await SecondaryWindowPresentation.GetPresentation(dialog)!.Ready,
                         "Dialog waits for its themed first frame " + theme);
                     await Task.Delay(240);
                     Check(!dialogContent.HasAnimatedProperties && dialogContent.Opacity == 1
-                        && dialogContent.RenderTransform is TranslateTransform { X: 0, HasAnimatedProperties: false }, "Dialog animation completes " + theme);
+                        && movingContent.RenderTransform is TranslateTransform { X: 0, HasAnimatedProperties: false }, "Dialog animation completes " + theme);
                     dialog.Close();
                     var popupContent = new Border { Width = 150, Height = 80, Background = Brushes.Teal };
                     var popup = new Popup { PlacementTarget = window.FileMenu, Child = popupContent,

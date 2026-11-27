@@ -19,7 +19,12 @@ public static class AppearancePage
         // WPF can skip Loaded broadcasts on newly created subtrees with only class handlers.
         // A scoped instance handler makes the lazy-page lifecycle observable as well.
         element.Loaded -= Loaded;
-        if (e.NewValue is string) element.Loaded += Loaded;
+        // Keep lifecycle hooks on scope hosts and named non-template controls,
+        // including controls inserted into an already-loaded page. Per-template
+        // descendant hooks otherwise rescan the window when recycled rows load.
+        if (e.NewValue is string && (element.ReadLocalValue(ScopeProperty) != DependencyProperty.UnsetValue
+            || element is { Name.Length: > 0, TemplatedParent: null }))
+            element.Loaded += Loaded;
         if (element.IsLoaded && Window.GetWindow(element) is MainWindow main) main.AppearanceControls?.RequestRefresh();
     }
     private static void Loaded(object sender, RoutedEventArgs e)

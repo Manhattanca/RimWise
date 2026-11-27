@@ -1,0 +1,11 @@
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Margin="16" IsHitTestVisible="False">
+    <Viewbox Stretch="Uniform" MaxWidth="692" MaxHeight="540">
+        <Canvas x:Name="PickerSurface" Width="1016" Height="798">
+            <Image Width="1016" Height="798" Source="Assets/import-before.png" />
+            <Image x:Name="SelectedImage" Width="1016" Height="798" Source="Assets/import-selected.png" Visibility="Collapsed" />
+            <Border x:Name="SampleFile" Canvas.Left="261" Canvas.Top="215" Width="435" Height="37" />
+            <Border x:Name="CoachArea" Canvas.Left="261" Canvas.Top="278" Width="738" Height="352" />
+            <Border x:Name="OpenFile" Canvas.Left="707" Canvas.Top="733" Width="132" Height="39" />
+        </Canvas>
+    </Viewbox>
+</Grid>

@@ -33,7 +33,7 @@ public partial class AiSortingWindow
         try
         {
             logStore.SaveSettings(logStore.LoadSettings() with { AutoSave = AutoSaveLogsToggle.IsChecked == true });
-            LogStatusText.Text = AutoSaveLogsToggle.IsChecked == true ? "任务成功、失败或取消后自动保存 ZIP。" : "已关闭自动保存；成功、失败或取消均可导出本次排障日志。";
+            LogStatusText.Text = AutoSaveLogsToggle.IsChecked == true ? "任务成功、失败或取消后自动保存完整排障日志 ZIP。" : "已关闭自动保存；成功、失败或取消均可导出完整排障日志。";
         }
         catch (Exception ex) when (IsExpectedError(ex)) { LoadLogSettings(); LogStatusText.Text = "设置未保存：" + ex.Message; }
     }
@@ -64,21 +64,10 @@ public partial class AiSortingWindow
         string? savedPath = null;
         try
         {
-            var directory = logStore.ValidateDirectory(logStore.LoadSettings().Directory);
-            var run = lastLogRun ?? logStore.LoadLastRun();
-            if (run is { EndedUtc: null }) run = await Task.Run(() => logStore.Capture(run.StartedUtc, DateTimeOffset.UtcNow, run.TaskIds.FirstOrDefault()));
-            if (DiagnosticEventLog.Current is { } log) await log.FlushAsync();
             var snapshot = editor.CaptureDiagnosticSnapshot();
-            var result = await Task.Run(() =>
-            {
-                using var operation = logStore.AcquireExportLease();
-                // Read the destination under the same lease as migration, including other app windows.
-                directory = logStore.ValidateDirectory(logStore.LoadSettings().Directory);
-                var destination = Path.Combine(directory, $"RimWise-sorting-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zip");
-                return DiagnosticExportService.Export(dataDirectory, destination, snapshot, run: run);
-            });
+            var result = await Services.CompleteDiagnosticExport.ExportAsync(dataDirectory, snapshot);
             savedPath = result.Path;
-            if (!closed) LogStatusText.Text = $"已保存{(run is null ? "最近可用" : "本次排障")}日志：{result.Path}"
+            if (!closed) LogStatusText.Text = $"已导出完整排障日志：{result.Path}"
                 + (result.OmissionCount == 0 ? "" : "\n" + result.IncompleteNotice)
                 + (result.RecoveredRecords == 0 ? "" : "\n" + result.RecoveryNotice);
             DiagnosticEventLog.Current?.Record("automatic-sorting", "logs-saved", $"files={result.Files}; bytes={result.Bytes}; omissions={result.OmissionCount}; recovered={result.RecoveredRecords}");
@@ -86,7 +75,7 @@ public partial class AiSortingWindow
                 MessageDialog.Show(DialogOwner, result.IncompleteNotice + "\n\n已保存：" + result.Path,
                     "诊断包未完整导出", MessageBoxButton.OK, MessageBoxImage.Warning);
             if (openFolder && !closed)
-                OpenLogFolder(directory);
+                OpenLogFolder(Path.GetDirectoryName(result.Path)!);
         }
         catch (Exception ex) when (IsExpectedError(ex) || ex is System.Text.RegularExpressions.RegexMatchTimeoutException)
         {
@@ -145,7 +134,7 @@ public partial class AiSortingWindow
         try
         {
             var directory = logStore.ValidateDirectory(logStore.LoadSettings().Directory);
-            if (MessageDialog.Show(DialogOwner, "删除全部可清理的排序日志（含上次日志），以及以下目录中的 RimWise 排序日志 ZIP？\n" + directory
+            if (MessageDialog.Show(DialogOwner, "删除全部可清理的排序日志（含上次日志），以及以下目录中的 RimWise 完整排障日志 ZIP 和旧排序日志 ZIP？\n" + directory
                 + "\n待恢复任务、正在使用的记录、token 用量、设置和其他文件会保留。删除后无法撤销。",
                 "删除全部日志", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
             await DeleteAllLogsAsync(directory);
@@ -165,7 +154,7 @@ public partial class AiSortingWindow
             var result = await Task.Run(() => TestDataRetention.MaintainProfile(dataDirectory, clearLogs: true, preserveLastRun: false));
             if (result.Busy) { LogStatusText.Text = "游戏或测试正在运行，请结束后再删除日志。"; return; }
             var exports = await Task.Run(() => logStore.DeleteExportedLogs(directory));
-            LogStatusText.Text = $"已删除 {result.RemovedFiles} 个日志／缓存文件、{exports.Removed} 个排序日志 ZIP。"
+            LogStatusText.Text = $"已删除 {result.RemovedFiles} 个日志／缓存文件、{exports.Removed} 个排障日志 ZIP。"
                 + "保留待恢复任务、正在使用的记录与 token 用量。"
                 + (exports.Skipped > 0 ? $"{exports.Skipped} 个文件因占用或无法验证而保留。" : "");
         }

@@ -4,7 +4,25 @@
                     xmlns:motion="clr-namespace:RimWise.Desktop.Services">
     <p:MarkerBackgroundConverter x:Key="MarkerBackground" />
     <Style x:Key="MarkedRow" TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
-        <Setter Property="BorderThickness" Value="3,0,0,0" />
+        <Setter Property="BorderThickness" Value="0" />
+        <!-- These read-only lists have column headers but no row headers/details.
+             Keep the native cells presenter, selection, keyboard and automation;
+             do not instantiate the unused Fluent row-header/details chrome. -->
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="DataGridRow">
+            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}"
+                    SnapsToDevicePixels="True">
+                <Grid>
+                    <DataGridCellsPresenter ItemsPanel="{TemplateBinding ItemsPanel}"
+                                            SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                    <Border x:Name="RowAccentBar" Width="3.5" HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                            CornerRadius="0,2.5,2.5,0" Background="{TemplateBinding BorderBrush}" IsHitTestVisible="False"
+                            motion:RowSelectionMotion.Mode="AccentBar"
+                            motion:RowSelectionMotion.IsHovered="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}"
+                            motion:RowSelectionMotion.IsSelected="{Binding IsSelected, RelativeSource={RelativeSource TemplatedParent}}" />
+                </Grid>
+            </Border>
+        </ControlTemplate></Setter.Value></Setter>
         <Setter Property="motion:StateBrushMotion.Target" Value="Transparent" />
         <Setter Property="motion:StateBrushMotion.Key" Value="{Binding IsSelected, RelativeSource={RelativeSource Self}}" />
         <Setter Property="motion:StateBrushMotion.IsHovered" Value="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" />
@@ -31,14 +49,17 @@
         <DataTemplate x:Key="ModBadges">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
                 <p:ModThumbnail x:Name="RowThumbnail" Installation="{Binding Installation}"
-                                Width="{DynamicResource ModThumbnailSize}" Height="{DynamicResource ModThumbnailSize}" />
+                                Width="{DynamicResource ModThumbnailSize}" Height="{DynamicResource ModThumbnailSize}"
+                                motion:RowSelectionMotion.Mode="ThumbnailScale"
+                                motion:RowSelectionMotion.IsHovered="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
+                                motion:RowSelectionMotion.IsSelected="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
                 <StackPanel Orientation="Horizontal" Visibility="{Binding DataContext.ShowModBadgeIcons, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanVisibility}}">
                     <Border x:Name="SourceIconHitArea" Style="{StaticResource IconHitArea}" Margin="0,0,2,0"
                             ToolTip="{Binding SourceTooltip}" AutomationProperties.Name="{Binding SourceTooltip}">
                     <Viewbox Width="18" Height="18" IsHitTestVisible="False">
                         <Grid Width="20" Height="20">
                             <Ellipse x:Name="WorkshopDisk" Fill="#173952" Visibility="Collapsed" />
-                            <Path x:Name="SourceGlyph" Width="20" Height="20" Data="{Binding SourceIcon}" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.35"
+                            <Path x:Name="SourceGlyph" Width="20" Height="20" Data="{Binding SourceGeometry}" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.35"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
                             <Ellipse x:Name="WorkshopHub" Width="4.1" Height="4.1" Margin="11.45,4.15,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
                                      Fill="White" Visibility="Collapsed" />
@@ -52,9 +73,13 @@
                     </Border>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Visibility="{Binding DataContext.ShowModBadgeText, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanVisibility}}">
-                    <TextBlock Text="{Binding SourceLabel}" Width="58" FontSize="11" VerticalAlignment="Center" ToolTip="{Binding SourceTooltip}" Foreground="{DynamicResource MutedBrush}" />
-                    <TextBlock Text="{Binding CodeKindLabel}" Width="57" FontSize="11" VerticalAlignment="Center" ToolTip="{Binding CodeKindTooltip}" Foreground="{DynamicResource LinkBrush}"
-                               Visibility="{Binding HasCodeKindBadge, Converter={StaticResource BooleanVisibility}}" />
+                    <Border CornerRadius="3" BorderThickness="1" BorderBrush="{DynamicResource SurfaceBorderBrush}" Background="{DynamicResource SurfaceAlternateBrush}" Padding="5,1" Margin="0,0,4,0" VerticalAlignment="Center" ToolTip="{Binding SourceTooltip}">
+                        <TextBlock Text="{Binding SourceLabel}" FontSize="11" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource MutedBrush}" />
+                    </Border>
+                    <Border CornerRadius="3" BorderThickness="1" BorderBrush="{DynamicResource SurfaceBorderBrush}" Background="{DynamicResource SurfaceAlternateBrush}" Padding="5,1" Margin="0,0,4,0" VerticalAlignment="Center" ToolTip="{Binding CodeKindTooltip}"
+                            Visibility="{Binding HasCodeKindBadge, Converter={StaticResource BooleanVisibility}}">
+                        <TextBlock Text="{Binding CodeKindLabel}" FontSize="11" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource LinkBrush}" />
+                    </Border>
                 </StackPanel>
             </StackPanel>
             <DataTemplate.Triggers>
@@ -162,9 +187,12 @@
             </StackPanel>
         </DataTemplate>
     <DataTemplate x:Key="ModIdentity">
-        <DockPanel LastChildFill="True" VerticalAlignment="Center">
-            <ContentControl DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource ModBadges}" />
-            <ContentControl DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource ModActivityIcons}" Margin="0,0,3,0" />
+        <DockPanel LastChildFill="True" VerticalAlignment="Center"
+                   motion:RowSelectionMotion.Mode="ContentSlide"
+                   motion:RowSelectionMotion.IsHovered="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
+                   motion:RowSelectionMotion.IsSelected="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}">
+            <ContentPresenter DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource ModBadges}" />
+            <ContentPresenter DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource ModActivityIcons}" Margin="0,0,3,0" />
             <TextBlock Text="{Binding Name}" Style="{StaticResource OrderModName}" />
         </DockPanel>
     </DataTemplate>

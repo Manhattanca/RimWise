@@ -12,6 +12,7 @@ public partial class AiSortingWindow
     internal async Task StartOfflineAsync()
     {
         if (closed || IsWorking || !IsOfflineMode || ownerLifetime.IsCancellationRequested) return;
+        MarkAutomaticSortingUsed();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ownerLifetime);
         requestCancellation = cancellation;
         outcome = null;
@@ -22,7 +23,6 @@ public partial class AiSortingWindow
         installationNotices.Clear();
         MetadataReadWarning.Visibility = Visibility.Collapsed;
         MetadataReadWarningText.Text = "";
-        AcceptedList.ItemsSource = null;
         RejectedList.ItemsSource = null;
         SummaryText.Text = "";
         TokenText.Text = "本次离线排序：0 token（未调用 AI）。";
@@ -65,8 +65,7 @@ public partial class AiSortingWindow
                 installationSelectionCommitted = true;
                 message = plan.CanApply ? "离线排序完成，已更新当前清单。" : "离线排序完成，当前顺序无需调整。";
                 message += "\n未进行游戏测试，不代表运行时无红字。可在主界面保存排序或撤销调整。";
-                if (result.Messages.Count > 0) message += "\n仍有需要留意的事项，请查看右侧警告列表。";
-                AcceptedList.ItemsSource = plan.After.Select((id, i) => $"{i + 1}. {catalogue.Resolve(id, version).UniqueInstallation?.Metadata?.Name ?? id} ({id})").ToArray();
+                if (result.Messages.Count > 0) message += "\n仍有需要留意的事项，请查看下方警告列表。";
                 ShowDependencyReasons(plan.Notices);
             }
             else message = "离线排序未完成，当前清单保持不变。\n" + string.Join("\n", result.Messages.Take(5));

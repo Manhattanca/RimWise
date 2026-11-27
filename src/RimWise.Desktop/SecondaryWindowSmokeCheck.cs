@@ -49,6 +49,8 @@ internal static class SecondaryWindowSmokeCheck
                         && dialog.Content is FrameworkElement { Opacity: 1, ActualWidth: > 0, ActualHeight: > 0 };
                     try
                     {
+                        Check(dialog.Content is System.Windows.Controls.Border { Background: SolidColorBrush { Color.A: 255 } },
+                            $"Secondary full-client backing is opaque in {theme}, modal={modal}");
                         if (modal)
                         {
                             var completed = new TaskCompletionSource<bool>();
@@ -66,6 +68,8 @@ internal static class SecondaryWindowSmokeCheck
                             dialog.Show();
                             Check(await gate.Ready.WaitAsync(TimeSpan.FromSeconds(5)), $"Secondary window reveals its composed first frame in {theme}");
                             Check(!NativeStartupFrameCapture.IsAppCloaked(dialog), $"Secondary window is visible after presentation in {theme}");
+                            Check(((FrameworkElement)dialog.Content).RenderTransform.Value.IsIdentity,
+                                $"Secondary full-client backing remains stationary during content motion in {theme}");
                             var pixels = NativeStartupFrameCapture.Capture(dialog, Path.Combine(output, $"secondary-first-frame-{theme}.png"));
                             Check(pixels[0] == ((SolidColorBrush)dialog.Background).Color, $"Secondary native first frame uses themed page color in {theme}: {pixels[0]}");
                         }

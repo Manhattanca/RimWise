@@ -23,6 +23,8 @@ public partial class MainWindow
             return;
         }
         var logs = page == 2;
+        var modToolbarVisibility = page == 0 ? Visibility.Visible : Visibility.Collapsed;
+        MainToolbarSearch.Visibility = modToolbarVisibility;
         if (logs && gameLogPage is null)
             GameLogHost.Content = gameLogPage = new GameLogPage(LocateGameLogs, () => ViewModel.CurrentCatalogue);
         if (page == 3) EnsureMarketplacePage();
@@ -58,3 +60,6 @@ public partial class MainWindow
         return (startup, File.Exists(runtime) ? runtime : startup);
     }
 }
+
+
+

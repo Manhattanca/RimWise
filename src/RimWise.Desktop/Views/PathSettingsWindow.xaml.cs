@@ -169,7 +169,7 @@ public partial class PathSettingsWindow : Window
     private void BrowseLogs_Click(object sender, RoutedEventArgs e)
     {
         if (detecting) return;
-        var selected = PickDirectory("选择自动排序日志保存目录", LogDirectoryBox.Text);
+        var selected = PickDirectory("选择排障日志保存目录", LogDirectoryBox.Text);
         if (selected is not null) LogDirectoryBox.Text = selected;
     }
 

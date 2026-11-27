@@ -51,6 +51,6 @@ public sealed partial class MainViewModel
         var global = summarized.Where(issue => !issue.AffectedIdentifiers.Any()).ToArray();
         foreach (var row in Rows) row.SetDiagnostics(byIdentifier[row.PackageId].Concat(global).ToArray(), HasOrderStatus);
         foreach (var property in new[] { nameof(HasOrderStatus), nameof(ErrorCount), nameof(WarningCount),
-                     nameof(ErrorCountLabel), nameof(WarningCountLabel), nameof(OrderStatusTooltip) }) OnPropertyChanged(property);
+                     nameof(ErrorCountLabel), nameof(WarningCountLabel), nameof(OrderStatusTooltip), nameof(InstalledDlcStatuses) }) OnPropertyChanged(property);
     }
 }

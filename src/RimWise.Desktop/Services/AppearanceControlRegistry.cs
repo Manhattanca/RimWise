@@ -24,7 +24,10 @@ internal sealed class AppearanceControlRegistry : IDisposable
         EventManager.RegisterClassHandler(typeof(FrameworkElement), FrameworkElement.LoadedEvent,
             new RoutedEventHandler((sender, e) =>
             {
-                if (sender is FrameworkElement element && Window.GetWindow(element) is MainWindow window)
+                // Recycled row templates load hundreds of unnamed/template nodes.
+                // Reject those before walking their ancestors to find the window.
+                if (sender is FrameworkElement { Name.Length: > 0, TemplatedParent: null } element
+                    && Window.GetWindow(element) is MainWindow window)
                     window.AppearanceControls?.Register(element);
             }), handledEventsToo: true);
     }
@@ -60,8 +63,19 @@ internal sealed class AppearanceControlRegistry : IDisposable
     }
     private void Register(FrameworkElement element)
     {
+        // Search remains part of the shared "other UI" opacity setting, but is
+        // intentionally excluded from the per-control opacity picker.
+        if (element == main.SearchBox)
+        {
+            if (targets.Remove(element, out var retired))
+            {
+                Clear(retired);
+                element.RemoveHandler(FrameworkElement.UnloadedEvent, new RoutedEventHandler(Unloaded));
+            }
+            return;
+        }
         if (element.Name.Length == 0 || element.TemplatedParent is not null || Window.GetWindow(element) != main
-            || (AppearancePage.GetIsTooling(element) && !IsNavigationButton(element))) return;
+            || (AppearancePage.GetIsTooling(element) && !IsTopButton(element))) return;
         var surface = Surface(element); if (surface is null) return;
         string scope = nameof(MainWindow);
         for (DependencyObject? parent = element; parent is not null && parent != main; parent = Parent(parent))
@@ -136,7 +150,7 @@ internal sealed class AppearanceControlRegistry : IDisposable
     private static string[] Keys(AppearanceSurface surface) => surface switch
     {
         AppearanceSurface.Bars => ["ChromeSurfaceBrush"],
-        AppearanceSurface.Panels => ["SurfaceBrush", "SurfaceAlternateBrush", "ContentHeaderBrush", "ContentSurfaceBrush"],
+        AppearanceSurface.Panels => ["SurfaceBrush", "SurfaceAlternateBrush", "SurfaceSelectionBrush", "SurfaceBorderBrush", "ContentHeaderBrush", "ContentSurfaceBrush"],
         _ => Enumerable.Range(0, 7).Select(i => (surface switch { AppearanceSurface.Inputs => "Input", AppearanceSurface.Selectors => "Selector",
             AppearanceSurface.Lists => "List", AppearanceSurface.Buttons => "Button", _ => "Content" })
                 + new[] { "SurfaceBrush", "HeaderBrush", "AlternateBrush", "HoverBrush", "SelectionBrush", "AccentBrush", "BorderBrush" }[i]).ToArray()

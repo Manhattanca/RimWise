@@ -58,7 +58,9 @@ public sealed partial class AutomaticSortingLogStore(string profile)
         var skipped = 0;
         using var pins = new PinnedDirectorySet();
         pins.PinParent(Path.Combine(directory, "log-cleanup"));
-        foreach (var file in Directory.EnumerateFiles(directory, "RimWise-sorting-*.zip"))
+        foreach (var file in Directory.EnumerateFiles(directory, "RimWise-*.zip")
+            .Where(file => Path.GetFileName(file).StartsWith("RimWise-sorting-", StringComparison.OrdinalIgnoreCase)
+                || Path.GetFileName(file).StartsWith("RimWise-diagnostics-", StringComparison.OrdinalIgnoreCase)))
         {
             try
             {

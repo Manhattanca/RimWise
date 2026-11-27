@@ -142,7 +142,7 @@ internal static class AiSortingSmokeCheck
             checks.Add("clear historical logs in background without AI; task controls guarded during cleanup");
             await window.StartSortingAsync(); Unchanged();
             Assert(client.Calls == 1 && secrets.Reads == 1 && window.ApplyButton.IsEnabled, "Validated result is unavailable.");
-            Assert(window.TokenText.Text.Contains("150") && window.AcceptedList.Items.Count == 1, "Inline result or actual usage missing.");
+            Assert(window.TokenText.Text.Contains("150") && window.SummaryText.Text.Contains("·"), "Inline result or actual usage missing.");
             Assert(window.TokenText.Text.Contains("累计") && new AiSortingSession(vm, root, client, secrets).UsageDescription().Contains("150"),
                 "Usage was not persisted and available after reopening.");
             var first = window.CurrentOutcome!;
@@ -239,7 +239,7 @@ internal static class AiSortingSmokeCheck
             try
             {
                 await window.StartSortingAsync(); Unchanged();
-                Assert(!window.ApplyButton.IsEnabled && window.AcceptedList.Items.Count == 1 && window.TokenText.Text.Contains("审计"),
+                Assert(!window.ApplyButton.IsEnabled && window.SummaryText.Text.Contains("·") && window.TokenText.Text.Contains("审计"),
                     "Audit failure hid billing/result evidence or allowed application.");
             }
             finally { File.WriteAllBytes(auditPath, auditBytes); }
@@ -411,7 +411,7 @@ internal static class AiSortingSmokeCheck
             var stoppedStatus = window.StatusText.Text;
             window.RefreshConfiguration();
             Assert(window.StatusText.Text == stoppedStatus && !stoppedStatus.Contains("已排序完成")
-                && window.AcceptedList.Items.Count == preparedOrder.Length,
+                && window.FindName("AcceptedList") is null,
                 "Activation overwrote stopped status or displayed a successful completion.");
             var preparationCheckpoint = new AiTaskCheckpoint(AiTaskKind.Maintenance, AiTaskPhase.Paused,
                 AutomaticGameMaintenance.RecoveryContext(request, preparationCatalogue, [], GameVersion.Parse("1.7")!),
@@ -537,7 +537,7 @@ internal static class AiSortingSmokeCheck
             window.ResponseText.Clear();
             window.ApplyMaintenanceProgress(new(2, "服务格式不兼容，改用本地试排除", 0)
                 { ReportText = "本轮未收到 AI 最终方案", PreparedOrder = ["second.mod", "first.mod"] });
-            Assert(window.ResponseText.Text.Contains("本轮未收到 AI 最终方案") && window.AcceptedList.Items.Count == 2,
+            Assert(window.ResponseText.Text.Contains("本轮未收到 AI 最终方案") && window.SummaryText.Text.Contains("2 项"),
                 "Round feedback or full current order missing.");
             window.ShowAutomaticResult(new(new(MaintenanceOutcome.Cancelled, "已取消", 2, 1, 0, true,
                 ["second.mod", "first.mod"], true), null, []));
@@ -1176,7 +1176,7 @@ internal static class AiSortingSmokeCheck
             {
                 ((App)Application.Current).Themes.Select(theme, save: false);
                 await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ApplicationIdle);
-                Assert(window.AutomaticButton.IsVisible && window.FindName("StartButton") is null && window.ApplyButton.ActualWidth > 0 && window.AcceptedList.ActualHeight >= 36,
+                Assert(window.AutomaticButton.IsVisible && window.FindName("StartButton") is null && window.ApplyButton.ActualWidth > 0 && window.RejectedList.ActualHeight >= 36,
                     "Minimum-size layout collapsed.");
                 Assert(window.DependencyDetails.IsVisible && window.DependencyList.Items.Count == 2
                     && window.DependencyList.ActualHeight > 20 && window.DependencyList.ActualWidth > 100,

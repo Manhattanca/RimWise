@@ -40,7 +40,7 @@ internal sealed class AppearanceEditorChrome
         foreach (var key in new[] { "PageBrush", "PanelBrush", "TextBrush", "MutedBrush", "DisabledTextBrush",
             "HeaderBrush", "InputBrush", "AlternateBrush", "HoverBrush", "SelectionBrush", "AccentBrush",
             "AccentTextBrush", "BorderBrush", "NavigationAccentBrush", "LinkBrush" }) Copy(key, key);
-        Copy("SurfaceBrush", "PanelBrush"); Copy("SurfaceAlternateBrush", "AlternateBrush"); Copy("ChromeSurfaceBrush", "PanelBrush");
+        Copy("SurfaceBrush", "PanelBrush"); Copy("SurfaceAlternateBrush", "AlternateBrush"); Copy("SurfaceSelectionBrush", "SelectionBrush"); Copy("SurfaceBorderBrush", "BorderBrush"); Copy("ChromeSurfaceBrush", "PanelBrush");
         foreach (var prefix in new[] { "Input", "Selector", "Button", "Content", "List" })
         {
             Copy(prefix + "SurfaceBrush", prefix is "Input" or "Selector" ? "InputBrush" : "PanelBrush");

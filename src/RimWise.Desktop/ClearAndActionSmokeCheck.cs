@@ -47,7 +47,7 @@ internal static class ClearAndActionSmokeCheck
                 var panel = (StackPanel)window.SaveOrderButton.Parent;
                 var buttons = panel.Children.OfType<Button>().ToArray();
                 var points = buttons.Select(button => button.TranslatePoint(new Point(), window)).ToArray();
-                Assert(buttons.Length == 10 && points[0].X > window.LastActionText.TranslatePoint(new Point(), window).X + window.LastActionText.ActualWidth,
+                Assert(buttons.Length == 7 && points[0].X > window.LastActionText.TranslatePoint(new Point(), window).X + window.LastActionText.ActualWidth,
                     "Bottom buttons overlap activity.");
                 for (var i = 1; i < buttons.Length; i++)
                     Assert(Math.Abs(points[i].Y - points[0].Y) < 1 && points[i].X >= points[i - 1].X + buttons[i - 1].ActualWidth,

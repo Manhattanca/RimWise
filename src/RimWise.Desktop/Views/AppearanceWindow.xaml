@@ -54,6 +54,12 @@
                     <TextBlock Text="其他UI透明度调整（搜索、选择框和内容区；按钮可在高级设置中单独调整）" Margin="0,12,0,6" TextWrapping="Wrap"/>
                     <Slider x:Name="OtherOpacitySlider" Minimum="0" Maximum="100" Value="94" ValueChanged="Changed" AutomationProperties.Name="其他UI透明度调整"/>
                     <TextBlock Text="点击右侧“透明度高级设置”，直接在主界面选取控件。" Foreground="{DynamicResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <DockPanel Margin="0,12,0,6">
+                        <Button x:Name="RowHeightResetButton" DockPanel.Dock="Right" Content="恢复默认" Click="RowHeightReset_Click" Padding="8,4" Margin="8,0,0,0"/>
+                        <TextBox x:Name="RowHeightInput" DockPanel.Dock="Right" Width="56" Text="35" MaxLength="3" TextAlignment="Center" TextChanged="RowHeightInput_Changed" LostKeyboardFocus="RowHeightInput_LostFocus" PreviewKeyDown="RowHeightInput_KeyDown" ToolTip="输入 28–64，回车确认" AutomationProperties.Name="模组列表行高数值"/>
+                        <TextBlock Text="模组列表行高（28–64，默认 35）" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,8,0"/>
+                    </DockPanel>
+                    <Slider x:Name="RowHeightSlider" Style="{StaticResource ModRowHeightSlider}" Minimum="28" Maximum="64" Value="35" ValueChanged="RowHeight_Changed" AutomationProperties.Name="模组列表行高"/>
                     <TextBlock Text="图片位置（也可拖动右侧预览）" Margin="0,12,0,4"/>
                     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,10,0"><TextBlock Text="水平" Foreground="{DynamicResource MutedBrush}" FontSize="12"/><Slider x:Name="PositionXSlider" Minimum="0" Maximum="100" Value="50" ValueChanged="Changed" AutomationProperties.Name="背景水平位置"/></StackPanel>

@@ -6,6 +6,7 @@ using System.IO;
 using System.Windows.Media;
 using System.Windows.Threading;
 using RimWise.Integration.Configuration;
+using RimWise.Desktop.Services;
 
 namespace RimWise.Desktop;
 
@@ -24,6 +25,15 @@ internal static class TopBarOpacitySmokeChecks
                 var menu = menus[i]; menu.ApplyTemplate();
                 var chrome = (Border)menu.Template.FindName("TopMenuChrome", menu);
                 check(chrome.CornerRadius == radii[i] && menu.Margin == new Thickness(0), "joined menu uses rounded outer ends and square contiguous internal edges: " + menu.Name);
+                var hoverFace = (Border)menu.Template.FindName("TopMenuHoverFace", menu);
+                check(TopMenuMotion.GetEnabled(menu)
+                    && menu.Template.FindName("TopMenuContent", menu) is FrameworkElement content
+                    && HasTranslateTransform(content.RenderTransform)
+                    && hoverFace.IsHitTestVisible == false
+                    && hoverFace.BorderBrush is SolidColorBrush
+                    && hoverFace.Child is Grid overlay && overlay.Children.OfType<Border>().Any(line => line.Height == 2)
+                    && StateBrushMotion.GetTarget(chrome) is SolidColorBrush,
+                    "top menu adds an accent outline and underline on an input-transparent hover layer: " + menu.Name);
                 if (i > 0)
                 {
                     var previous = menus[i - 1];
@@ -41,7 +51,9 @@ internal static class TopBarOpacitySmokeChecks
                     var popup = (Popup)menu.Template.FindName("PART_Popup", menu);
                     var chrome = (Border)menu.Template.FindName("TopMenuChrome", menu);
                     check(popup.IsOpen && popup.Child is FrameworkElement { IsVisible: true, ActualHeight: > 0 }
-                        && chrome.CornerRadius == radii[menu == main.FileMenu ? 0 : 3], "rounded active menu preserves a complete native submenu: " + preset + "/" + menu.Name);
+                        && chrome.CornerRadius == radii[menu == main.FileMenu ? 0 : 3]
+                        && ReferenceEquals(StateBrushMotion.GetTarget(chrome), menu.FindResource("ButtonSelectionBrush")),
+                        "rounded active menu preserves its animated selected state and complete native submenu: " + preset + "/" + menu.Name);
                     menu.IsSubmenuOpen = false; await Idle();
                 }
                 PrototypeSmokeCheck.SavePreview(main, Path.Combine(output, "joined-menu-" + preset + ".png"));
@@ -79,6 +91,18 @@ internal static class TopBarOpacitySmokeChecks
             check(((SolidColorBrush)main.FileMenu.FindResource("TopButtonSurfaceBrush")).Color.A == 0,
                 "restoring a top button to Follow really clears the local opacity despite retired legacy keys");
             check(main.FileMenu.Background is SolidColorBrush { Color.A: 255 }, "joined menu Follow restores the normal button surface");
+            var lowOpacity = settings with { Controls = settings.Controls.With("MainWindow.FileMenu", new() { Mode = SurfaceOpacityMode.Custom, Opacity = 0 }) };
+            themes.Preview(lowOpacity, image); await Idle();
+            var reduceMotion = InterfaceMotion.ReduceMotionForCheck;
+            InterfaceMotion.ReduceMotionForCheck = true;
+            TopMenuMotion.SetHoveredForCheck(main.FileMenu, true);
+            var hoverFaceAtZero = (Border)main.FileMenu.Template.FindName("TopMenuHoverFace", main.FileMenu);
+            check(((SolidColorBrush)main.FileMenu.FindResource("TopButtonSurfaceBrush")).Color.A == 0
+                && hoverFaceAtZero.Opacity == 1 && hoverFaceAtZero.BorderBrush is SolidColorBrush { Color.A: 255 } && hoverFaceAtZero.Child is Grid zeroHoverGrid && zeroHoverGrid.Children.OfType<Border>().All(b => b.Background is SolidColorBrush { Color.A: 255 }),
+                "hover selection indicator stays fully visible when the user sets the menu surface to zero opacity");
+            TopMenuMotion.SetHoveredForCheck(main.FileMenu, false);
+            check(hoverFaceAtZero.Opacity == 0, "independent hover indicator returns fully to rest after pointer exit");
+            InterfaceMotion.ReduceMotionForCheck = reduceMotion;
             foreach (var alpha in new[] { 0d, 1d })
             {
                 themes.Preview(settings with { Controls = settings.Controls.With("MainWindow.FileMenu", new() { Mode = SurfaceOpacityMode.Custom, Opacity = alpha }) }, image);
@@ -90,6 +114,8 @@ internal static class TopBarOpacitySmokeChecks
         }
         finally { themes.Preview(original, image); await Idle(); }
     }
+    private static bool HasTranslateTransform(Transform transform) => transform is TranslateTransform
+        || transform is TransformGroup group && group.Children.OfType<TranslateTransform>().Any();
     private static async Task Idle() => await Application.Current.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
 }
 #endif

@@ -1,9 +1,17 @@
 using RimWise.Core;
+using System.Windows.Media;
 
 namespace RimWise.Desktop.Presentation;
 
 internal static class ModDisplay
 {
+    // Four immutable glyphs are shared by all recycled cells. Binding a string to
+    // Path.Data would parse and allocate a new Geometry every time a row is reused.
+    private static readonly Geometry[] sourceGeometries = new ModSource?[]
+        { ModSource.Game, ModSource.Local, ModSource.Workshop, null }
+        .Select(source => { var geometry = Geometry.Parse(SourceIcon(source)); geometry.Freeze(); return geometry; }).ToArray();
+    internal static Geometry SourceGeometry(ModSource? source) => sourceGeometries[source switch
+        { ModSource.Game => 0, ModSource.Local => 1, ModSource.Workshop => 2, _ => 3 }];
     internal static string SourceIcon(ModSource? source) => source switch
         {
             ModSource.Game => "M 3,3 L 17,3 L 17,17 L 3,17 Z M 6,7 L 14,7 M 6,11 L 14,11",
@@ -74,6 +82,7 @@ public sealed class InstalledModRow(ModInstallation installation, bool duplicate
     public string SourceLabel => ModDisplay.Source(Installation.Source);
     public string SourceTooltip => ModDisplay.SourceTooltip(Installation.Source);
     public string SourceIcon => ModDisplay.SourceIcon(Installation.Source);
+    public Geometry SourceGeometry => ModDisplay.SourceGeometry(Installation.Source);
     public bool IsWorkshopSource => Installation.Source == ModSource.Workshop;
     public ModCodeKind CodeKind => Installation.CodeKind;
     public bool HasCodeKindBadge => Installation.Source != ModSource.Game;

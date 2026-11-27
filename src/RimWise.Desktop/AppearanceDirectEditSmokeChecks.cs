@@ -43,9 +43,9 @@ internal static class AppearanceDirectEditSmokeChecks
             var save = registry.Find("MainWindow.SaveOrderButton");
             var import = registry.Find("MainWindow.ImportOrderButton");
             var search = registry.Find("MainWindow.SearchBox");
-            check(save is not null && import is not null && search is not null && registry.Find("MainWindow.FileMenu") is not null
+            check(save is not null && import is not null && search is null && registry.Find("MainWindow.SearchBox") is null && registry.Find("MainWindow.FileMenu") is not null
                 && registry.Find("MainWindow.ModsPageTab") is not null && registry.Find("MainWindow.AppCaption") is null,
-                "real controls and top buttons have identities while title background follows the panel");
+                "search remains outside per-control opacity editing while real action buttons and top controls have identities");
             hiddenEditor!.OpacitySlider.Value = 37; hiddenEditor.OtherOpacitySlider.Value = 0; await Idle();
             check(((SolidColorBrush)main.SaveOrderButton.Background).Color.A == 255
                 && main.OrderGrid.RowBackground is SolidColorBrush { Color.A: 94 }
@@ -56,6 +56,9 @@ internal static class AppearanceDirectEditSmokeChecks
             check(outline.BorderThickness == new Thickness(1) && outline.CornerRadius == new CornerRadius(4)
                 && outline.BorderBrush is SolidColorBrush { Color.A: 255 } && main.SearchBox.ActualHeight == 34,
                 "transparent focused search retains a thin rounded theme outline and compact centered input");
+            var searchPoint = main.SearchBox.TranslatePoint(new Point(main.SearchBox.ActualWidth / 2, main.SearchBox.ActualHeight / 2), main);
+            check(main.OpacityPicker!.TargetAt(searchPoint) is null,
+                "advanced opacity picker cannot select the mod search box");
             check(registry.Find("MainWindow.OpacityEditingDone") is null && registry.Find("MainWindow.CaptionClose") is null,
                 "editing tools and native caption actions are excluded from opacity targets");
             var order = main.ViewModel.Rows.Select(row => row.PackageId).ToArray();
@@ -84,10 +87,8 @@ internal static class AppearanceDirectEditSmokeChecks
             });
             check(themes.Current.Controls.Get(save!.Key)?.Opacity == 0 && hiddenEditor!.HasUnsavedChanges,
                 "apply commits into the existing unsaved theme draft, not personal storage");
-            await Inspect(() => main.OpacityPicker!.Inspect(search!), dialog => { dialog.ModeBox.SelectedIndex = 1; dialog.ValueSlider.Value = 20; },
-                dialog => { dialog.DialogResult = false; return Task.CompletedTask; });
-            check(themes.Current.Controls.Get(search!.Key) is null && main.SearchBox.Text == oldSearch,
-                "cancel inspector restores only that control and does not type into the underlying search field");
+            check(main.SearchBox.Text == oldSearch && registry.Find("MainWindow.SearchBox") is null,
+                "opacity editing leaves search input content and editability alone");
             await Inspect(() => main.OpacityPicker!.Inspect(import!), dialog => { dialog.ModeBox.SelectedIndex = 2; },
                 dialog => { dialog.ApplyButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); return Task.CompletedTask; });
             check(((SolidColorBrush)main.ImportOrderButton.Background).Color.A == 255 && ((SolidColorBrush)main.SaveOrderButton.Background).Color.A == 0,
@@ -232,7 +233,7 @@ internal static class AppearanceDirectEditSmokeChecks
             tab.IsChecked = true; await Idle();
             check(((Control)registry.Find(key)!.Element).Background is SolidColorBrush { Color.A: 0 }, "page override survives navigation: " + key);
             var listKey = key.StartsWith("GameLogPage", StringComparison.Ordinal) ? "GameLogPage.LinesList"
-                : key.StartsWith("AiSortingPanel", StringComparison.Ordinal) ? "AiSortingPanel.AcceptedList" : "MarketplacePage.ResultsList";
+                : key.StartsWith("AiSortingPanel", StringComparison.Ordinal) ? "AiSortingPanel.RejectedList" : "MarketplacePage.ResultsList";
             var listTarget = registry.Find(listKey)!;
             // The empty-market placeholder is a separate overlay, not part of the list.
             var listPoint = listTarget.Element.TranslatePoint(new Point(8, 8), main);
@@ -261,7 +262,9 @@ internal static class AppearanceDirectEditSmokeChecks
         main.LogsPageTab.IsChecked = true; await Idle();
         var content = main.GameLogHost.Content;
         var futureButton = new Button { Name = "FutureAction", Content = "未来页面操作" };
-        var future = new Border { Child = futureButton };
+        var futureContent = new StackPanel();
+        futureContent.Children.Add(futureButton);
+        var future = new Border { Child = futureContent };
         AppearancePage.SetScope(future, "FuturePage");
         main.GameLogHost.Content = future; await Idle();
         File.WriteAllText(Path.Combine(output, "future-page.json"), System.Text.Json.JsonSerializer.Serialize(new
@@ -271,6 +274,12 @@ internal static class AppearanceDirectEditSmokeChecks
             Keys = registry.Targets.Select(t => t.Key).ToArray()
         }));
         check(registry.Find("FuturePage.FutureAction")?.Element == futureButton, "future page scope registers without page-specific registry code");
+        var dynamicButton = new Button { Name = "LaterAction", Content = "后续动态操作" };
+        futureContent.Children.Add(dynamicButton); await Idle();
+        check(registry.Find("FuturePage.LaterAction")?.Element == dynamicButton,
+            "named control inserted into an already-loaded scope still registers");
+        futureContent.Children.Remove(dynamicButton); await Idle();
+        check(registry.Find("FuturePage.LaterAction") is null, "dynamically removed target is released");
         main.GameLogHost.Content = content; await Idle();
         check(registry.Find("FuturePage.FutureAction") is null, "unloaded page targets and local brushes are released");
         editor.SetSurfaceOpacity(AppearanceSurface.Buttons, new() { Mode = SurfaceOpacityMode.Custom, Opacity = 0 });
@@ -296,11 +305,11 @@ internal static class AppearanceDirectEditSmokeChecks
             check(main.AvailableHeader.TranslatePoint(new(), main).Y == main.OrderHeader.TranslatePoint(new(), main).Y,
                 "independent list headers align at width " + width);
             var searchBounds = main.SearchBox.TransformToAncestor(main).TransformBounds(new Rect(main.SearchBox.RenderSize));
-            var commonBounds = main.ListDisplayControls.TransformToAncestor(main).TransformBounds(new Rect(main.ListDisplayControls.RenderSize));
-            check(main.SearchBox.ActualWidth > 150 && searchBounds.Right <= commonBounds.Left
-                && Math.Abs(searchBounds.Top + searchBounds.Height / 2 - commonBounds.Top - commonBounds.Height / 2) < 1
-                && commonBounds.Right <= main.ActualWidth - 12,
-                "shared list controls fit beside search without overlap or an empty toolbar row at width " + width);
+            var availDirBounds = main.AvailableSortDirectionButton.TransformToAncestor(main).TransformBounds(new Rect(main.AvailableSortDirectionButton.RenderSize));
+            var orderDirBounds = main.OrderSortDirectionButton.TransformToAncestor(main).TransformBounds(new Rect(main.OrderSortDirectionButton.RenderSize));
+            check(main.SearchBox.ActualWidth >= 100 && searchBounds.Right <= main.ActualWidth - 12
+                && availDirBounds.Width > 0 && orderDirBounds.Width > 0 && Math.Abs(availDirBounds.Top - orderDirBounds.Top) < 1,
+                "search fits on toolbar and independent sort direction controls align inside list headers at width " + width);
             PrototypeSmokeCheck.SavePreview(main, Path.Combine(output, $"aligned-lists-{width}.png"));
         }
         main.Width = 1360; await Idle();

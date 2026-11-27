@@ -49,7 +49,7 @@ internal static class DiagnosticExportSmokeCheck
             await DiagnosticsSmokeCheck.RunAsync(owner, output);
         }
         else await AutomaticSortingPreferencesSmokeCheck.Run(owner, output);
-        Assert(Descendants(owner).OfType<MenuItem>().Any(m => (m.Header as string) == "导出诊断日志…"), "Settings export entry missing");
+        Assert(Descendants(owner).OfType<MenuItem>().Any(m => (m.Header as string) == "导出完整排障日志…"), "Settings export entry missing");
         const string secret = "SyntheticUiCredential694581";
         new LocalEncryptedSecretStore(UserStorage.DirectoryPath).Write(AiSettings.Default.SecretName, secret);
         var button = new Button { Name = "DiagnosticFixtureButton", Content = "测试操作" };
@@ -71,6 +71,13 @@ internal static class DiagnosticExportSmokeCheck
         Directory.CreateDirectory(attempt);
         foreach (var name in new[] { "session.json", "process.json", "finished.json", "recovered.json" })
             await File.WriteAllTextAsync(Path.Combine(attempt, name), JsonSerializer.Serialize(new { note = "fixture " + secret }));
+        var recentSessionName = "game-" + Guid.NewGuid().ToString("N");
+        var recentAttempt = Path.Combine(UserStorage.DirectoryPath, "Data", "GameTests", recentSessionName);
+        Directory.CreateDirectory(recentAttempt);
+        await File.WriteAllTextAsync(Path.Combine(recentAttempt, "runtime-Player.log"), "RECENT_COMPLETE_HISTORY_SENTINEL");
+        await File.WriteAllTextAsync(Path.Combine(attempt, "Player.log"), "OLDER_COMPLETE_HISTORY_SENTINEL");
+        new AutomaticSortingLogStore(UserStorage.DirectoryPath).SaveRun(
+            new(DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow, [recentSessionName], []));
         await File.WriteAllTextAsync(Path.Combine(attempt, "runtime-Player.log"), string.Concat(Enumerable.Repeat("Synthetic game diagnostic line\n", 100000)));
         owner.ViewModel.Diagnostics.ReplaceWith([new(new("SharedRule", RimWise.Core.DiagnosticSeverity.Warning,
             "Synthetic shared rule", Identifier: "fixture.a") { RelatedIdentifiers = ["fixture.b"] })]);
@@ -91,6 +98,9 @@ internal static class DiagnosticExportSmokeCheck
         foreach (var operation in new[] { "button-clicked", "selection-changed", "command-executed", "window-opened", "window-closed", "automatic-sorting" })
             Assert(events.Contains(operation), "Missing event " + operation);
         var combined = string.Join('\n', files.Values);
+        foreach (var value in new[] { "OLDER_COMPLETE_HISTORY_SENTINEL", "RECENT_COMPLETE_HISTORY_SENTINEL" })
+            Assert(combined.Contains(value), "Settings export filtered retained history: " + value);
+        Assert(!files.ContainsKey("automatic-run.json"), "Complete export must not claim a single-run scope");
         foreach (var value in new[] { secret, "PRIVATE_TYPED_TEXT_SENTINEL", "PRIVATE_PASSWORD_SENTINEL", "PRIVATE_SCAN_USER_SENTINEL" })
             Assert(!combined.Contains(value), "Private input captured");
         foreach (var name in new[] { "session.json", "process.json", "finished.json", "recovered.json" })
@@ -124,10 +134,17 @@ internal static class DiagnosticExportSmokeCheck
         var automatic = new Views.AiSortingWindow(owner.ViewModel, UserStorage.DirectoryPath) { Owner = owner };
         try { await automatic.SaveLastLogsAsync(openFolder: false); }
         finally { automatic.Close(); }
-        using (var automaticZip = ZipFile.OpenRead(Directory.GetFiles(automaticDirectory, "RimWise-sorting-*.zip").Single()))
-        using (var reader = new StreamReader(automaticZip.GetEntry("application.json")!.Open()))
-        using (var automaticApplication = JsonDocument.Parse(reader.ReadToEnd()))
+        using (var automaticZip = ZipFile.OpenRead(Directory.GetFiles(automaticDirectory, "RimWise-diagnostics-*.zip").Single()))
         {
+            var automaticFiles = automaticZip.Entries.ToDictionary(e => e.FullName,
+                e => { using var reader = new StreamReader(e.Open()); return reader.ReadToEnd(); });
+            Assert(files.Keys.Order().SequenceEqual(automaticFiles.Keys.Order()), "The two entries exported different evidence sets");
+            var automaticContent = string.Join('\n', automaticFiles.Values);
+            foreach (var value in new[] { "OLDER_COMPLETE_HISTORY_SENTINEL", "RECENT_COMPLETE_HISTORY_SENTINEL" })
+                Assert(automaticContent.Contains(value), "Automatic entry filtered retained history: " + value);
+            foreach (var value in new[] { secret, "PRIVATE_TYPED_TEXT_SENTINEL", "PRIVATE_PASSWORD_SENTINEL" })
+                Assert(!automaticContent.Contains(value), "Automatic entry failed redaction");
+            using var automaticApplication = JsonDocument.Parse(automaticFiles["application.json"]);
             var automaticState = automaticApplication.RootElement.GetProperty("currentState");
             Assert(automaticState.GetProperty("scope").GetString() == "current-ui-at-export"
                 && automaticState.GetProperty("scanIssues")[0].GetProperty("code").GetString() == "MetadataUnreadable",
@@ -136,7 +153,8 @@ internal static class DiagnosticExportSmokeCheck
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new
             { passed = true, dispatcherTicks = ticks, files = result.Files, bytes = result.Bytes,
                 checks = new[] { "settings entry", "background export", "window and control events", "command events", "private inputs excluded", "keys redacted", "diagnostic details and counts", "separate scan issue details and redaction", "lifecycle journals",
-                    "scoped current state", "coverage and last-run index", "automatic export current state" } }));
+                    "scoped current state", "coverage and last-run index", "automatic export current state",
+                    "both entries retain older and latest sessions", "both entries share the same evidence set", "both entries redact secrets" } }));
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

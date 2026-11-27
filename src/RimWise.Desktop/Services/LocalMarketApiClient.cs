@@ -20,6 +20,18 @@ public sealed class LocalMarketApiClient : IDisposable
     private GitHubMarketplaceUser? user;
 
     public GitHubMarketplaceUser? User => user;
+    internal long? ActiveSession => session?.ActiveGeneration;
+    internal sealed record Notice(Guid Id, string Title, string Version, string Reason);
+    internal async Task<Notice[]> ReadNoticesAsync(CancellationToken token)
+    {
+        using var response = await http.GetAsync("api/notifications", token).ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Unauthorized) return [];
+        await EnsureSuccess(response, token).ConfigureAwait(false);
+        using var json = await ReadJsonAsync(response, token).ConfigureAwait(false);
+        return json.RootElement.EnumerateArray().Take(20).Select(e => new Notice(Guid.ParseExact(RequiredString(e,"id"), "N"),
+            RequiredString(e,"title"), RequiredString(e,"version"), RequiredString(e,"reason"))).ToArray();
+    }
+    internal Task AckNoticeAsync(Guid id, CancellationToken token) => MutateAsync(HttpMethod.Post, $"api/notifications/{id:N}/ack", "{}", token);
 
     public LocalMarketApiClient(Uri? configuredOrigin = null) : this(configuredOrigin, null) { }
 
@@ -192,7 +204,7 @@ public sealed class LocalMarketApiClient : IDisposable
         using var submitted = await SendMutationAsync(HttpMethod.Post, $"api/drafts/{revisionId}/submit", "{}", token).ConfigureAwait(false);
         await EnsureSuccess(submitted, token).ConfigureAwait(false);
         return new(0, new Uri(origin, ""), revisionId, revisionId, MarketplaceJson.ComputeSha256(Encoding.UTF8.GetBytes(sort)))
-        { IsAccountMarket = true };
+        { IsAccountMarket = true, Published = submitted.Headers.TryGetValues("X-RimWise-Publication", out var state) && state.Contains("published") };
     }
 
     public async Task<MarketplaceSubmission> SubmitAsync(MarketplaceManifest manifest,

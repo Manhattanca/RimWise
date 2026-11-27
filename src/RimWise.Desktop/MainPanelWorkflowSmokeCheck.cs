@@ -46,7 +46,42 @@ internal static class MainPanelWorkflowSmokeCheck
             File.WriteAllText(Path.Combine(output, "progress.json"), JsonSerializer.Serialize(checks));
         }
         await CheckNavigationFocus(main, output, Check);
-        foreach (var (address, expected) in new[]
+        main.UpdateLayout();
+var navBounds = main.MainPageTabs.TransformToAncestor(main).TransformBounds(new Rect(main.MainPageTabs.RenderSize));
+        var versionBounds = main.GameVersionText.TransformToAncestor(main).TransformBounds(new Rect(main.GameVersionText.RenderSize));
+        var dlc = (FrameworkElement)main.FindName("DlcStatusBar");
+        var dlcBounds = dlc.TransformToAncestor(main).TransformBounds(new Rect(dlc.RenderSize));
+                var searchBounds = main.SearchBox.TransformToAncestor(main).TransformBounds(new Rect(main.SearchBox.RenderSize));
+        foreach (var splitter in new[] { main.DetailsSplitter, main.OrderSplitter })
+        {
+            splitter.ApplyTemplate();
+            var rail = (Border)splitter.Template.FindName("SplitterHitArea", splitter);
+            var grip = (Border)splitter.Template.FindName("DragGrip", splitter);
+            Check(rail.Background is null && grip.IsHitTestVisible && grip.Background is SolidColorBrush { Color.A: 0 }
+                && grip.Width == 12 && grip.Height == 30,
+                "splitter only exposes a narrow central grip for drag/hover interaction: " + splitter.Name);
+        }
+        Check(main.AppearanceMenu.Header?.ToString() == "外观" && main.CheckUpdatesMenu.Header?.ToString() == "检查更新"
+            && main.MainMenu.Items.IndexOf(main.AppearanceMenu) == 0 && main.MainMenu.Items.IndexOf(main.CheckUpdatesMenu) == 1,
+            "外观与检查更新位于主菜单左侧，仍使用原入口和功能");
+        Check(navBounds.Height > 0 && versionBounds.Height > 0 && dlcBounds.Height > 0 && searchBounds.Height > 0
+            && new[] { navBounds, versionBounds, dlcBounds, searchBounds }.All(bounds => Math.Abs(bounds.Top + bounds.Height / 2 - (navBounds.Top + navBounds.Height / 2)) < 2)
+            && navBounds.Right <= versionBounds.Left && versionBounds.Right <= dlcBounds.Left && dlcBounds.Right <= searchBounds.Left,
+            $"导航、游戏版本、DLC与搜索整合在同一行且无重叠（导航={navBounds}，版本={versionBounds}，DLC={dlcBounds}，搜索={searchBounds}）");var originalWidth = main.Width;
+        main.Width = main.MinWidth;
+        main.UpdateLayout();
+        var minimumToolbarBounds = new[]
+        {
+            main.MainPageTabs.TransformToAncestor(main).TransformBounds(new Rect(main.MainPageTabs.RenderSize)),
+            main.GameVersionText.TransformToAncestor(main).TransformBounds(new Rect(main.GameVersionText.RenderSize)),
+            dlc.TransformToAncestor(main).TransformBounds(new Rect(dlc.RenderSize)),
+            main.SearchBox.TransformToAncestor(main).TransformBounds(new Rect(main.SearchBox.RenderSize))
+        };
+        Check(minimumToolbarBounds.All(bounds => bounds.Width > 0 && bounds.Right <= main.ActualWidth - 8)
+            && minimumToolbarBounds.Zip(minimumToolbarBounds.Skip(1), (left, right) => left.Right <= right.Left).All(value => value),
+            $"最小窗口宽度下工具栏仍单行显示且控件不越界（窗口={main.ActualWidth}，边界={string.Join(" | ", minimumToolbarBounds)}）");
+        main.Width = originalWidth;
+        main.UpdateLayout();        foreach (var (address, expected) in new[]
         {
             ("https://synthetic.invalid", "https://synthetic.invalid/v1/chat/completions"),
             ("https://synthetic.invalid/", "https://synthetic.invalid/v1/chat/completions"),
@@ -123,22 +158,20 @@ internal static class MainPanelWorkflowSmokeCheck
         main.AiSortingPageTab.IsChecked = true;
         Check(ReferenceEquals(controller, main.OpenAiSorting()) && ReferenceEquals(view, main.AiSortingHost.Content)
             && controller.ResponseText.Text == "合成任务进展保留", "切换页签保留同一任务与结果");
-        Check((string)controller.SaveLastLogsButton.Content == "导出本次排障日志", "排障日志入口使用新名称");
+        Check((string)controller.SaveLastLogsButton.Content == "导出完整排障日志", "排障日志入口使用新名称");
         controller.ResponseText.Text = "";
         await main.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         Check(controller.ResponseEmptyText.Visibility == Visibility.Visible
-            && controller.OrderEmptyText.Visibility == Visibility.Visible
+            && controller.FindName("AcceptedList") is null
             && controller.WarningsEmptyText.Visibility == Visibility.Visible,
-            "空回报、空排序和空警告均有中文引导，不冒充已经完成测试");
+            "空回报和空警告均有中文引导，不冒充已经完成测试");
         controller.ResponseText.Text = "合成任务进展保留";
-        controller.AcceptedList.ItemsSource = new[] { "合成模组" };
         controller.RejectedList.ItemsSource = new[] { "合成警告" };
         await main.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         Check(controller.ResponseEmptyText.Visibility == Visibility.Collapsed
-            && controller.OrderEmptyText.Visibility == Visibility.Collapsed
             && controller.WarningsEmptyText.Visibility == Visibility.Collapsed,
             "出现真实内容后空状态自动隐藏，不遮挡操作或复制");
-        controller.AcceptedList.ItemsSource = null; controller.RejectedList.ItemsSource = null;
+        controller.RejectedList.ItemsSource = null;
 
         // Exercise the real modal settings route without allowing a network or game call.
         var guided = 0;
@@ -171,8 +204,7 @@ internal static class MainPanelWorkflowSmokeCheck
             main.ModsPageTab.IsChecked = true;
             await Task.Delay(250);
             await main.Dispatcher.InvokeAsync(main.UpdateLayout, DispatcherPriority.ApplicationIdle);
-            Check(Equals(main.ImportOrderButton.Background, main.SaveOrderButton.Background)
-                && Equals(main.ImportOrderButton.Foreground, main.SaveOrderButton.Foreground), $"{theme}/{compact}：导入与保存按钮颜色一致");
+            Check(!Equals(main.ImportOrderButton.Background, main.SaveOrderButton.Background) && Equals(main.ImportOrderButton.BorderBrush, main.SaveOrderButton.BorderBrush), $"{theme}/{compact}：保存为主强调色，导入为次强调描边按钮");
             Check(Equals(controller.AutomaticButton.Background, main.SaveOrderButton.Background)
                 && Equals(controller.AutomaticButton.Foreground, main.SaveOrderButton.Foreground),
                 $"{theme}/{compact}：开始排序复用主操作强调色，设置与清理保持次级");
@@ -301,7 +333,7 @@ internal static class MainPanelWorkflowSmokeCheck
             var logs = new AutomaticSortingLogStore(root);
             check(logs.LoadLastRun() is { EndedUtc: not null, Sessions.Length: 0, TaskIds.Length: 1 }, "失败仍保留本次零轮日志与用量记录");
             await panel.SaveLastLogsAsync(openFolder: false);
-            using var zip = ZipFile.OpenRead(Directory.GetFiles(logs.DefaultDirectory, "RimWise-sorting-*.zip").Single());
+            using var zip = ZipFile.OpenRead(Directory.GetFiles(logs.DefaultDirectory, "RimWise-diagnostics-*.zip").Single());
             check(zip.GetEntry("manifest.json") is not null, "零轮失败仍可导出诊断包");
         }
         finally { timer.Stop(); panel.Close(); }
@@ -499,3 +531,6 @@ internal static class MainPanelWorkflowSmokeCheck
     }
 }
 #endif
+
+
+

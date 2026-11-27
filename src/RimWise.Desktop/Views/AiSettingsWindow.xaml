@@ -42,8 +42,11 @@
                     </Grid>
                 </DockPanel>
                 <CheckBox x:Name="ManualModelBox" Content="手动填写模型" Checked="ManualModel_Changed" Unchecked="ManualModel_Changed" Margin="0,0,0,12" />
-                <Button x:Name="TestConnectionButton" Content="测试 AI 连接" Click="Test_Click" HorizontalAlignment="Left" Margin="0,0,0,16" ToolTip="只读检查模型列表，不产生模型生成用量。" />
-                <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,10" />
+                <Grid x:Name="ConnectionFeedbackRow" Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Button x:Name="TestConnectionButton" Content="测试 AI 连接" Click="Test_Click" VerticalAlignment="Top" ToolTip="只读检查模型列表，不产生模型生成用量。" />
+                    <TextBlock x:Name="StatusText" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource TextBrush}" AutomationProperties.LiveSetting="Polite" />
+                </Grid>
                 <Expander x:Name="AdvancedOptions" Header="高级配置" FocusVisualStyle="{x:Null}"
                           Foreground="{DynamicResource TextBrush}" Margin="0,0,0,10">
                     <Expander.Resources>

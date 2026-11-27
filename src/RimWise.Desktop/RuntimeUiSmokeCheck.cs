@@ -114,7 +114,11 @@ internal static class RuntimeUiSmokeCheck
             try
             {
                 await Idle(usage);
-                Assert(usage.EstimateText.Text.Contains("样本不足") && usage.BreakdownText.Text.Contains("输入"), "Estimate uncertainty missing.");
+                Assert(estimate.Samples == 0 && usage.EstimateText.Text == estimate.Description
+                    && usage.EstimateText.Text.Contains("尚无本模型样本")
+                    && usage.EstimateText.Text.Contains("尚无足够记录验证误差")
+                    && usage.BreakdownText.Text == $"预计输入 {estimate.Input:N0} token，输出 {estimate.Output:N0} token。",
+                    "Estimate must preserve the actual no-sample/unknown-error description and token breakdown.");
                 Assert(usage.EstimateText.ActualWidth > 200 && usage.EstimateText.ActualHeight > 0, "Usage layout collapsed.");
                 PrototypeSmokeCheck.SavePreview(usage, Path.Combine(output, theme + "-用量预估最小尺寸.png"));
                 var nextTheme = theme == ThemePreference.Light ? ThemePreference.Dark : ThemePreference.Light;

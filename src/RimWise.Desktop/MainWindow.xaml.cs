@@ -64,6 +64,7 @@ public partial class MainWindow : Window
         // the first visible frame or open a modal child of a still-cloaked window.
         if (!await StartupPresentation.Ready || lifetime.IsCancellationRequested) return;
         _ = StartBackgroundUpdateAsync();
+        _ = ObserveMarketNoticesAsync(lifetime.Token);
         await InitializePathsAsync();
         await LoadCustomRulesAsync();
         if (lifetime.IsCancellationRequested) return;
@@ -151,6 +152,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        lifetime.Cancel();
         OpacityPicker?.Dispose(); AppearanceControls.Dispose();
         gameLogPage?.Dispose();
         marketplacePage?.Cancel();
@@ -163,7 +165,6 @@ public partial class MainWindow : Window
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         CancelContentEnrichment();
-        lifetime.Cancel();
         preparedDelta?.Dispose();
         aiSortingWindow?.DisposeEmbedded();
         AiSortingHost.Content = null;

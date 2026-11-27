@@ -15,33 +15,34 @@ internal static class FastUpdateChecks
 
     internal static void Run(Action<string, Action> check)
     {
-        check("Fast update switches blocked headers in one to two seconds, even if handler ignores cancellation", () => InDirectory(async dir =>
+        check("Update allows ten seconds for blocked headers even if handler ignores cancellation", () => InDirectory(async dir =>
         {
             var stalled = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-            using var primary = new Handler((_, _) => stalled.Task);
+            var timer = new Stopwatch();
+            using var primary = new Handler((_, _) => { timer.Start(); return stalled.Task; });
             using var backup = new Handler((request, _) =>
             {
+                timer.Stop();
                 VerifyMirror(request);
                 return Task.FromResult(Response(Payload));
             });
             using var http = new HttpClient(primary); using var mirror = new HttpClient(backup);
-            var timer = Stopwatch.StartNew();
             var path = await new GitHubReleaseUpdater(http, mirror).DownloadAsync(Candidate(), dir, null, default);
-            Assert(timer.Elapsed.TotalSeconds is >= 0.85 and < 2);
+            if (timer.Elapsed.TotalSeconds is < 9.9 or >= 12) throw new Exception($"Header failover after {timer.Elapsed.TotalSeconds:F3}s");
             Assert(primary.Calls == 1 && backup.Calls == 1 && File.ReadAllBytes(path).SequenceEqual(Payload));
             stalled.SetResult(Response(Payload));
             await Task.Delay(100);
             Assert(!Directory.EnumerateFiles(dir, "*.partial").Any());
         }));
-        check("Fast update detects a stalled body without waiting for the next data chunk", () => InDirectory(async dir =>
+        check("Headers alone do not start speed sampling; no payload switches after ten seconds", () => InDirectory(async dir =>
         {
-            using var body = new ThrottledStream(Payload, TimeSpan.FromSeconds(10));
+            using var body = new ThrottledStream(Payload, Timeout.InfiniteTimeSpan);
             using var primary = new Handler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(body) }));
             using var backup = new Handler((_, _) => Task.FromResult(Response(Payload)));
             using var http = new HttpClient(primary); using var mirror = new HttpClient(backup);
             var timer = Stopwatch.StartNew();
             await new GitHubReleaseUpdater(http, mirror).DownloadAsync(Candidate(), dir, null, default);
-            Assert(timer.Elapsed.TotalSeconds is >= 0.85 and < 2 && backup.Calls == 1);
+            Assert(timer.Elapsed.TotalSeconds is >= 9.9 and < 12 && backup.Calls == 1);
             await Task.Delay(50);
             Assert(!Directory.EnumerateFiles(dir, "*.partial").Any());
         }));
@@ -67,6 +68,29 @@ internal static class FastUpdateChecks
                 using var http = new HttpClient(primary); using var mirror = new HttpClient(backup);
                 await new GitHubReleaseUpdater(http, mirror).DownloadAsync(Candidate(bytes), dir, null, default);
                 Assert(backup.Calls == 0);
+            });
+        });
+        check("Slow startup does not penalize a fast download", () => InDirectory(async dir =>
+        {
+            using var primary = new Handler(async (_, token) => { await Task.Delay(1700, token); return Response(Payload); });
+            using var backup = new Handler((_, _) => throw new Exception("Premature failover"));
+            using var http = new HttpClient(primary); using var mirror = new HttpClient(backup);
+            await new GitHubReleaseUpdater(http, mirror).DownloadAsync(Candidate(), dir, null, default);
+            Assert(backup.Calls == 0);
+        }));
+        check("At exactly half a slow source can switch; one byte beyond half stays even on disconnect", () =>
+        {
+            foreach (var (chunk, disconnect) in new[] { (32768, false), (32769, false), (32769, true) }) InDirectory(async dir =>
+            {
+                var bytes = new byte[65536];
+                using var body = new PauseAfterChunk(bytes, chunk, disconnect);
+                using var primary = new Handler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(body) }));
+                using var backup = new Handler((_, _) => Task.FromResult(Response(bytes)));
+                using var http = new HttpClient(primary); using var mirror = new HttpClient(backup);
+                try { await new GitHubReleaseUpdater(http, mirror).DownloadAsync(Candidate(bytes), dir, null, default); Assert(!disconnect); }
+                catch (IOException) when (disconnect) { }
+                Assert(backup.Calls == (chunk == 32768 ? 1 : 0));
+                Assert(File.Exists(Path.Combine(dir, Candidate(bytes).FileName)) == !disconnect);
             });
         });
         check("Fast update switches connection failures immediately", () => InDirectory(async dir =>
@@ -127,9 +151,10 @@ internal static class FastUpdateChecks
                     Assert(backup.Calls == 1 && !File.Exists(Path.Combine(dir, Candidate().FileName)) && !Directory.EnumerateFiles(dir, "*.partial").Any());
                 });
         });
-        check("Fast version lookup fails over and subsequent download skips the known slow source", () => InDirectory(async dir =>
+        check("Version lookup failover does not bypass GitHub for asset downloads", () => InDirectory(async dir =>
         {
-            using var primary = new Handler(async (_, token) => { await Task.Delay(TimeSpan.FromSeconds(10), token); return Response([]); });
+            using var primary = new Handler((request, _) => request.RequestUri!.Host == "api.github.com"
+                ? Task.FromException<HttpResponseMessage>(new HttpRequestException("metadata unavailable")) : Task.FromResult(Response(Payload)));
             using var backup = new Handler((request, _) =>
             {
                 Assert(request.Headers.Authorization is null && !request.Headers.Contains("Cookie"));
@@ -143,11 +168,10 @@ internal static class FastUpdateChecks
             });
             using var http = new HttpClient(primary); using var mirror = new HttpClient(backup);
             var updater = new GitHubReleaseUpdater(http, mirror);
-            var timer = Stopwatch.StartNew();
             var release = await updater.CheckAsync("0.7.1", default);
-            Assert(timer.Elapsed.TotalSeconds is >= 0.85 and < 2 && release is not null);
+            Assert(release is not null);
             await updater.DownloadAsync(release!, dir, null, default);
-            Assert(primary.Calls == 1 && backup.Calls == 2);
+            Assert(primary.Calls == 2 && backup.Calls == 1);
         }));
     }
 
@@ -202,6 +226,18 @@ internal static class FastUpdateChecks
     {
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         { await Task.Delay(delay, cancellationToken); return await base.ReadAsync(buffer[..Math.Min(buffer.Length, 32768)], cancellationToken); }
+    }
+    private sealed class PauseAfterChunk(byte[] bytes, int chunk, bool disconnect) : MemoryStream(bytes)
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position == chunk)
+            {
+                await Task.Delay(1400, cancellationToken);
+                if (disconnect) throw new IOException("Connection closed");
+            }
+            return await base.ReadAsync(buffer[..Math.Min(chunk, buffer.Length)], cancellationToken);
+        }
     }
     private sealed class LaterStallStream(byte[] bytes) : MemoryStream(bytes)
     {

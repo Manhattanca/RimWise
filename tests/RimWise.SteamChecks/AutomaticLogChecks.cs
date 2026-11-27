@@ -86,6 +86,19 @@ internal static class AutomaticLogChecks
                 && !content.Contains("OLDER_GAME_SENTINEL") && !content.Contains("OLDER_UI_SENTINEL")
                 && !content.Contains("SyntheticLogSecret629481"));
         });
+        check("Complete diagnostic export retains older and latest sessions, tasks and UI events without run filtering", () =>
+        {
+            // Even when a last-run index exists, the complete export must not narrow its scope.
+            var target = Path.Combine(root, "RimWise-diagnostics-complete.zip");
+            DiagnosticExportService.Export(profile, target);
+            using var zip = ZipFile.OpenRead(target);
+            Assert(zip.GetEntry("automatic-run.json") is null && zip.GetEntry("last-automatic-run.json") is not null);
+            Assert(zip.GetEntry("tasks/" + oldId + ".json") is not null && zip.GetEntry("tasks/" + recentId + ".json") is not null);
+            var content = string.Join('\n', zip.Entries.Select(e => { using var reader = new StreamReader(e.Open()); return reader.ReadToEnd(); }));
+            foreach (var value in new[] { "OLDER_GAME_SENTINEL", "RECENT_GAME_SENTINEL", "OLDER_UI_SENTINEL", "RECENT_UI_SENTINEL" })
+                Assert(content.Contains(value));
+            Assert(!content.Contains("SyntheticLogSecret629481") && !zip.Entries.Any(e => e.FullName.EndsWith(".zip")));
+        });
         check("Non-log files do not evict completed logs while reproducible cache still obeys budget", () =>
         {
             var other = Path.Combine(gameRoot, "unknown-output.dat");
@@ -118,12 +131,14 @@ internal static class AutomaticLogChecks
             Assert(File.Exists(Path.Combine(recent, "finished.json")));
             Assert(!File.Exists(StoredEvidence.Resolve(Path.Combine(recent, "attempt-01 测试数据", "intended-ModsConfig.xml"))));
         });
-        check("Export cleanup deletes verified sorting ZIPs only, preserving unrelated files and subfolders", () =>
+        check("Export cleanup handles complete and legacy diagnostic ZIPs, preserving unrelated files and subfolders", () =>
         {
             var destination = store.LoadSettings().Directory;
             Directory.CreateDirectory(destination);
             var valid = Path.Combine(destination, "RimWise-sorting-valid.zip");
             DiagnosticExportService.Export(profile, valid, run: run);
+            var complete = Path.Combine(destination, "RimWise-diagnostics-complete.zip");
+            DiagnosticExportService.Export(profile, complete);
             File.Copy(valid, Path.Combine(destination, "personal.zip"));
             var nested = Path.Combine(destination, "nested");
             Directory.CreateDirectory(nested);
@@ -134,7 +149,7 @@ internal static class AutomaticLogChecks
             using (var lease = new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.None))
             {
                 var result = store.DeleteExportedLogs();
-                Assert(result.Removed == 1 && result.Skipped == 2 && !File.Exists(valid));
+                Assert(result.Removed == 2 && result.Skipped == 2 && !File.Exists(valid) && !File.Exists(complete));
             }
             Assert(File.Exists(Path.Combine(destination, "personal.zip")) && File.Exists(Path.Combine(nested, "RimWise-sorting-nested.zip")));
             Assert(store.DeleteExportedLogs() == (1, 1));

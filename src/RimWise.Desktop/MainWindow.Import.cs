@@ -28,7 +28,7 @@ public partial class MainWindow
 
     private void Window_FileDragOver(object sender, DragEventArgs e)
     {
-        if (OpacityPicker is not null) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
+        if (OpacityPicker is not null || SortingTutorialHost.IsVisible) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
         if (!e.Data.GetDataPresent(DataFormats.FileDrop, false)) return;
         if (ModsPageTab.IsChecked != true) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
         ClearDropIndicator();
@@ -38,7 +38,7 @@ public partial class MainWindow
 
     private async void Window_FileDrop(object sender, DragEventArgs e)
     {
-        if (OpacityPicker is not null) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
+        if (OpacityPicker is not null || SortingTutorialHost.IsVisible) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
         if (!e.Data.GetDataPresent(DataFormats.FileDrop, false)) return;
         e.Handled = true;
         e.Effects = DragDropEffects.None;

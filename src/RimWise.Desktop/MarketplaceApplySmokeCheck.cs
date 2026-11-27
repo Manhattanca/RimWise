@@ -10,6 +10,7 @@ using RimWise.Integration.Configuration;
 using RimWise.Integration.Marketplace;
 using RimWise.Integration.Scanning;
 using RimWise.Integration.Steam;
+using RimWise.Desktop.Views;
 
 namespace RimWise.Desktop;
 
@@ -42,18 +43,19 @@ internal static class MarketplaceApplySmokeCheck
             var retention = window.ViewModel.RetainedPackageIds.ToArray();
             fixture.Capture();
             var previews = 0;
+            MarketplaceDownloadResult? savedNotice = null;
             var result = await ApplyAsync(window, fixture.Manifest, null, default,
                 approvePreview: (_, notice, _) =>
                 {
                     previews++;
                     Require(!notice.Contains("缺少") && !notice.Contains("前置") && !notice.Contains("诊断")
-                        && notice.Contains("必须保留") && notice.Contains("old.mod") && notice.Contains("本机缺失"),
+                        && !notice.Contains("old.mod"),
                         "Import preview ran blocking diagnostics or omitted download completion/replacement safeguards");
                     return Task.FromResult(true);
-                });
+                }, onSaved: notice => savedNotice = notice);
             Require(result && previews == 1 && !Directory.Exists(Path.Combine(fixture.Paths.WorkshopDirectory, "456"))
                 && !Directory.Exists(Path.Combine(fixture.Paths.WorkshopDirectory, "789"))
-                && window.ViewModel.Status.Contains("缺少 2") && window.ViewModel.HasOrderStatus && window.ViewModel.ErrorCount >= 2,
+                && savedNotice?.Details?.Contains("缺少 2") == true && window.ViewModel.HasOrderStatus && window.ViewModel.ErrorCount >= 2,
                 "Import downloaded, blocked missing mod IDs or suppressed ordinary main-window warnings");
             var saved = File.ReadAllBytes(fixture.Config);
             Require(window.ViewModel.Rows.Select(row => row.PackageId).SequenceEqual(fixture.Manifest.Mods.Select(mod => mod.PackageId))
@@ -88,6 +90,7 @@ internal static class MarketplaceApplySmokeCheck
                 window.ViewModel.PropertyChanged += publication;
                 byte[]? externalBytes = null;
                 string[]? externalOrder = null;
+                var successNotices = 0;
                 bool applied;
                 try
                 {
@@ -115,10 +118,11 @@ internal static class MarketplaceApplySmokeCheck
                                 File.WriteAllText(backupRoot, "backup-blocker");
                             }
                             return scenario != "decline";
-                        });
+                        }, onSaved: _ => successNotices++);
                 }
                 finally { window.ViewModel.PropertyChanged -= publication; }
                 Require(!applied, scenario + " incorrectly committed");
+                Require(successNotices == 0, scenario + " emitted a success notification despite no commit");
                 Require(File.ReadAllBytes(fixture.Config).SequenceEqual(externalBytes ?? fixture.OriginalBytes), scenario + " overwrote configuration");
                 Require(window.ViewModel.Rows.Select(row => row.PackageId).SequenceEqual(externalOrder ?? fixture.OriginalOrder), scenario + " changed editor");
                 if (externalOrder is null)
@@ -172,6 +176,7 @@ internal static class MarketplaceApplySmokeCheck
                 // Files cease to be readable metadata after setup: import must use only the order file.
                 if (scenario == "unreadable metadata") File.WriteAllText(Path.Combine(fixture.Paths.WorkshopDirectory, "123", "About", "About.xml"), "<invalid");
                 var previewCount = 0;
+                MarketplaceDownloadResult? noticeAfterSave = null;
                 var applied = await ApplyAsync(window, manifest, null, default,
                     approvePreview: (_, notice, _) =>
                     {
@@ -179,16 +184,17 @@ internal static class MarketplaceApplySmokeCheck
                         Require(!notice.Contains("前置") && !notice.Contains("诊断") && !notice.Contains("缺少"), "Import preview contains mod diagnostics");
                         Require(notice.Contains("合集声明游戏版本") == (scenario is "wrong version" or "old declared version"), "Only declared version differences should be reported");
                         return Task.FromResult(true);
-                    });
+                    }, onSaved: notice => noticeAfterSave = notice);
                 Require(previewCount == 1 && window.ViewModel.HasOrderStatus,
                     "Import failed or suppressed main-window diagnostics: " + scenario + "; " + window.ViewModel.Status);
-                Require(window.ViewModel.Status.Contains("合集声明游戏版本") == (scenario is "wrong version" or "old declared version"), "Version warning was lost or invented");
+                Require((noticeAfterSave?.Details?.Contains("合集声明游戏版本") == true) == (scenario is "wrong version" or "old declared version"), "Version warning was lost or invented");
+                Require(window.ViewModel.Status == $"已使用《{manifest.Title}》排序", "Status contains unsolicited import details");
                 Require(!window.ViewModel.IsShowingCache, "Successful import kept the cache-only save restriction");
                 Require(applied && window.ViewModel.Rows.Select(row => row.PackageId).SequenceEqual(manifest.Mods.Select(mod => mod.PackageId))
                     && !window.ViewModel.HasChanges, scenario + " blocked or altered import");
                 using var savedInput = File.OpenRead(fixture.Config);
                 Require(new ModsConfigXmlFormat().Read(savedInput).Order.PackageIds.SequenceEqual(manifest.Mods.Select(mod => mod.PackageId)), scenario + " was not saved");
-                Require(window.ViewModel.Status.Contains("已导入并保存") && !window.ViewModel.Status.Contains("未应用"), scenario + " reported failure");
+                Require(window.ViewModel.Status.Contains("已使用《") && !window.ViewModel.Status.Contains("未应用"), scenario + " reported failure");
                 checks.Add("Marketplace imports and saves unchanged author order despite " + scenario);
             }
             foreach (var scenario in new[] { "wait success", "wait cancel", "wait failure", "wait incomplete", "edit during wait" })
@@ -198,9 +204,11 @@ internal static class MarketplaceApplySmokeCheck
                 var entered = new TaskCompletionSource();
                 var release = new TaskCompletionSource<IReadOnlyList<WorkshopItemState>>();
                 var previewCount = 0;
+                MarketplaceDownloadResult? completionNotice = null;
                 var operation = window.ApplyMarketplaceManifestAsync(fixture.Manifest, null, cancellation.Token,
                     approvePreview: (_, _, _) => { previewCount++; return Task.FromResult(true); },
-                    download: async (_, _, token) => { entered.SetResult(); return await release.Task.WaitAsync(token); });
+                    download: async (_, _, token) => { entered.SetResult(); return await release.Task.WaitAsync(token); },
+                    onSaved: notice => completionNotice = notice);
                 await entered.Task;
                 fixture.Unchanged();
                 Require(previewCount == 0, "Import preview opened before downloads completed");
@@ -214,9 +222,9 @@ internal static class MarketplaceApplySmokeCheck
                 if (!applied)
                     Require(previewCount == 0 && File.ReadAllBytes(fixture.Config).SequenceEqual(fixture.OriginalBytes)
                         && window.ViewModel.Rows.Select(row => row.PackageId).SequenceEqual(latest), "Waiting overwrote original/later order");
-                else Require(previewCount == 1 && window.ViewModel.Status.Contains("已导入并保存"), "Completion did not import once");
-                if (scenario is "wait incomplete" or "wait failure") Require(window.ViewModel.Status.Contains("本机缺失")
-                    && window.ViewModel.Status.Contains("缺少 2") && !window.ViewModel.HasChanges,
+                else Require(previewCount == 1 && window.ViewModel.Status.Contains("已使用《"), "Completion did not import once");
+                if (scenario is "wait incomplete" or "wait failure") Require(completionNotice?.Details?.Contains("缺少 2") == true
+                    && !window.ViewModel.HasChanges,
                     "Incomplete download blocked import or lost missing-mod notice");
                 checks.Add("Marketplace waits for Steam before import and protects original edits: " + scenario);
             }
@@ -241,6 +249,31 @@ internal static class MarketplaceApplySmokeCheck
             Require(window.ViewModel.UndoCommand.CanExecute(null), "No-op disk import did not record combined history");
             window.ViewModel.UndoCommand.Execute(null); fixture.Unchanged(checkHistory: false);
             checks.Add("Marketplace unchanged-disk apply still records undoable editor replacement");
+
+            fixture = new Fixture(window, output, "direct complete import", pathField);
+            fixture.Install(new("b.mod", "456")); fixture.Install(new("c.mod", "789"));
+            var completeScan = await fixture.ScanAsync(default);
+            window.ViewModel.ApplyScan(completeScan, observeActivity: false);
+            savedNotice = null;
+            Require(await ApplyAsync(window, fixture.Manifest, null, default, onSaved: notice => savedNotice = notice)
+                && savedNotice is { Details: "" } && window.ViewModel.Status == $"已使用《{fixture.Manifest.Title}》排序",
+                "Complete direct import did not report only its title");
+            checks.Add("Fully available marketplace order saves directly and reports only the title");
+
+            fixture = new Fixture(window, output, "large missing list", pathField);
+            var missing = Enumerable.Range(0, 74).Select(i => new MarketplaceMod("missing.mod." + i, null)).ToArray();
+            var manyMissing = fixture.Manifest with { Mods = [fixture.Manifest.Mods[0], .. missing] };
+            savedNotice = null;
+            Require(await ApplyAsync(window, manyMissing, null, default, onSaved: notice => savedNotice = notice)
+                && missing.All(mod => savedNotice?.Details?.Split('\n').Contains(mod.PackageId) == true),
+                "Missing-mod completion notice truncated the unavailable items");
+            checks.Add("Completion retains all 74 unavailable mods without listing unrelated order changes");
+
+            fixture = new Fixture(window, output, "notification failure", pathField);
+            Require(await ApplyAsync(window, fixture.Manifest, null, default, onSaved: _ => throw new IOException("synthetic notification failure"))
+                && !window.ViewModel.HasChanges && window.ViewModel.Status == $"已使用《{fixture.Manifest.Title}》排序",
+                "Notification failure misreported a committed import as failed");
+            checks.Add("Notification failure cannot invalidate a completed order import");
         }
         finally
         {
@@ -255,9 +288,10 @@ internal static class MarketplaceApplySmokeCheck
             Path.Combine(UserStorage.DirectoryPath, "synthetic-steam", mod.WorkshopId!))).ToArray();
 
     private static Task<bool> ApplyAsync(MainWindow window, MarketplaceManifest manifest, IProgress<string>? progress,
-        CancellationToken token, Func<OrderComparison, string, CancellationToken, Task<bool>>? approvePreview = null) =>
+        CancellationToken token, Func<OrderComparison, string, CancellationToken, Task<bool>>? approvePreview = null,
+        Action<MarketplaceDownloadResult>? onSaved = null) =>
         window.ApplyMarketplaceManifestAsync(manifest, progress, token, approvePreview,
-            (_, _, _) => Task.FromResult(Completed(manifest)));
+            (_, _, _) => Task.FromResult(Completed(manifest)), onSaved);
 
     private sealed class Fixture
     {

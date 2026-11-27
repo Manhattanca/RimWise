@@ -158,9 +158,9 @@ internal static class Checks
                         prompts++; Equal(count, 1);
                         if (mode == "unbound cancel") throw new OperationCanceledException(token);
                         return Task.FromResult(mode == "unbound accept");
-                    }, null, cancellation.Token, clock, clock.Delay);
+                    }, null, cancellation.Token, clock, clock.Delay, () => clock.Elapsed >= TimeSpan.FromSeconds(12) && mode is "collection idle" or "collection missing");
                     True(completed.Count == (mode == "collection failure" ? 0 : 2));
-                    if (mode == "collection idle") True(!completed[1].Installed && clock.Elapsed == TimeSpan.FromSeconds(30));
+                    if (mode == "collection idle") True(!completed[1].Installed && clock.Elapsed == TimeSpan.FromSeconds(12));
                     if (mode == "collection active") True(completed[1].Installed && clock.Elapsed == TimeSpan.FromSeconds(45));
                     if (mode == "unbound decline") True(!completed[1].Subscribed && queries == 1);
                     success = true;
@@ -188,12 +188,13 @@ internal static class Checks
                     {
                         if (mode == "active cancellation" && clock.Elapsed >= TimeSpan.FromSeconds(40)) cancellation.Cancel();
                         var bytes = mode == "byte progress" && clock.Elapsed >= TimeSpan.FromSeconds(20) ? 10ul : 0;
+                        if (clock.Elapsed >= TimeSpan.FromSeconds(51)) return Task.FromResult<IReadOnlyList<WorkshopItemState>>([new("123", true, true, output)]);
                         return Task.FromResult<IReadOnlyList<WorkshopItemState>>([new("123", true, false, "",
                             Downloading: mode == "active cancellation", DownloadPending: true, BytesDownloaded: bytes, BytesTotal: 100)]);
                     }, new ImmediateProgress(messages.Add), cancellation.Token, clock, clock.Delay);
-                    True(mode != "active cancellation" && !result.Single().Installed);
-                    Equal(clock.Elapsed, TimeSpan.FromSeconds(mode == "byte progress" ? 50 : 30));
-                    True(messages.Last().Contains("未检测到") && !messages.Last().Contains("下载已完成"));
+                    True(mode != "active cancellation" && result.Single().Installed);
+                    Equal(clock.Elapsed, TimeSpan.FromSeconds(51));
+                    True(messages.Last().Contains("下载已完成"));
                 }
                 catch (OperationCanceledException) when (mode == "active cancellation")
                 { Equal(clock.Elapsed, TimeSpan.FromSeconds(40)); }

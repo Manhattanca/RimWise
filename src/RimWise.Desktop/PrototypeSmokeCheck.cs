@@ -72,12 +72,12 @@ internal static class PrototypeSmokeCheck
 
                 // Inspect the hierarchy without relying on mouse capture in a background UI check.
                 if (!window.MainMenu.Items.OfType<MenuItem>().Select(item => item.Header?.ToString())
-                        .SequenceEqual(new[] { "文件", "设置", "游戏", "帮助" })
+                        .SequenceEqual(new[] { "外观", "检查更新", "文件", "设置", "游戏", "帮助" })
                     || !window.FileMenu.Items.OfType<MenuItem>().Select(item => item.Header?.ToString())
                         .SequenceEqual(new[] { "导入排序或存档…", "合集管理…", "备份当前排序", "恢复排序备份…", "恢复游戏配置…", "恢复中断写入…", "恢复任务…", "恢复移除的模组…", "退出" }))
                     throw new InvalidOperationException("Compact menu contains missing or duplicate actions.");
                 if (!window.SettingsMenu.Items.OfType<MenuItem>().Select(item => item.Header?.ToString())
-                        .SequenceEqual(new[] { "路径", "外观", "AI 设置…", "AI 用量预估…", "导出诊断日志…", "自定义排序规则…", "数据库来源…", "模组标识" })
+                        .SequenceEqual(new[] { "路径", "AI 设置…", "AI 用量预估…", "导出完整排障日志…", "自定义排序规则…", "数据库来源…", "模组标识" })
                     || window.PathsMenu.Items.Count != 2 || window.AppearanceMenu.Items.Count != 0)
                     throw new InvalidOperationException("Settings menu hierarchy missing.");
 

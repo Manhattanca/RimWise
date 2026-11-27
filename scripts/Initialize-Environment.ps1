@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param([string]$PackageCacheRoot = (Join-Path $PSScriptRoot '..\work\nuget'))
+param([string]$PackageCacheRoot = 'E:\RimWise-research\nuget')
 $ErrorActionPreference = 'Stop'
 $script:ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:WorkRoot = Join-Path $script:ProjectRoot 'work'
@@ -14,7 +14,7 @@ $environmentPaths = @{
     LOCALAPPDATA = 'appdata\local'
 }
 foreach ($entry in $environmentPaths.GetEnumerator()) {
-    # Dependencies use the selected package cache directory.
+    # Downloaded dependencies stay on the explicitly approved E: volume.
     $directory = if ($entry.Key.StartsWith('NUGET_')) {
         Join-Path $PackageCacheRoot ($entry.Value.Substring('nuget\'.Length))
     } else { Join-Path $script:WorkRoot $entry.Value }

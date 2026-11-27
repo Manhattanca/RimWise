@@ -27,7 +27,7 @@ public partial class AiSettingsWindow : Window
     private readonly IAiClient? testClient;
     private CancellationTokenSource? testCancellation;
     public AiSettings? SavedSettings { get; private set; }
-    private const string SuggestedServiceUrl = "https://relayrax.com/sign-up?aff=dgCR";
+    internal const string SuggestedServiceUrl = "https://relayrax.com/sign-up?aff=dgCR";
     internal Action<string>? OpenServiceLinkForCheck { get; set; }
 
     public AiSettingsWindow(AiSettings current, AiSettingsStore store, ISecretStore secrets, IAiClient? testClient = null)

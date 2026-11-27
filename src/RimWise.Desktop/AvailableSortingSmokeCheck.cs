@@ -23,7 +23,7 @@ internal static class AvailableSortingSmokeCheck
         vm.ApplyScan(scan);
         var enabled = vm.Rows.Select(row => row.PackageId).ToArray();
         var reverseVm = new MainViewModel(); reverseVm.Load(vm.CreateExportDocument(), "反向显示离线验证.xml");
-        reverseVm.ToggleAvailableSortDirection();
+        reverseVm.ToggleOrderSortDirection();
         if (reverseVm.Rows.Count > 1)
         {
             var last = reverseVm.Rows[^1];
@@ -51,8 +51,11 @@ internal static class AvailableSortingSmokeCheck
                 .All(pair => comparer.Compare(pair.First, pair.Second) <= 0), "Ascending view is not sorted.");
             vm.ToggleAvailableSortDirection();
             var descending = Visible();
+            Assert(vm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId).SequenceEqual(enabled),
+                "Toggling inactive sort direction must not reverse the enabled list.");
+            vm.ToggleOrderSortDirection();
             Assert(vm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId).SequenceEqual(enabled.Reverse()),
-                "Shared descending display did not reverse the enabled view by actual load index.");
+                "Order sort direction did not reverse the enabled view by actual load index.");
             if (vm.Rows.Count > 0)
                 Assert(window.OrderDisplayInsertionIndex(vm.Rows[0], false) == 1
                     && window.OrderDisplayInsertionIndex(vm.Rows[0], true) == 0,
@@ -65,6 +68,7 @@ internal static class AvailableSortingSmokeCheck
                     && ascending[..^1].Reverse().SequenceEqual(descending[..^1]), "Missing author or reverse order failed.");
             else Assert(ascending.Reverse().SequenceEqual(descending), "Reverse order failed.");
             vm.ToggleAvailableSortDirection();
+            vm.ToggleOrderSortDirection();
             Assert(vm.VisibleRows.Cast<LoadOrderRow>().Select(row => row.PackageId).SequenceEqual(enabled),
                 "Ascending display did not restore the enabled view.");
         }

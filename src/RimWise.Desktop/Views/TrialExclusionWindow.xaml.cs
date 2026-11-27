@@ -12,8 +12,7 @@ public partial class TrialExclusionWindow : Window
         InitializeComponent();
         DataContext = new { ShowModBadgeIcons = badgeIcons, ShowModBadgeText = !badgeIcons };
         ModsList.ItemsSource = rows;
-        StatusText.Text = (warnings ? "复测未发现红字，仍有黄字警告。" : "复测未发现红字。")
-            + "此结果针对整组移除方案，不能证明其中每个模组单独有错。";
+        StatusText.Text = DescribeRemovalTest(warnings);
         if (rows.Count == 0)
         {
             HeadingText.Text = "排序完成";
@@ -39,6 +38,9 @@ public partial class TrialExclusionWindow : Window
             StatusText.Text += "\n" + AiRuntimeContext.VulkanWarningText;
         }
     }
+
+    internal static string DescribeRemovalTest(bool warnings) => (warnings ? "复测未发现红字，仍有黄字警告。" : "复测未发现红字。")
+        + "此结果针对整组移除方案，不能证明其中每个模组单独有错。";
 
     private void Confirm_Click(object sender, RoutedEventArgs e) => DialogResult = true;
     private void Keep_Click(object sender, RoutedEventArgs e) => DialogResult = false;
